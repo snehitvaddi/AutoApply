@@ -1,0 +1,256 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+
+interface UserInfo {
+  id: string;
+  email: string;
+  full_name: string | null;
+  tier: string;
+  approval_status: string;
+  onboarding_completed: boolean;
+  daily_apply_limit: number;
+  created_at: string;
+  approved_at: string | null;
+  application_count: number;
+}
+
+interface InviteCode {
+  id: string;
+  code: string;
+  max_uses: number;
+  used_count: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export default function AdminPage() {
+  const router = useRouter();
+  const [users, setUsers] = useState<UserInfo[]>([]);
+  const [invites, setInvites] = useState<InviteCode[]>([]);
+  const [stats, setStats] = useState<Record<string, number>>({});
+  const [newCodeMaxUses, setNewCodeMaxUses] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [unauthorized, setUnauthorized] = useState(false);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    const [usersRes, invRes, statsRes] = await Promise.all([
+      fetch("/api/admin/users"),
+      fetch("/api/admin/invites"),
+      fetch("/api/admin/stats"),
+    ]);
+    if (usersRes.status === 403 || invRes.status === 403 || statsRes.status === 403) {
+      setUnauthorized(true);
+      setLoading(false);
+      return;
+    }
+    const [userData, invData, statsData] = await Promise.all([
+      usersRes.json(), invRes.json(), statsRes.json(),
+    ]);
+    setUsers(userData.data?.users || []);
+    setInvites(invData.data?.invites || []);
+    setStats(statsData.data || {});
+    setLoading(false);
+  }
+
+  async function handleApproval(userId: string, action: "approve" | "reject") {
+    setActionLoading(userId);
+    const res = await fetch("/api/admin/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, action }),
+    });
+    if (res.ok) {
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === userId
+            ? { ...u, approval_status: action === "approve" ? "approved" : "rejected" }
+            : u
+        )
+      );
+    }
+    setActionLoading(null);
+  }
+
+  async function createInviteCode() {
+    const res = await fetch("/api/admin/invites", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_uses: newCodeMaxUses }),
+    });
+    const data = await res.json();
+    if (data.data?.invite) setInvites((prev) => [data.data.invite, ...prev]);
+  }
+
+  if (loading) return <div className="p-8">Loading admin...</div>;
+  if (unauthorized) {
+    router.push("/dashboard");
+    return <div className="p-8">Access denied. Redirecting...</div>;
+  }
+
+  const pendingUsers = users.filter((u) => u.approval_status === "pending");
+  const approvedUsers = users.filter((u) => u.approval_status === "approved");
+  const rejectedUsers = users.filter((u) => u.approval_status === "rejected");
+
+  return (
+    <div className="max-w-5xl mx-auto p-8">
+      <h1 className="text-2xl font-bold mb-6">Admin Dashboard</h1>
+
+      {/* System Stats */}
+      <div className="grid grid-cols-5 gap-4 mb-8">
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-sm text-gray-500">Total Users</p>
+          <p className="text-2xl font-bold">{stats.total_users || users.length}</p>
+        </div>
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-sm text-gray-500">Pending</p>
+          <p className="text-2xl font-bold text-yellow-600">{pendingUsers.length}</p>
+        </div>
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-sm text-gray-500">Apps Today</p>
+          <p className="text-2xl font-bold">{stats.apps_today || 0}</p>
+        </div>
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-sm text-gray-500">Total Apps</p>
+          <p className="text-2xl font-bold">{stats.total_apps || 0}</p>
+        </div>
+        <div className="bg-white rounded-xl border p-4">
+          <p className="text-sm text-gray-500">Queue Depth</p>
+          <p className="text-2xl font-bold">{stats.queue_depth || 0}</p>
+        </div>
+      </div>
+
+      {/* Pending Approvals */}
+      {pendingUsers.length > 0 && (
+        <section className="bg-yellow-50 rounded-xl border border-yellow-200 p-6 mb-6">
+          <h2 className="font-semibold mb-4 text-yellow-800">
+            Pending Approvals ({pendingUsers.length})
+          </h2>
+          <div className="space-y-3">
+            {pendingUsers.map((u) => (
+              <div key={u.id} className="flex items-center justify-between bg-white rounded-lg border p-4">
+                <div>
+                  <p className="font-medium">{u.full_name || u.email}</p>
+                  <p className="text-sm text-gray-500">{u.email}</p>
+                  <p className="text-xs text-gray-400">
+                    Requested {new Date(u.created_at).toLocaleDateString()}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleApproval(u.id, "approve")}
+                    disabled={actionLoading === u.id}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => handleApproval(u.id, "reject")}
+                    disabled={actionLoading === u.id}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Approved Users */}
+      <section className="bg-white rounded-xl border p-6 mb-6">
+        <h2 className="font-semibold mb-4">Approved Users ({approvedUsers.length})</h2>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-gray-500 border-b">
+              <th className="pb-2">Name</th>
+              <th className="pb-2">Email</th>
+              <th className="pb-2">Tier</th>
+              <th className="pb-2">Onboarded</th>
+              <th className="pb-2">Apps</th>
+              <th className="pb-2">Joined</th>
+            </tr>
+          </thead>
+          <tbody>
+            {approvedUsers.map((u) => (
+              <tr key={u.id} className="border-b last:border-0">
+                <td className="py-2">{u.full_name || "-"}</td>
+                <td className="py-2">{u.email}</td>
+                <td className="py-2 capitalize">{u.tier}</td>
+                <td className="py-2">{u.onboarding_completed ? "Yes" : "No"}</td>
+                <td className="py-2">{u.application_count}</td>
+                <td className="py-2 text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      {/* Rejected Users */}
+      {rejectedUsers.length > 0 && (
+        <section className="bg-white rounded-xl border p-6 mb-6">
+          <h2 className="font-semibold mb-4 text-gray-500">Rejected ({rejectedUsers.length})</h2>
+          <div className="space-y-2">
+            {rejectedUsers.map((u) => (
+              <div key={u.id} className="flex items-center justify-between text-sm text-gray-500">
+                <span>{u.email}</span>
+                <button
+                  onClick={() => handleApproval(u.id, "approve")}
+                  className="text-brand-600 hover:underline text-xs"
+                >
+                  Re-approve
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Invite Codes (keep for backward compatibility) */}
+      <section className="bg-white rounded-xl border p-6">
+        <h2 className="font-semibold mb-4">Invite Codes (Legacy)</h2>
+        <div className="flex gap-4 mb-4">
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={newCodeMaxUses}
+            onChange={(e) => setNewCodeMaxUses(parseInt(e.target.value) || 1)}
+            className="w-24 px-3 py-2 border rounded-lg"
+            placeholder="Max uses"
+          />
+          <button onClick={createInviteCode} className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700">
+            Generate Code
+          </button>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-gray-500 border-b">
+              <th className="pb-2">Code</th>
+              <th className="pb-2">Uses</th>
+              <th className="pb-2">Active</th>
+              <th className="pb-2">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invites.map((inv) => (
+              <tr key={inv.id} className="border-b last:border-0">
+                <td className="py-2 font-mono text-sm">{inv.code}</td>
+                <td className="py-2">{inv.used_count}/{inv.max_uses}</td>
+                <td className="py-2">{inv.is_active ? "Yes" : "No"}</td>
+                <td className="py-2 text-gray-500">{new Date(inv.created_at).toLocaleDateString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
