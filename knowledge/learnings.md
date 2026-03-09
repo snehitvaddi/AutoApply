@@ -428,28 +428,33 @@ Voleon Group, Nominal, Level AI, FieldAI, NimbleRx, WeRide.ai — mostly smaller
 6. **Self Identify** — disability/veteran
 7. **Review** — final review + submit
 
-**Step 1: Account Creation (TESTED E2E on NVIDIA 2026-02-24):**
+**Step 1: Account Creation / Sign In (MULTI-USER SaaS FLOW):**
 - "Sign in with Google" button (easiest if Google is logged in on browser)
 - "Sign in with email" → shows Email + Password login
 - "Create Account" → Email + Password (with requirements) + Verify Password + "I agree" checkbox
 - Password requirements: uppercase, special char, number, lowercase, min 8 chars, alphabetic
 - Has honeypot field ("Enter website. This input is for robots only") — NEVER fill this
 - Workday accounts are GLOBAL — one account works across ALL Workday companies
-- If account already exists, use "Forgot your password?" → email comes from `{company}@otp.workday.com`
-- **Tested password:** `{REMOVED_PASSWORD}` for `{email}` on NVIDIA Workday
 
-**Gmail email reading (PROVEN WORKING):**
-- Password reset email arrived within 10 seconds from `nvidia@otp.workday.com`
-- himalaya successfully read the email and extracted the reset link
-- Reset link format: `https://{company}.wd{N}.myworkdayjobs.com/{site}/passwordreset/{token}/?redirect=...&username=...`
-- After reset → sign in → goes directly to "My Information" (Step 1 of 6, account step is gone)
+**CRITICAL: Account-Already-Exists Flow (common for returning users):**
+1. Try "Create Account" with user's email + generated password
+2. If error "account already exists" appears → click "Forgot your password?"
+3. Workday sends reset email from `{company}@otp.workday.com` within 10 seconds
+4. Read reset email via Gmail OAuth (user must have Gmail connected)
+5. Extract reset link: `https://{company}.wd{N}.myworkdayjobs.com/{site}/passwordreset/{token}/?redirect=...&username=...`
+6. Navigate to reset link → set new password → sign in
+7. After sign-in → goes directly to "My Information" (account step is skipped)
 
-**Commands for email reading:**
-```
-exec himalaya envelope list --account gmail --folder INBOX --page-size 5
-exec himalaya message read --account gmail --folder INBOX {id}
-exec himalaya envelope list --account gmail --folder "[Gmail]/Spam" --page-size 5
-```
+**Password generation for each user:**
+- Generate per-user Workday password: `{FirstInitial}{LastInitial}{RandomDigits}@{Year}App!`
+- Store encrypted in `user_profiles.workday_password_encrypted` (same AES-256-CBC as Gmail tokens)
+- Reuse across ALL Workday companies (global account)
+
+**Gmail email reading for verification (via Gmail OAuth API):**
+- Search: `from:otp.workday.com newer_than:5m`
+- Extract reset link from email body
+- Navigate to link in browser, complete reset
+- Then sign in and continue application
 
 **After sign-in, the wizard has 6 steps (account step is removed):**
 1. My Information — "How Did You Hear About Us?", "Previously worked here?", etc.
