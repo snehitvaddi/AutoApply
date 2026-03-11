@@ -150,6 +150,30 @@ class AshbyApplier(BaseApplier):
             click_ref(submit_ref)
             time.sleep(3)
 
+            # Check for validation errors (Ashby shows alert with missing fields)
+            raw_post = snapshot()
+            post_text = raw_post.lower() if raw_post else ""
+
+            # Resume upload recovery — if "resume" is in validation error, retry upload
+            if "resume" in post_text and ("required" in post_text or "missing" in post_text):
+                logger.warning("Resume validation failed — retrying upload via autofill")
+                evaluate_js("""() => {
+                    const input = document.querySelector('input#_systemfield_resume');
+                    if (input) input.click();
+                }""")
+                time.sleep(2)
+                upload_file(self.resume_path, submit_ref)  # re-arm upload
+                time.sleep(45)
+                click_ref(submit_ref)
+                time.sleep(3)
+
+            # Radio button retry — Ashby radio values may not register on first submit
+            if "corrections" in post_text or "invalid" in post_text:
+                logger.warning("Validation errors on first submit — retrying")
+                time.sleep(1)
+                click_ref(submit_ref)
+                time.sleep(3)
+
             img = take_screenshot()
             return ApplyResult(success=True, screenshot=img)
 

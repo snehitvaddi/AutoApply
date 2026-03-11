@@ -1,12 +1,29 @@
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { authenticateRequest, isAuthError } from "@/lib/auth";
-import { apiSuccess, apiError } from "@/lib/api-response";
+import { apiSuccess, apiError, apiList } from "@/lib/api-response";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+export async function GET(request: NextRequest) {
+  const auth = await authenticateRequest(request);
+  if (isAuthError(auth)) return apiError("unauthorized");
+
+  const { data, error } = await supabase
+    .from("user_resumes")
+    .select("*")
+    .eq("user_id", auth.userId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return apiError("internal_server_error", error.message);
+  }
+
+  return apiList(data || []);
+}
 
 export async function POST(request: NextRequest) {
   const auth = await authenticateRequest(request);
@@ -14,6 +31,8 @@ export async function POST(request: NextRequest) {
 
   const formData = await request.formData();
   const file = formData.get("resume") as File | null;
+  const targetRoles = formData.get("target_roles") as string | null;
+  const isDefault = formData.get("is_default") === "true";
 
   if (!file) {
     return apiError("validation_error", "resume file is required");
@@ -31,34 +50,35 @@ export async function POST(request: NextRequest) {
     return apiError("internal_server_error", uploadError.message);
   }
 
-  // Parse optional target roles into keywords array
-  const targetRoles = formData.get("target_roles") as string | null;
+  // If setting as default, unset other defaults first
+  if (isDefault) {
+    await supabase
+      .from("user_resumes")
+      .update({ is_default: false })
+      .eq("user_id", auth.userId);
+  }
+
+  // Parse target roles into array
   const targetKeywords = targetRoles
     ? targetRoles.split(",").map((s) => s.trim()).filter(Boolean)
     : [];
 
   // Insert resume record
-  const { error: insertError } = await supabase.from("user_resumes").insert({
-    user_id: auth.userId,
-    file_name: file.name,
-    storage_path: uploadData.path,
-    is_default: true,
-    target_keywords: targetKeywords,
-  });
+  const { data: resume, error: insertError } = await supabase
+    .from("user_resumes")
+    .insert({
+      user_id: auth.userId,
+      file_name: file.name,
+      storage_path: uploadData.path,
+      is_default: isDefault,
+      target_keywords: targetKeywords,
+    })
+    .select()
+    .single();
 
   if (insertError) {
     return apiError("internal_server_error", insertError.message);
   }
 
-  // Mark onboarding completed
-  const { error: updateError } = await supabase
-    .from("users")
-    .update({ onboarding_completed: true })
-    .eq("id", auth.userId);
-
-  if (updateError) {
-    return apiError("internal_server_error", updateError.message);
-  }
-
-  return apiSuccess({ uploaded: true, path: uploadData.path });
+  return apiSuccess({ resume }, 201);
 }

@@ -24,6 +24,8 @@ BLOCKED_DOMAINS = [
     "wiraa.com",
     "bestjobtool.com",
     "hirenza.com",
+    "mygwork.com",
+    "haystackapp.io",
 ]
 
 # Temporary company pauses — {company_name_lower: resume_date}

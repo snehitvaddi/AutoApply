@@ -705,3 +705,68 @@ exec himalaya envelope list --account gmail --folder "[Gmail]/Spam" --page-size 
 - Confirmed successful state is the page header: `Thank you for applying.`
 
 - Cloudflare role `7343760` (Software Engineer - Network Services) uses a simpler required set than the problematic variant `6885717`: one required relocate-to-city dropdown (`Yes/No`) plus standard resume upload. Selecting `Yes` and using atomic resume upload submitted cleanly and reached `Thank you for applying!`.
+
+---
+
+## NEW LEARNINGS (March 2026)
+
+### Figma Greenhouse — Combobox Persistence Bug
+
+- Figma's Greenhouse form has combobox values that do NOT persist in form state after click→snapshot→click
+- Required comboboxes (Country, Location, Authorization, Prior Employment, Years Experience) appear selected but submit fails
+- **Terminal blocker** — mark Figma Greenhouse as high-risk for combobox issues
+- Workaround: Try JS-based value injection as fallback if click→snapshot→click doesn't persist
+
+### Ashby Resume Upload — Autofill Recovery Pattern
+
+- Ashby resume upload can fail silently: "Resume/CV is required" even after file input binding
+- **Recovery pattern:** Upload via autofill uploader widget (not just `input#_systemfield_resume`)
+- Must verify binding with JS: `document.querySelector('#_systemfield_resume').files.length === 1`
+- If first upload fails, delete file, re-upload via autofill, wait 45s, then submit
+
+### Ashby Radio Button Validation Timing
+
+- Ashby radio buttons may fail validation on first submit due to timing/state flush issues
+- **Fix:** Allow one retry — radio values usually register on second submit attempt
+- Seen on Character.AI Research Engineer form
+
+### Rippling Custom ATS — Not Automatable
+
+- Rippling (used by ApexAnalytix, others) has a custom ATS with resume upload binding issues
+- Required CV upload field does NOT bind to hidden Rippling file input via standard `browser upload`
+- Apply button stays disabled until resume binds
+- **Terminal blocker** — add Rippling to known-hard-ATS exclusion list
+
+### Anthropic Greenhouse — High Timeout Risk
+
+- Anthropic Greenhouse forms frequently trigger browser control service timeouts during fill
+- Multiple roles (Research Engineer Agents/Tokens, Alignment Science) timed out on attempt 1
+- **Learning:** Anthropic forms may be especially heavy/slow or have anti-bot protections
+- Consider longer timeouts (15s vs default 10s) when applying to Anthropic
+
+### Country Dropdown — Always Verify Pre-Submit
+
+- Even if country dropdown appears pre-selected as "United States", it may not be in form state
+- **Always snapshot and explicitly verify/select country before submit**
+- Confirmed on Anthropic Research Engineer Pre-training (5135168008): first submit failed, retry with explicit country selection succeeded
+
+### OpenAI Seniority Mismatch
+
+- OpenAI "Data Scientist" roles actually require 10+ years of experience
+- **Skip all OpenAI Data Scientist roles** — title is misleading
+- Focus on OpenAI Research/Applied Scientist titles if they match experience level
+
+### New Aggregators / Login Walls to Block
+
+- **myGwork** — jobs aggregator, "Apply Now" redirects externally, not automatable
+- **Haystack** (haystackapp.io) — account-gated ATS, Apply CTA requires login, not automatable
+- Add both to aggregator/login-wall skip list
+
+### Gateway Recovery (Reinforced)
+
+On browser control timeout mid-application:
+1. `openclaw gateway status`
+2. `openclaw gateway start` (or `restart`)
+3. Re-open same application URL, resume from last completed step
+4. Send Telegram delay/recovery update
+5. Continue autonomously — do NOT ask user
