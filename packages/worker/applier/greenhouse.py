@@ -288,10 +288,38 @@ class GreenhouseApplier(BaseApplier):
                         retriable=True,
                     )
 
-            # 12. Post-submit screenshot
+            # 12. Verify submission confirmation (reCAPTCHA false positive check)
+            post_raw = snapshot()
+            post_text = (post_raw or "").lower()
+            confirmation_signals = [
+                "thank you for applying",
+                "application submitted",
+                "thanks for applying",
+                "application has been submitted",
+                "we have received your application",
+            ]
+            is_confirmed = any(sig in post_text for sig in confirmation_signals)
+
+            # 13. Post-submit screenshot
             img = take_screenshot()
             logger.info(f"Screenshot: {img}")
 
+            if is_confirmed:
+                return ApplyResult(success=True, screenshot=img)
+
+            # If submit button is still visible, reCAPTCHA likely blocked silently
+            still_has_submit = any(
+                f["type"] == "button" and ("submit" in f["label"].lower() or "apply" in f["label"].lower())
+                for f in parse_snapshot(post_raw) if f.get("label")
+            )
+            if still_has_submit:
+                logger.warning("Submit button still present — likely reCAPTCHA blocked")
+                return ApplyResult(
+                    success=False, screenshot=img,
+                    error="recaptcha_blocked", retriable=False,
+                )
+
+            # No confirmation text but submit button gone — likely successful
             return ApplyResult(success=True, screenshot=img)
 
         except Exception as e:

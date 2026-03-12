@@ -148,11 +148,15 @@ def download_resume(user_id: str, job_title: str | None = None) -> str:
     resume = None
     if resumes.data:
         if job_title:
+            # Score each resume by keyword match count — pick the best match
+            title_lower = job_title.lower()
+            best_score = 0
             for r in resumes.data:
                 keywords = r.get("target_keywords") or []
-                if any(kw.lower() in job_title.lower() for kw in keywords):
+                score = sum(1 for kw in keywords if kw.lower() in title_lower)
+                if score > best_score:
+                    best_score = score
                     resume = r
-                    break
         if not resume:
             for r in resumes.data:
                 if r.get("is_default"):

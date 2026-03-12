@@ -26,6 +26,7 @@ BLOCKED_DOMAINS = [
     "hirenza.com",
     "mygwork.com",
     "haystackapp.io",
+    "indeed.com",
 ]
 
 # Temporary company pauses — {company_name_lower: resume_date}

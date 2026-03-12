@@ -83,6 +83,8 @@ def main():
     hourly_count = 0
     hour_start = time.time()
     consecutive_timeouts = 0
+    idle_backoff = POLL_INTERVAL  # Exponential backoff when queue is empty
+    MAX_IDLE_BACKOFF = 300  # Cap at 5 minutes
 
     while running:
         # Reset hourly counter
@@ -97,8 +99,13 @@ def main():
 
         job = claim_next_job(WORKER_ID)
         if not job:
-            time.sleep(POLL_INTERVAL)
+            time.sleep(idle_backoff)
+            # Exponential backoff: 10s → 20s → 40s → 80s → 160s → 300s (cap)
+            idle_backoff = min(idle_backoff * 2, MAX_IDLE_BACKOFF)
             continue
+
+        # Job found — reset backoff
+        idle_backoff = POLL_INTERVAL
 
         user_id = job['user_id']
         company = job.get('company', '')

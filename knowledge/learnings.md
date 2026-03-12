@@ -770,3 +770,85 @@ On browser control timeout mid-application:
 3. Re-open same application URL, resume from last completed step
 4. Send Telegram delay/recovery update
 5. Continue autonomously — do NOT ask user
+
+### reCAPTCHA False Positive Bug (CRITICAL)
+
+The fast-apply script was **falsely reporting "submitted" when reCAPTCHA was actually blocking**:
+- Form fills completely, submit button clicked
+- reCAPTCHA silently blocks — no confirmation page appears
+- Script marks job as "applied" in dedup log (false positive)
+- Actual success rate: ~56% (242/549 confirmed vs logged)
+- **Fix:** MUST verify post-submit confirmation before marking as submitted
+- Check for: "Thank you for applying", "Application submitted", confirmation page URL change
+- If none found after 5 seconds → mark as `failed` with error `recaptcha_blocked`
+- Companies with high reCAPTCHA block rates: SoFi, Tenstorrent, Scopely, Abnormal Security, Databricks, Coinbase, CoreWeave (~37% of attempts blocked)
+
+### React Select Dropdown — Keyboard Navigation Required (CRITICAL)
+
+ARIA click on React Select dropdowns selects visually but **does NOT trigger React's onChange**:
+- Standard click→snapshot→click pattern makes the option look selected
+- But React state is unchanged → submit fails validation
+- **Fix:** Use keyboard navigation instead:
+  1. Focus the combobox (click it)
+  2. ArrowDown to navigate to desired option
+  3. Enter to select
+- This triggers React's internal event handling properly
+- Applies to: Greenhouse comboboxes, some Ashby dropdowns
+
+### Greenhouse Security Code — React nativeSetter Required
+
+The 8-character security code inputs (Stripe, Datadog, Roblox) are React controlled inputs:
+- Regular `type` or `fill` only sets the first character
+- **Fix:** Use React's internal `nativeSetter` to set each input value:
+  ```js
+  const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  nativeSetter.call(input, char);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  ```
+- Each box auto-advances focus to the next after value is set
+- Companies confirmed: Stripe, Datadog, Roblox
+
+### DS Resume Selection Logic
+
+Use different resumes based on role type:
+- **Data Scientist / Data Analyst / Analytics** roles → DS resume
+- **AI Engineer / ML Engineer / GenAI / NLP / Applied Scientist** → GenAI resume (default)
+- Worker should check job title against `target_keywords` on each resume
+- If multiple resumes match, prefer the one with the most specific keyword match
+- If no match, use the `is_default` resume
+
+### Worker Idle Queue Backoff
+
+The cron worker ran hundreds of empty queue scans over 6 days with zero submissions:
+- When queue is empty, use **exponential backoff** instead of fixed POLL_INTERVAL
+- Start at 10s, double each empty scan, cap at 5 minutes
+- Reset to 10s when a job is found
+- Log queue-exhaustion events but don't spam Telegram
+
+### Indeed — HTTP 403 Blocked
+
+Indeed returns HTTP 403, completely blocked for automated scraping:
+- Do NOT attempt to scrape Indeed job listings
+- Add `indeed.com` to blocked domains for apply URLs
+- LinkedIn Voyager API is the primary discovery source instead
+
+### Jobright Sign-Up Wall Mechanism
+
+Jobright blocks employer redirects with a **sign-up modal**:
+- Even if the underlying job is real, Jobright intercepts the apply URL
+- Modal requires account creation before showing the real employer page
+- **Not automatable** — already in blocked domains, but this documents WHY
+
+### Gusto Greenhouse — Submit No-Confirmation
+
+Gusto job `7557049` reached submit-no-confirmation cap:
+- Submit button clicked, no confirmation page appeared
+- Distinct from reCAPTCHA — form accepted submit but gave no feedback
+- Treat as `failed` if no confirmation within 5 seconds post-submit
+
+### Additional Companies by ATS Platform (March 2026)
+
+**Ashby:** Character.AI, Harvey, Ramp, PostHog, Notion
+**Greenhouse:** xAI, CoreWeave, Collibra, Tenstorrent, Scopely, DeepMind, SoFi, Perpay, Fluidstack, Rillet, Cohere, Chainlink Labs, Sumo Logic, Roblox
+**Lever:** Voleon (confirmed still active Feb 2026)
