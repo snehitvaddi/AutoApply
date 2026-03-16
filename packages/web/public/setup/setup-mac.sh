@@ -278,6 +278,68 @@ fi
 mkdir -p /tmp/autoapply/resumes /tmp/autoapply/screenshots
 log_ok "Worker directories created"
 
+# ── Auto-Update Setup ──────────────────────────────────────────────────────
+log_info "Setting up daily auto-updates..."
+
+# Copy update script into install dir
+UPDATE_SCRIPT="$INSTALL_DIR/update.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/update-mac.sh" ]; then
+  cp "$SCRIPT_DIR/update-mac.sh" "$UPDATE_SCRIPT"
+elif [ -f "$INSTALL_DIR/packages/web/public/setup/update-mac.sh" ]; then
+  cp "$INSTALL_DIR/packages/web/public/setup/update-mac.sh" "$UPDATE_SCRIPT"
+else
+  # Download from the hosted URL
+  curl -fsSL "https://autoapply-web.vercel.app/setup/update-mac.sh" -o "$UPDATE_SCRIPT" 2>/dev/null || true
+fi
+
+if [ -f "$UPDATE_SCRIPT" ]; then
+  chmod +x "$UPDATE_SCRIPT"
+
+  # Set up launchd plist for daily auto-update (runs at 3 AM daily)
+  PLIST_DIR="$HOME/Library/LaunchAgents"
+  PLIST_FILE="$PLIST_DIR/com.autoapply.update.plist"
+  mkdir -p "$PLIST_DIR"
+
+  cat > "$PLIST_FILE" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.autoapply.update</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>$UPDATE_SCRIPT</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$INSTALL_DIR/logs/update-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>$INSTALL_DIR/logs/update-launchd-error.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
+PLISTEOF
+
+  # Load the launch agent
+  launchctl unload "$PLIST_FILE" 2>/dev/null
+  launchctl load "$PLIST_FILE" 2>/dev/null
+  log_ok "Daily auto-update scheduled (3:00 AM via launchd)"
+  log_info "Manual update anytime: bash $UPDATE_SCRIPT"
+else
+  log_warn "Could not set up auto-updates — update script not found"
+fi
+
 # ── Step 9: LLM Configuration ──────────────────────────────────────────────
 log_step 9 "Configuring LLM providers..."
 

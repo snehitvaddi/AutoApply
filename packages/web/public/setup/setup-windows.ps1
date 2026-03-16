@@ -326,6 +326,53 @@ New-Item -ItemType Directory -Path $resumeDir -Force | Out-Null
 New-Item -ItemType Directory -Path $screenshotDir -Force | Out-Null
 Write-OK "Worker directories created"
 
+# ── Auto-Update Setup ──────────────────────────────────────────────────────
+Write-Info "Setting up daily auto-updates..."
+
+$UpdateScript = Join-Path $InstallDir "update.ps1"
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Copy update script into install dir
+if (Test-Path (Join-Path $ScriptDir "update-windows.ps1")) {
+    Copy-Item (Join-Path $ScriptDir "update-windows.ps1") $UpdateScript -Force
+} elseif (Test-Path (Join-Path $InstallDir "packages\web\public\setup\update-windows.ps1")) {
+    Copy-Item (Join-Path $InstallDir "packages\web\public\setup\update-windows.ps1") $UpdateScript -Force
+} else {
+    # Download from hosted URL
+    try {
+        Invoke-WebRequest -Uri "https://autoapply-web.vercel.app/setup/update-windows.ps1" -OutFile $UpdateScript -UseBasicParsing -ErrorAction SilentlyContinue
+    } catch { }
+}
+
+if (Test-Path $UpdateScript) {
+    # Create a Scheduled Task for daily auto-update at 3 AM
+    $taskName = "AutoApply-DailyUpdate"
+    $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+
+    if ($existingTask) {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    }
+
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+        -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$UpdateScript`""
+    $trigger = New-ScheduledTaskTrigger -Daily -At "3:00AM"
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+        -Settings $settings -Description "AutoApply daily code and dependency update" `
+        -ErrorAction SilentlyContinue | Out-Null
+
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Write-OK "Daily auto-update scheduled (3:00 AM via Task Scheduler)"
+    } else {
+        Write-Warn "Could not create scheduled task — run manually: powershell $UpdateScript"
+    }
+    Write-Info "Manual update anytime: powershell $UpdateScript"
+} else {
+    Write-Warn "Could not set up auto-updates - update script not found"
+}
+
 # ── Step 9: LLM Configuration ──────────────────────────────────────────────
 Write-Step 9 "Configuring LLM providers..."
 
