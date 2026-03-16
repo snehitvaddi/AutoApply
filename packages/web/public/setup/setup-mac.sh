@@ -329,3 +329,140 @@ echo -e "     ${CYAN}npm run dev${NC}"
 echo ""
 echo -e "  ${YELLOW}Need help? See docs/CLIENT-ONBOARDING.md${NC}"
 echo ""
+
+# ── Post-Setup Status Dashboard ──────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║                  SETUP STATUS DASHBOARD                     ║${NC}"
+echo -e "${BOLD}╠══════════════════════════════════════════════════════════════╣${NC}"
+
+# --- Installed Components ---
+echo -e "${BOLD}║  INSTALLED COMPONENTS                                       ║${NC}"
+echo -e "${BOLD}╠──────────────────────────────────────────────────────────────╣${NC}"
+
+status_line() {
+  local ok=$1 name=$2 detail=$3
+  if $ok; then
+    printf "  ${GREEN}[READY]${NC}   %-22s %s\n" "$name" "$detail"
+  else
+    printf "  ${RED}[MISSING]${NC} %-22s %s\n" "$name" "$detail"
+  fi
+}
+
+status_line "check_command $PYTHON_CMD" "Python" "$($PYTHON_CMD --version 2>&1)"
+status_line "check_command node" "Node.js" "$(node --version 2>&1)"
+status_line "check_command npm" "npm" "$(npm --version 2>&1)"
+status_line "check_command git" "Git" "$(git --version 2>&1 | head -1)"
+status_line "check_command openclaw" "OpenClaw CLI" "$(openclaw --version 2>&1 || echo '')"
+status_line "$PYTHON_CMD -c 'import playwright' 2>/dev/null" "Playwright" ""
+status_line "$PYTHON_CMD -c 'import supabase' 2>/dev/null" "Supabase SDK" ""
+status_line "$PYTHON_CMD -c 'import httpx' 2>/dev/null" "httpx" ""
+
+echo ""
+echo -e "${BOLD}╠──────────────────────────────────────────────────────────────╣${NC}"
+echo -e "${BOLD}║  CONFIGURATION                                              ║${NC}"
+echo -e "${BOLD}╠──────────────────────────────────────────────────────────────╣${NC}"
+
+# Check .env keys
+env_check() {
+  local key=$1 label=$2
+  if [[ -f "$ENV_FILE" ]] && grep -q "^${key}=.\+" "$ENV_FILE" 2>/dev/null; then
+    printf "  ${GREEN}[SET]${NC}     %-22s\n" "$label"
+  else
+    printf "  ${YELLOW}[NOT SET]${NC} %-22s ${YELLOW}<-- action needed${NC}\n" "$label"
+  fi
+}
+
+status_line "test -f $ENV_FILE" ".env file" "$ENV_FILE"
+env_check "NEXT_PUBLIC_SUPABASE_URL" "Supabase URL          (required)"
+env_check "NEXT_PUBLIC_SUPABASE_ANON_KEY" "Supabase Anon Key     (required)"
+env_check "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service Key  (required)"
+env_check "ENCRYPTION_KEY" "Encryption Key        (required)"
+env_check "WORKER_ID" "Worker ID             (required)"
+env_check "TELEGRAM_BOT_TOKEN" "Telegram Bot Token    (optional)"
+env_check "STRIPE_SECRET_KEY" "Stripe Secret Key     (optional)"
+env_check "GOOGLE_CLIENT_ID" "Google OAuth Client   (optional)"
+
+echo ""
+echo -e "${BOLD}╠──────────────────────────────────────────────────────────────╣${NC}"
+echo -e "${BOLD}║  SERVICES & CONNECTIONS                                     ║${NC}"
+echo -e "${BOLD}╠──────────────────────────────────────────────────────────────╣${NC}"
+
+# Test Supabase connection
+if [[ -f "$ENV_FILE" ]]; then
+  SB_URL=$(grep "^NEXT_PUBLIC_SUPABASE_URL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
+  if [[ -n "$SB_URL" ]] && curl -sf "${SB_URL}/rest/v1/" -o /dev/null 2>/dev/null; then
+    printf "  ${GREEN}[ONLINE]${NC}  %-22s\n" "Supabase API"
+  else
+    printf "  ${RED}[OFFLINE]${NC} %-22s ${YELLOW}<-- check URL/keys${NC}\n" "Supabase API"
+  fi
+else
+  printf "  ${RED}[OFFLINE]${NC} %-22s ${YELLOW}<-- no .env file${NC}\n" "Supabase API"
+fi
+
+# Check if worker directory and files exist
+if [[ -f "$INSTALL_DIR/packages/worker/worker.py" ]]; then
+  printf "  ${GREEN}[READY]${NC}   %-22s\n" "Worker code"
+else
+  printf "  ${YELLOW}[MISSING]${NC} %-22s ${YELLOW}<-- repo not cloned?${NC}\n" "Worker code"
+fi
+
+# Check OpenClaw Pro (license)
+if check_command openclaw; then
+  OC_STATUS=$(openclaw status 2>&1 || echo "")
+  if echo "$OC_STATUS" | grep -qi "pro\|active\|licensed"; then
+    printf "  ${GREEN}[ACTIVE]${NC}  %-22s\n" "OpenClaw Pro License"
+  else
+    printf "  ${YELLOW}[FREE]${NC}    %-22s ${YELLOW}<-- Pro needed (\$20/mo)${NC}\n" "OpenClaw Pro License"
+  fi
+fi
+
+status_line "test -d /tmp/autoapply/resumes" "Worker directories" ""
+
+echo ""
+echo -e "${BOLD}╠──────────────────────────────────────────────────────────────╣${NC}"
+echo -e "${BOLD}║  STILL TODO                                                 ║${NC}"
+echo -e "${BOLD}╠──────────────────────────────────────────────────────────────╣${NC}"
+
+TODO_COUNT=0
+
+print_todo() {
+  ((TODO_COUNT++))
+  printf "  ${YELLOW}$TODO_COUNT.${NC} %s\n" "$1"
+}
+
+# Check what's still needed
+if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^NEXT_PUBLIC_SUPABASE_URL=.\+" "$ENV_FILE" 2>/dev/null; then
+  print_todo "(required) Add Supabase credentials to .env"
+fi
+
+if ! check_command openclaw; then
+  print_todo "(required) Install OpenClaw CLI: npm install -g openclaw"
+elif ! (openclaw status 2>&1 | grep -qi "pro\|active\|licensed" 2>/dev/null); then
+  print_todo "(required) Activate OpenClaw Pro: https://openclaw.com/pricing"
+fi
+
+if ! [[ -f "$INSTALL_DIR/packages/worker/worker.py" ]]; then
+  print_todo "(required) Clone the AutoApply repo (private — ask admin for access)"
+fi
+
+print_todo "(required) Log in at https://autoapply-web.vercel.app and complete onboarding"
+print_todo "(required) Start the worker: cd packages/worker && $PYTHON_CMD worker.py"
+
+if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^STRIPE_SECRET_KEY=.\+" "$ENV_FILE" 2>/dev/null; then
+  print_todo "(optional) Set up Stripe billing keys in .env"
+fi
+
+if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^GOOGLE_CLIENT_ID=.\+" "$ENV_FILE" 2>/dev/null; then
+  print_todo "(optional) Set up Google OAuth for Gmail connect"
+fi
+
+if [[ $TODO_COUNT -eq 0 ]]; then
+  echo -e "  ${GREEN}Nothing! You're all set.${NC}"
+fi
+
+echo ""
+echo -e "${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "  Run this status check anytime: ${CYAN}bash ~/autoapply/status.sh${NC}"
+echo ""

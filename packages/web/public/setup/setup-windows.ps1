@@ -384,3 +384,162 @@ Write-Host "     npm run dev" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Need help? See docs\CLIENT-ONBOARDING.md" -ForegroundColor Yellow
 Write-Host ""
+
+# ── Post-Setup Status Dashboard ──────────────────────────────────────────────
+Write-Host ""
+Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor White
+Write-Host "║                  SETUP STATUS DASHBOARD                     ║" -ForegroundColor White
+Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor White
+
+Write-Host "║  INSTALLED COMPONENTS                                       ║" -ForegroundColor White
+Write-Host "╠──────────────────────────────────────────────────────────────╣" -ForegroundColor White
+
+function Write-Status($ok, $name, $detail) {
+    if ($ok) {
+        Write-Host ("  [READY]   {0,-22} {1}" -f $name, $detail) -ForegroundColor Green
+    } else {
+        Write-Host ("  [MISSING] {0,-22} {1}" -f $name, $detail) -ForegroundColor Red
+    }
+}
+
+Write-Status (Test-CommandExists $PythonCmd) "Python" "$(& $PythonCmd --version 2>&1)"
+Write-Status (Test-CommandExists "node") "Node.js" "$(node --version 2>&1)"
+Write-Status (Test-CommandExists "npm") "npm" "$(npm --version 2>&1)"
+Write-Status (Test-CommandExists "git") "Git" "$(git --version 2>&1)"
+Write-Status (Test-CommandExists "openclaw") "OpenClaw CLI" "$(try { openclaw --version 2>&1 } catch { '' })"
+
+try { & $PythonCmd -c "import playwright" 2>$null; $pwOk = $true } catch { $pwOk = $false }
+Write-Status $pwOk "Playwright" ""
+
+try { & $PythonCmd -c "import supabase" 2>$null; $sbOk = $true } catch { $sbOk = $false }
+Write-Status $sbOk "Supabase SDK" ""
+
+try { & $PythonCmd -c "import httpx" 2>$null; $hxOk = $true } catch { $hxOk = $false }
+Write-Status $hxOk "httpx" ""
+
+Write-Host ""
+Write-Host "╠──────────────────────────────────────────────────────────────╣" -ForegroundColor White
+Write-Host "║  CONFIGURATION                                              ║" -ForegroundColor White
+Write-Host "╠──────────────────────────────────────────────────────────────╣" -ForegroundColor White
+
+function Write-EnvStatus($key, $label) {
+    $val = $null
+    if (Test-Path $EnvFile) {
+        $val = (Select-String -Path $EnvFile -Pattern "^${key}=(.+)$" -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.Matches[0].Groups[1].Value })
+    }
+    if ($val) {
+        Write-Host ("  [SET]     {0,-22}" -f $label) -ForegroundColor Green
+    } else {
+        Write-Host ("  [NOT SET] {0,-22} <-- action needed" -f $label) -ForegroundColor Yellow
+    }
+}
+
+Write-Status (Test-Path $EnvFile) ".env file" "$EnvFile"
+Write-EnvStatus "NEXT_PUBLIC_SUPABASE_URL" "Supabase URL       (required)"
+Write-EnvStatus "NEXT_PUBLIC_SUPABASE_ANON_KEY" "Supabase Anon Key  (required)"
+Write-EnvStatus "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service   (required)"
+Write-EnvStatus "ENCRYPTION_KEY" "Encryption Key     (required)"
+Write-EnvStatus "WORKER_ID" "Worker ID          (required)"
+Write-EnvStatus "TELEGRAM_BOT_TOKEN" "Telegram Bot Token (optional)"
+Write-EnvStatus "STRIPE_SECRET_KEY" "Stripe Secret Key  (optional)"
+Write-EnvStatus "GOOGLE_CLIENT_ID" "Google OAuth       (optional)"
+
+Write-Host ""
+Write-Host "╠──────────────────────────────────────────────────────────────╣" -ForegroundColor White
+Write-Host "║  SERVICES & CONNECTIONS                                     ║" -ForegroundColor White
+Write-Host "╠──────────────────────────────────────────────────────────────╣" -ForegroundColor White
+
+# Test Supabase connection
+$sbConnected = $false
+if (Test-Path $EnvFile) {
+    $sbUrl = (Select-String -Path $EnvFile -Pattern "^NEXT_PUBLIC_SUPABASE_URL=(.+)$" -ErrorAction SilentlyContinue |
+              ForEach-Object { $_.Matches[0].Groups[1].Value })
+    if ($sbUrl) {
+        try {
+            $response = Invoke-WebRequest -Uri "${sbUrl}/rest/v1/" -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
+            if ($response.StatusCode -lt 400) { $sbConnected = $true }
+        } catch { }
+    }
+}
+if ($sbConnected) {
+    Write-Host ("  [ONLINE]  {0,-22}" -f "Supabase API") -ForegroundColor Green
+} else {
+    Write-Host ("  [OFFLINE] {0,-22} <-- check URL/keys" -f "Supabase API") -ForegroundColor Yellow
+}
+
+# Worker code
+$workerPath = Join-Path $InstallDir "packages\worker\worker.py"
+if (Test-Path $workerPath) {
+    Write-Host ("  [READY]   {0,-22}" -f "Worker code") -ForegroundColor Green
+} else {
+    Write-Host ("  [MISSING] {0,-22} <-- repo not cloned?" -f "Worker code") -ForegroundColor Yellow
+}
+
+# OpenClaw Pro
+if (Test-CommandExists "openclaw") {
+    $ErrorActionPreference = "Continue"
+    $ocStatus = try { openclaw status 2>&1 } catch { "" }
+    $ErrorActionPreference = "Stop"
+    if ($ocStatus -match "pro|active|licensed") {
+        Write-Host ("  [ACTIVE]  {0,-22}" -f "OpenClaw Pro License") -ForegroundColor Green
+    } else {
+        Write-Host ("  [FREE]    {0,-22} <-- Pro needed (`$20/mo)" -f "OpenClaw Pro License") -ForegroundColor Yellow
+    }
+}
+
+Write-Status (Test-Path $resumeDir) "Worker directories" ""
+
+Write-Host ""
+Write-Host "╠──────────────────────────────────────────────────────────────╣" -ForegroundColor White
+Write-Host "║  STILL TODO                                                 ║" -ForegroundColor White
+Write-Host "╠──────────────────────────────────────────────────────────────╣" -ForegroundColor White
+
+$TodoNum = 0
+
+function Write-Todo($msg) {
+    $script:TodoNum++
+    Write-Host "  $($script:TodoNum). $msg" -ForegroundColor Yellow
+}
+
+# Check what's still needed
+$hasSbUrl = $false
+if (Test-Path $EnvFile) {
+    $hasSbUrl = [bool](Select-String -Path $EnvFile -Pattern "^NEXT_PUBLIC_SUPABASE_URL=.+" -ErrorAction SilentlyContinue)
+}
+if (-not $hasSbUrl) { Write-Todo "(required) Add Supabase credentials to .env" }
+
+if (-not (Test-CommandExists "openclaw")) {
+    Write-Todo "(required) Install OpenClaw CLI: npm install -g openclaw"
+} elseif (-not ($ocStatus -match "pro|active|licensed")) {
+    Write-Todo "(required) Activate OpenClaw Pro: https://openclaw.com/pricing"
+}
+
+if (-not (Test-Path $workerPath)) {
+    Write-Todo "(required) Clone the AutoApply repo (private - ask admin for access)"
+}
+
+Write-Todo "(required) Log in at https://autoapply-web.vercel.app and complete onboarding"
+Write-Todo "(required) Start the worker: cd packages\worker && $PythonCmd worker.py"
+
+$hasStripe = $false
+if (Test-Path $EnvFile) {
+    $hasStripe = [bool](Select-String -Path $EnvFile -Pattern "^STRIPE_SECRET_KEY=.+" -ErrorAction SilentlyContinue)
+}
+if (-not $hasStripe) { Write-Todo "(optional) Set up Stripe billing keys in .env" }
+
+$hasGoogle = $false
+if (Test-Path $EnvFile) {
+    $hasGoogle = [bool](Select-String -Path $EnvFile -Pattern "^GOOGLE_CLIENT_ID=.+" -ErrorAction SilentlyContinue)
+}
+if (-not $hasGoogle) { Write-Todo "(optional) Set up Google OAuth for Gmail connect" }
+
+if ($TodoNum -eq 0) {
+    Write-Host "  Nothing! You're all set." -ForegroundColor Green
+}
+
+Write-Host ""
+Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor White
+Write-Host ""
+Write-Host "  Run this status check anytime: powershell $InstallDir\status.ps1" -ForegroundColor Cyan
+Write-Host ""
