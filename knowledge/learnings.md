@@ -2,6 +2,10 @@
 
 This file is updated after every application session. Read it BEFORE each application.
 
+**Related guides:**
+- [LinkedIn Voyager API](./linkedin-voyager-api.md) — endpoints, headers, 3-stage pipeline
+- [Email Services](./email-services.md) — AgentMail, Gmail/Himalaya, Gmail OAuth, ATS API scouting
+
 ---
 
 ## SPEED OPTIMIZATION (CRITICAL — read first)
@@ -852,3 +856,9 @@ Gusto job `7557049` reached submit-no-confirmation cap:
 **Ashby:** Character.AI, Harvey, Ramp, PostHog, Notion
 **Greenhouse:** xAI, CoreWeave, Collibra, Tenstorrent, Scopely, DeepMind, SoFi, Perpay, Fluidstack, Rillet, Cohere, Chainlink Labs, Sumo Logic, Roblox
 **Lever:** Voleon (confirmed still active Feb 2026)
+
+### Unsupported ATS Platforms (No Learnings Yet)
+
+**iCIMS:** Mentioned in product roadmap as target ATS. No applier, no scanner, no learnings. Many enterprise companies (Amazon, Target, UnitedHealth) use iCIMS. URL pattern: `*.icims.com/jobs/*/job` or `careers-*.icims.com`. Status: Not yet supported.
+
+**Taleo (Oracle):** Legacy ATS still used by some large enterprises. URL pattern: `*.taleo.net`. Known for extremely complex multi-page forms. Status: Not yet supported, low priority (most companies migrating away).

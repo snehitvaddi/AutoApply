@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
   // Check if a user row already exists
   const { data: existingUser } = await admin
     .from("users")
-    .select("id, approval_status, onboarding_completed")
+    .select("id, approval_status, onboarding_completed, is_admin")
     .eq("id", userId)
     .single();
 
@@ -89,9 +89,13 @@ export async function GET(request: NextRequest) {
         redirectPath = "/auth/rejected";
         break;
       case "approved":
-        redirectPath = existingUser.onboarding_completed
-          ? "/dashboard"
-          : "/onboarding";
+        if (existingUser.is_admin) {
+          redirectPath = "/admin";
+        } else {
+          redirectPath = existingUser.onboarding_completed
+            ? "/dashboard"
+            : "/onboarding";
+        }
         break;
       default:
         // Unknown status — treat as pending

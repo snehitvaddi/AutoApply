@@ -198,7 +198,7 @@ export default function OnboardingPage() {
         formData.append("resume", resumeFile);
         const res = await fetch("/api/onboarding/resume", { method: "POST", body: formData });
         if (!res.ok) throw new Error((await res.json()).message);
-        router.push("/dashboard");
+        router.push("/setup-complete");
         return;
       }
 
