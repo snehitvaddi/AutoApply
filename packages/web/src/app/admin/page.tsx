@@ -16,6 +16,22 @@ interface UserInfo {
   application_count: number;
 }
 
+interface WorkerLog {
+  id: string;
+  user_id: string | null;
+  worker_id: string;
+  level: string;
+  category: string;
+  message: string;
+  details: Record<string, unknown> | null;
+  ats: string | null;
+  company: string | null;
+  resolved: boolean;
+  resolution_note: string | null;
+  created_at: string;
+  users?: { email: string; full_name: string | null } | null;
+}
+
 interface InviteCode {
   id: string;
   code: string;
@@ -30,6 +46,8 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [invites, setInvites] = useState<InviteCode[]>([]);
   const [stats, setStats] = useState<Record<string, number>>({});
+  const [workerLogs, setWorkerLogs] = useState<WorkerLog[]>([]);
+  const [logSummary, setLogSummary] = useState({ unresolved_errors: 0, total_today: 0 });
   const [newCodeMaxUses, setNewCodeMaxUses] = useState(1);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -40,22 +58,25 @@ export default function AdminPage() {
   }, []);
 
   async function loadData() {
-    const [usersRes, invRes, statsRes] = await Promise.all([
+    const [usersRes, invRes, statsRes, logsRes] = await Promise.all([
       fetch("/api/admin/users"),
       fetch("/api/admin/invites"),
       fetch("/api/admin/stats"),
+      fetch("/api/admin/worker-logs?resolved=false&limit=50"),
     ]);
     if (usersRes.status === 403 || invRes.status === 403 || statsRes.status === 403) {
       setUnauthorized(true);
       setLoading(false);
       return;
     }
-    const [userData, invData, statsData] = await Promise.all([
-      usersRes.json(), invRes.json(), statsRes.json(),
+    const [userData, invData, statsData, logsData] = await Promise.all([
+      usersRes.json(), invRes.json(), statsRes.json(), logsRes.json(),
     ]);
     setUsers(userData.data?.users || []);
     setInvites(invData.data?.invites || []);
     setStats(statsData.data || {});
+    setWorkerLogs(logsData.data?.logs || []);
+    setLogSummary(logsData.data?.summary || { unresolved_errors: 0, total_today: 0 });
     setLoading(false);
   }
 
@@ -74,6 +95,20 @@ export default function AdminPage() {
             : u
         )
       );
+    }
+    setActionLoading(null);
+  }
+
+  async function resolveLog(logId: string, note?: string) {
+    setActionLoading(logId);
+    const res = await fetch("/api/admin/worker-logs", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ log_id: logId, resolved: true, resolution_note: note || "Resolved by admin" }),
+    });
+    if (res.ok) {
+      setWorkerLogs((prev) => prev.filter((l) => l.id !== logId));
+      setLogSummary((prev) => ({ ...prev, unresolved_errors: Math.max(0, prev.unresolved_errors - 1) }));
     }
     setActionLoading(null);
   }
@@ -103,7 +138,7 @@ export default function AdminPage() {
       <h1 className="text-2xl font-bold mb-6">Admin Dashboard</h1>
 
       {/* System Stats */}
-      <div className="grid grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-6 gap-4 mb-8">
         <div className="bg-white rounded-xl border p-4">
           <p className="text-sm text-gray-500">Total Users</p>
           <p className="text-2xl font-bold">{stats.total_users || users.length}</p>
@@ -123,6 +158,12 @@ export default function AdminPage() {
         <div className="bg-white rounded-xl border p-4">
           <p className="text-sm text-gray-500">Queue Depth</p>
           <p className="text-2xl font-bold">{stats.queue_depth || 0}</p>
+        </div>
+        <div className={`rounded-xl border p-4 ${logSummary.unresolved_errors > 0 ? "bg-red-50 border-red-200" : "bg-white"}`}>
+          <p className="text-sm text-gray-500">Worker Issues</p>
+          <p className={`text-2xl font-bold ${logSummary.unresolved_errors > 0 ? "text-red-600" : ""}`}>
+            {logSummary.unresolved_errors}
+          </p>
         </div>
       </div>
 
@@ -207,6 +248,67 @@ export default function AdminPage() {
                 >
                   Re-approve
                 </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Worker Logs */}
+      {workerLogs.length > 0 && (
+        <section className="bg-red-50 rounded-xl border border-red-200 p-6 mb-6">
+          <h2 className="font-semibold mb-4 text-red-800">
+            Worker Issues ({workerLogs.length} unresolved)
+          </h2>
+          <div className="space-y-3">
+            {workerLogs.map((log) => (
+              <div key={log.id} className="bg-white rounded-lg border p-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                        log.level === "critical" ? "bg-red-100 text-red-800" :
+                        log.level === "error" ? "bg-red-50 text-red-700" :
+                        log.level === "warn" ? "bg-yellow-50 text-yellow-700" :
+                        "bg-gray-50 text-gray-600"
+                      }`}>
+                        {log.level.toUpperCase()}
+                      </span>
+                      <span className="text-xs text-gray-400">{log.category}</span>
+                      {log.ats && <span className="text-xs text-gray-400">| {log.ats}</span>}
+                      {log.company && <span className="text-xs text-gray-400">| {log.company}</span>}
+                    </div>
+                    <p className="text-sm font-medium">{log.message}</p>
+                    <div className="flex gap-4 mt-1">
+                      <p className="text-xs text-gray-500">
+                        Worker: {log.worker_id}
+                      </p>
+                      {log.users && (
+                        <p className="text-xs text-gray-500">
+                          User: {log.users.full_name || log.users.email}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-400">
+                        {new Date(log.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                    {log.details && (
+                      <details className="mt-2">
+                        <summary className="text-xs text-gray-400 cursor-pointer">Details</summary>
+                        <pre className="mt-1 text-xs bg-gray-50 p-2 rounded overflow-x-auto">
+                          {JSON.stringify(log.details, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => resolveLog(log.id)}
+                    disabled={actionLoading === log.id}
+                    className="ml-4 px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    Resolve
+                  </button>
+                </div>
               </div>
             ))}
           </div>

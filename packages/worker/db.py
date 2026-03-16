@@ -230,3 +230,121 @@ def get_global_knowledge(key: str) -> dict | None:
     if result.data:
         return result.data.get("value")
     return None
+
+
+# ── Worker Config Sync ─────────────────────────────────────────────────────
+
+def get_worker_config(user_id: str) -> dict:
+    """Fetch worker config from Supabase (synced with web UI settings)."""
+    client = get_client()
+    result = (
+        client.table("worker_config")
+        .select("*")
+        .eq("user_id", user_id)
+        .single()
+        .execute()
+    )
+    if result.data:
+        return result.data
+    # Return defaults if no config exists
+    return {
+        "llm_provider": "none",
+        "llm_model": "",
+        "llm_api_key": "",
+        "llm_backend_provider": "none",
+        "llm_backend_model": "",
+        "llm_backend_api_key": "",
+        "resume_tailoring": False,
+        "cover_letters": False,
+        "smart_answers": False,
+        "monthly_limit": 50,
+        "poll_interval": 10,
+        "apply_cooldown": 30,
+        "auto_apply": True,
+        "max_daily_apps": 20,
+    }
+
+
+def get_system_worker_config() -> dict:
+    """Fetch system-level worker config from system_config table.
+    Falls back to env vars if not found in DB."""
+    client = get_client()
+    config = {}
+    keys = [
+        "llm_provider", "llm_model", "llm_api_key",
+        "llm_backend_provider", "llm_backend_model", "llm_backend_api_key",
+        "resume_tailoring", "cover_letters", "smart_answers",
+    ]
+    for key in keys:
+        result = (
+            client.table("system_config")
+            .select("value")
+            .eq("key", key)
+            .single()
+            .execute()
+        )
+        if result.data:
+            config[key] = result.data.get("value")
+    return config
+
+
+# ── Worker Logging ─────────────────────────────────────────────────────────
+
+def log_worker_event(
+    worker_id: str,
+    level: str,
+    category: str,
+    message: str,
+    user_id: str | None = None,
+    job_id: str | None = None,
+    queue_id: str | None = None,
+    ats: str | None = None,
+    company: str | None = None,
+    details: dict | None = None,
+):
+    """Log a worker event to Supabase for admin visibility."""
+    client = get_client()
+    try:
+        entry = {
+            "worker_id": worker_id,
+            "level": level,
+            "category": category,
+            "message": message,
+        }
+        if user_id:
+            entry["user_id"] = user_id
+        if job_id:
+            entry["job_id"] = job_id
+        if queue_id:
+            entry["queue_id"] = queue_id
+        if ats:
+            entry["ats"] = ats
+        if company:
+            entry["company"] = company
+        if details:
+            entry["details"] = details
+
+        client.table("worker_logs").insert(entry).execute()
+    except Exception as e:
+        logger.error(f"Failed to write worker log: {e}")
+
+
+def log_worker_error(
+    worker_id: str,
+    message: str,
+    category: str = "general",
+    **kwargs,
+):
+    """Convenience wrapper for error-level worker logs."""
+    log_worker_event(worker_id, "error", category, message, **kwargs)
+
+
+def log_worker_health(worker_id: str, health_data: dict):
+    """Log a health check result for admin monitoring."""
+    log_worker_event(
+        worker_id=worker_id,
+        level="info",
+        category="health",
+        message=f"Health check: {health_data.get('status', 'unknown')}",
+        details=health_data,
+    )

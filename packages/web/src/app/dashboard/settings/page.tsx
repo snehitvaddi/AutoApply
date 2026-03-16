@@ -9,7 +9,7 @@ const ROLE_PRESETS = [
   "ML Platform Engineer", "AI Infrastructure Engineer",
 ];
 
-type Tab = "ai-import" | "personal" | "work" | "preferences" | "resumes" | "telegram" | "billing";
+type Tab = "ai-import" | "personal" | "work" | "preferences" | "resumes" | "telegram" | "worker" | "billing";
 
 const AI_PROFILE_PROMPT = `I'm updating my automated job application profile. I need you to extract my professional details in JSON format. Use everything you know about me from our past conversations, my resume, or anything I've shared before.
 
@@ -104,6 +104,28 @@ export default function SettingsPage() {
   // Telegram
   const [telegramChatId, setTelegramChatId] = useState("");
 
+  // Worker & LLM Config
+  const [workerConfig, setWorkerConfig] = useState({
+    llm_provider: "none",
+    llm_model: "",
+    llm_api_key_preview: "",
+    llm_backend_provider: "none",
+    llm_backend_model: "",
+    llm_backend_api_key_preview: "",
+    ollama_base_url: "http://localhost:11434",
+    resume_tailoring: false,
+    cover_letters: false,
+    smart_answers: false,
+    monthly_limit: 50,
+    worker_id: "worker-1",
+    poll_interval: 10,
+    apply_cooldown: 30,
+    auto_apply: true,
+    max_daily_apps: 20,
+  });
+  const [newLlmApiKey, setNewLlmApiKey] = useState("");
+  const [newBackendApiKey, setNewBackendApiKey] = useState("");
+
   // Billing
   const [tier, setTier] = useState("free");
 
@@ -124,7 +146,11 @@ export default function SettingsPage() {
       fetch("/api/settings/profile").then((r) => r.json()),
       fetch("/api/settings/preferences").then((r) => r.json()),
       fetch("/api/settings/resumes").then((r) => r.json()),
-    ]).then(([profileData, prefsData, resumesData]) => {
+      fetch("/api/settings/worker-config").then((r) => r.json()),
+    ]).then(([profileData, prefsData, resumesData, workerData]) => {
+      if (workerData.data?.config) {
+        setWorkerConfig(workerData.data.config);
+      }
       const p = profileData.data?.profile || {};
       setFirstName(p.first_name || "");
       setLastName(p.last_name || "");
@@ -403,6 +429,7 @@ export default function SettingsPage() {
     { key: "preferences", label: "Job Preferences" },
     { key: "resumes", label: "Resumes" },
     { key: "telegram", label: "Telegram" },
+    { key: "worker", label: "Worker & LLM" },
     { key: "billing", label: "Billing" },
   ];
 
@@ -914,6 +941,302 @@ export default function SettingsPage() {
               Disconnect Telegram
             </button>
           )}
+        </section>
+      )}
+
+      {/* Worker & LLM Tab */}
+      {activeTab === "worker" && (
+        <section className="bg-white rounded-xl border p-6 space-y-6">
+          <h2 className="font-semibold">Worker & LLM Configuration</h2>
+          <p className="text-sm text-gray-500">
+            These settings sync automatically with your worker. Changes take effect on the next poll cycle.
+          </p>
+
+          {/* Level 1: User-Facing LLM */}
+          <div className="border rounded-lg p-4">
+            <h3 className="font-medium mb-3">Level 1: User-Facing LLM</h3>
+            <p className="text-xs text-gray-500 mb-3">Powers chat and AI profile import</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Provider</label>
+                <select
+                  value={workerConfig.llm_provider}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, llm_provider: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                >
+                  <option value="none">None (manual)</option>
+                  <option value="anthropic">Claude (Anthropic)</option>
+                  <option value="openai">GPT (OpenAI)</option>
+                  <option value="google">Gemini (Google)</option>
+                  <option value="ollama">Local (Ollama)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Model</label>
+                <select
+                  value={workerConfig.llm_model}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, llm_model: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                >
+                  {workerConfig.llm_provider === "anthropic" && (
+                    <>
+                      <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (recommended)</option>
+                      <option value="claude-opus-4-6">Claude Opus 4.6</option>
+                      <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                    </>
+                  )}
+                  {workerConfig.llm_provider === "openai" && (
+                    <>
+                      <option value="gpt-4.1">GPT-4.1 (recommended)</option>
+                      <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                      <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
+                      <option value="o3">o3</option>
+                    </>
+                  )}
+                  {workerConfig.llm_provider === "google" && (
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                  )}
+                  {workerConfig.llm_provider === "ollama" && (
+                    <>
+                      <option value="llama3.1:8b">Llama 3.1 8B</option>
+                      <option value="llama3.1:70b">Llama 3.1 70B</option>
+                      <option value="mistral:7b">Mistral 7B</option>
+                    </>
+                  )}
+                  {workerConfig.llm_provider === "none" && (
+                    <option value="">N/A</option>
+                  )}
+                </select>
+              </div>
+            </div>
+            {workerConfig.llm_provider !== "none" && workerConfig.llm_provider !== "ollama" && (
+              <div className="mt-3">
+                <label className="block text-sm font-medium mb-1">
+                  API Key {workerConfig.llm_api_key_preview && (
+                    <span className="text-xs text-gray-400 font-normal">
+                      (current: {workerConfig.llm_api_key_preview})
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="password"
+                  value={newLlmApiKey}
+                  onChange={(e) => setNewLlmApiKey(e.target.value)}
+                  placeholder="Enter new key to update (leave blank to keep current)"
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Level 2: Backend LLM */}
+          <div className="border rounded-lg p-4">
+            <h3 className="font-medium mb-3">Level 2: Backend LLM</h3>
+            <p className="text-xs text-gray-500 mb-3">Powers form filling, resume tailoring, cover letters</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Provider</label>
+                <select
+                  value={workerConfig.llm_backend_provider}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, llm_backend_provider: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                >
+                  <option value="none">None</option>
+                  <option value="anthropic">Claude (Anthropic)</option>
+                  <option value="openai">GPT (OpenAI)</option>
+                  <option value="google">Gemini (Google)</option>
+                  <option value="ollama">Local (Ollama)</option>
+                  <option value="same">Same as Level 1</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Model</label>
+                <select
+                  value={workerConfig.llm_backend_model}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, llm_backend_model: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                >
+                  {workerConfig.llm_backend_provider === "anthropic" && (
+                    <>
+                      <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+                      <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (cheaper)</option>
+                    </>
+                  )}
+                  {workerConfig.llm_backend_provider === "openai" && (
+                    <>
+                      <option value="gpt-4.1-mini">GPT-4.1 Mini (recommended)</option>
+                      <option value="gpt-4.1-nano">GPT-4.1 Nano (cheapest)</option>
+                    </>
+                  )}
+                  {workerConfig.llm_backend_provider === "google" && (
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                  )}
+                  {workerConfig.llm_backend_provider === "ollama" && (
+                    <option value="llama3.1:8b">Llama 3.1 8B</option>
+                  )}
+                  {(workerConfig.llm_backend_provider === "none" || workerConfig.llm_backend_provider === "same") && (
+                    <option value="">N/A</option>
+                  )}
+                </select>
+              </div>
+            </div>
+            {workerConfig.llm_backend_provider !== "none" && workerConfig.llm_backend_provider !== "same" && workerConfig.llm_backend_provider !== "ollama" && (
+              <div className="mt-3">
+                <label className="block text-sm font-medium mb-1">
+                  API Key {workerConfig.llm_backend_api_key_preview && (
+                    <span className="text-xs text-gray-400 font-normal">
+                      (current: {workerConfig.llm_backend_api_key_preview})
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="password"
+                  value={newBackendApiKey}
+                  onChange={(e) => setNewBackendApiKey(e.target.value)}
+                  placeholder="Enter new key to update (leave blank to keep current)"
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* LLM Features */}
+          <div className="border rounded-lg p-4">
+            <h3 className="font-medium mb-3">LLM Features</h3>
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={workerConfig.resume_tailoring}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, resume_tailoring: e.target.checked })}
+                  className="rounded"
+                />
+                <div>
+                  <span className="text-sm font-medium">Resume Tailoring</span>
+                  <p className="text-xs text-gray-500">LLM customizes resume for each job</p>
+                </div>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={workerConfig.cover_letters}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, cover_letters: e.target.checked })}
+                  className="rounded"
+                />
+                <div>
+                  <span className="text-sm font-medium">Auto Cover Letters</span>
+                  <p className="text-xs text-gray-500">Generate cover letters per application</p>
+                </div>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={workerConfig.smart_answers}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, smart_answers: e.target.checked })}
+                  className="rounded"
+                />
+                <div>
+                  <span className="text-sm font-medium">Smart Form Answers</span>
+                  <p className="text-xs text-gray-500">LLM answers &quot;Why do you want to work here?&quot; etc.</p>
+                </div>
+              </label>
+              <div>
+                <label className="block text-sm font-medium mb-1">Monthly LLM Spend Limit ($)</label>
+                <input
+                  type="number"
+                  value={workerConfig.monthly_limit}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, monthly_limit: parseInt(e.target.value) || 0 })}
+                  className="w-32 px-3 py-2 border rounded-lg text-sm"
+                />
+                <span className="text-xs text-gray-500 ml-2">0 = unlimited</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Worker Settings */}
+          <div className="border rounded-lg p-4">
+            <h3 className="font-medium mb-3">Worker Settings</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Worker ID</label>
+                <input
+                  type="text"
+                  value={workerConfig.worker_id}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, worker_id: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Max Daily Applications</label>
+                <input
+                  type="number"
+                  value={workerConfig.max_daily_apps}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, max_daily_apps: parseInt(e.target.value) || 5 })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Poll Interval (seconds)</label>
+                <input
+                  type="number"
+                  value={workerConfig.poll_interval}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, poll_interval: parseInt(e.target.value) || 10 })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Apply Cooldown (seconds)</label>
+                <input
+                  type="number"
+                  value={workerConfig.apply_cooldown}
+                  onChange={(e) => setWorkerConfig({ ...workerConfig, apply_cooldown: parseInt(e.target.value) || 30 })}
+                  className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-3 mt-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={workerConfig.auto_apply}
+                onChange={(e) => setWorkerConfig({ ...workerConfig, auto_apply: e.target.checked })}
+                className="rounded"
+              />
+              <span className="text-sm font-medium">Auto-apply enabled</span>
+            </label>
+          </div>
+
+          <button
+            onClick={async () => {
+              setSaving(true);
+              const payload: Record<string, unknown> = { ...workerConfig };
+              // Only send API keys if user entered new ones
+              if (newLlmApiKey) payload.llm_api_key = newLlmApiKey;
+              if (newBackendApiKey) payload.llm_backend_api_key = newBackendApiKey;
+              // Remove preview fields
+              delete payload.llm_api_key_preview;
+              delete payload.llm_backend_api_key_preview;
+
+              const res = await fetch("/api/settings/worker-config", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              });
+              const json = await res.json();
+              if (res.ok) {
+                setWorkerConfig(json.data.config);
+                setNewLlmApiKey("");
+                setNewBackendApiKey("");
+                showMessage("Worker config saved! Changes will sync on next poll.");
+              } else {
+                showMessage(json.error || "Failed to save", "error");
+              }
+              setSaving(false);
+            }}
+            disabled={saving}
+            className="w-full py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save Worker & LLM Config"}
+          </button>
         </section>
       )}
 
