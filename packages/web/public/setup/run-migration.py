@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AutoApply — Database Migration Runner
+AutoApply - Database Migration Runner
 Connects to Supabase PostgreSQL and runs migration SQL.
 Called by setup-mac.sh and setup-windows.ps1 after .env is configured.
 """
@@ -8,6 +8,11 @@ Called by setup-mac.sh and setup-windows.ps1 after .env is configured.
 import os
 import sys
 import re
+
+# Fix Windows encoding issues (cp1252 can't handle Unicode)
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 def get_env_value(env_file, key):
     """Read a value from a .env file."""
@@ -257,9 +262,9 @@ def main():
         env_file = sys.argv[1]
 
     print("")
-    print("  ══════════════════════════════════════════════")
-    print("  AutoApply — Database Migration")
-    print("  ══════════════════════════════════════════════")
+    print("  ==============================================")
+    print("  AutoApply -- Database Migration")
+    print("  ==============================================")
 
     # Read Supabase config from .env
     supabase_url = get_env_value(env_file, "NEXT_PUBLIC_SUPABASE_URL") or get_env_value(env_file, "SUPABASE_URL")
