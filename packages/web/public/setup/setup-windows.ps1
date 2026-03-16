@@ -204,8 +204,10 @@ Write-Host "  Sign up at: https://openclaw.com/pricing" -ForegroundColor Yellow
 # ── Step 5: Playwright ──────────────────────────────────────────────────────
 Write-Step 5 "Installing Playwright browsers..."
 
-& $PythonCmd -m pip install --quiet playwright 2>$null
-& $PythonCmd -m playwright install chromium
+$ErrorActionPreference = "Continue"
+& $PythonCmd -m pip install --quiet playwright 2>&1 | Where-Object { $_ -notmatch "WARNING|warn" } | Write-Host
+& $PythonCmd -m playwright install chromium 2>&1 | Where-Object { $_ -notmatch "WARNING|warn" } | Write-Host
+$ErrorActionPreference = "Stop"
 Write-OK "Playwright Chromium installed"
 
 # ── Step 6: Clone repo ──────────────────────────────────────────────────────
@@ -232,9 +234,11 @@ if (Test-Path $InstallDir) {
 # ── Step 7: Install dependencies ────────────────────────────────────────────
 Write-Step 7 "Installing dependencies..."
 
+$ErrorActionPreference = "Continue"
+
 if (Test-Path "packages/worker/requirements.txt") {
     Write-Info "Installing Python packages..."
-    & $PythonCmd -m pip install --quiet -r packages/worker/requirements.txt 2>$null
+    & $PythonCmd -m pip install --quiet -r packages/worker/requirements.txt 2>&1 | Where-Object { $_ -notmatch "WARNING|warn" } | Write-Host
     Write-OK "Python packages installed"
 } else {
     Write-Warn "packages/worker/requirements.txt not found — skipping"
@@ -243,12 +247,14 @@ if (Test-Path "packages/worker/requirements.txt") {
 if (Test-Path "packages/web/package.json") {
     Write-Info "Installing Node.js packages..."
     Push-Location packages/web
-    npm install --silent 2>$null
+    npm install --silent 2>&1 | Where-Object { $_ -notmatch "npm warn" } | Write-Host
     Pop-Location
     Write-OK "Node.js packages installed"
 } else {
     Write-Warn "packages/web/package.json not found — skipping"
 }
+
+$ErrorActionPreference = "Stop"
 
 # ── Step 8: Environment configuration ───────────────────────────────────────
 Write-Step 8 "Configuring environment..."
