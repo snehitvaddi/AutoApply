@@ -17,6 +17,9 @@ LOG_DIR="$INSTALL_DIR/logs"
 LOG_FILE="$LOG_DIR/update-$(date +%Y-%m-%d).log"
 ENV_FILE="$INSTALL_DIR/.env"
 LOCK_FILE="/tmp/autoapply-update.lock"
+LAST_UPDATE_FILE="$INSTALL_DIR/.last-update"
+UPDATE_INTERVAL_DAYS=5
+QUIET_MODE="${1:-}"  # pass --quiet to suppress banner (for cron)
 
 mkdir -p "$LOG_DIR"
 
@@ -27,6 +30,33 @@ log_ok()   { log "${GREEN}✓${NC} $1"; }
 log_warn() { log "${YELLOW}⚠${NC} $1"; }
 log_fail() { log "${RED}✗${NC} $1"; }
 log_info() { log "${CYAN}→${NC} $1"; }
+
+# ── Check if update is needed ──────────────────────────────────────────────
+
+needs_update() {
+  # Always update if no timestamp file
+  if [ ! -f "$LAST_UPDATE_FILE" ]; then
+    return 0
+  fi
+
+  LAST_TS=$(cat "$LAST_UPDATE_FILE" 2>/dev/null || echo "0")
+  NOW_TS=$(date +%s)
+  ELAPSED=$(( (NOW_TS - LAST_TS) / 86400 ))
+
+  if [ "$ELAPSED" -ge "$UPDATE_INTERVAL_DAYS" ]; then
+    return 0  # needs update
+  else
+    return 1  # still fresh
+  fi
+}
+
+# If called with --check, only run if stale (for login triggers)
+if [ "$QUIET_MODE" = "--check" ]; then
+  if ! needs_update; then
+    # Last update was recent, skip silently
+    exit 0
+  fi
+fi
 
 # ── Lock (prevent concurrent updates) ──────────────────────────────────────
 
@@ -41,6 +71,29 @@ if [ -f "$LOCK_FILE" ]; then
 fi
 echo $$ > "$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"' EXIT
+
+# ── Visual Banner ──────────────────────────────────────────────────────────
+
+if [ "$QUIET_MODE" != "--quiet" ]; then
+  echo ""
+  echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}${BOLD}║        AutoApply — Checking for updates...       ║${NC}"
+  echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════╝${NC}"
+
+  if [ -f "$LAST_UPDATE_FILE" ]; then
+    LAST_TS=$(cat "$LAST_UPDATE_FILE" 2>/dev/null || echo "0")
+    NOW_TS=$(date +%s)
+    DAYS_AGO=$(( (NOW_TS - LAST_TS) / 86400 ))
+    if [ "$DAYS_AGO" -gt 0 ]; then
+      echo -e "  ${YELLOW}Last updated: ${DAYS_AGO} day(s) ago${NC}"
+    else
+      echo -e "  ${GREEN}Last updated: today${NC}"
+    fi
+  else
+    echo -e "  ${YELLOW}First update check${NC}"
+  fi
+  echo ""
+fi
 
 # ── Start ───────────────────────────────────────────────────────────────────
 
@@ -229,6 +282,21 @@ else
 fi
 log "═══════════════════════════════════════════════════"
 log "Log saved to: $LOG_FILE"
+
+# Save last-update timestamp
+date +%s > "$LAST_UPDATE_FILE"
+
+# Show completion banner
+if [ "$QUIET_MODE" != "--quiet" ]; then
+  echo ""
+  if [ "$UPDATES_PULLED" = true ]; then
+    echo -e "${GREEN}${BOLD}  ✓ AutoApply updated successfully!${NC}"
+  else
+    echo -e "${GREEN}${BOLD}  ✓ AutoApply is up to date.${NC}"
+  fi
+  echo -e "  ${CYAN}Next check: in $UPDATE_INTERVAL_DAYS days or on next login${NC}"
+  echo ""
+fi
 
 # Cleanup old logs (keep 30 days)
 find "$LOG_DIR" -name "update-*.log" -mtime +30 -delete 2>/dev/null

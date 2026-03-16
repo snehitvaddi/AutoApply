@@ -313,6 +313,7 @@ if [ -f "$UPDATE_SCRIPT" ]; then
     <array>
         <string>/bin/bash</string>
         <string>$UPDATE_SCRIPT</string>
+        <string>--check</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -326,7 +327,7 @@ if [ -f "$UPDATE_SCRIPT" ]; then
     <key>StandardErrorPath</key>
     <string>$INSTALL_DIR/logs/update-launchd-error.log</string>
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
 </dict>
 </plist>
 PLISTEOF
@@ -334,7 +335,7 @@ PLISTEOF
   # Load the launch agent
   launchctl unload "$PLIST_FILE" 2>/dev/null
   launchctl load "$PLIST_FILE" 2>/dev/null
-  log_ok "Daily auto-update scheduled (3:00 AM via launchd)"
+  log_ok "Auto-update scheduled: on login + daily 3:00 AM (skips if updated within 5 days)"
   log_info "Manual update anytime: bash $UPDATE_SCRIPT"
 else
   log_warn "Could not set up auto-updates — update script not found"

@@ -354,19 +354,21 @@ if (Test-Path $UpdateScript) {
     }
 
     $action = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$UpdateScript`""
-    $trigger = New-ScheduledTaskTrigger -Daily -At "3:00AM"
+        -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$UpdateScript`" -Mode --check"
+    $triggerDaily = New-ScheduledTaskTrigger -Daily -At "3:00AM"
+    $triggerLogon = New-ScheduledTaskTrigger -AtLogOn
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd `
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
-        -Settings $settings -Description "AutoApply daily code and dependency update" `
+    Register-ScheduledTask -TaskName $taskName -Action $action `
+        -Trigger @($triggerDaily, $triggerLogon) `
+        -Settings $settings -Description "AutoApply auto-update: on login + daily 3AM (skips if updated within 5 days)" `
         -ErrorAction SilentlyContinue | Out-Null
 
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-        Write-OK "Daily auto-update scheduled (3:00 AM via Task Scheduler)"
+        Write-OK "Auto-update scheduled: on login + daily 3:00 AM (skips if updated within 5 days)"
     } else {
-        Write-Warn "Could not create scheduled task — run manually: powershell $UpdateScript"
+        Write-Warn "Could not create scheduled task - run manually: powershell $UpdateScript"
     }
     Write-Info "Manual update anytime: powershell $UpdateScript"
 } else {

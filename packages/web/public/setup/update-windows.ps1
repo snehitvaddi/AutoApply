@@ -4,11 +4,17 @@
 # Runs daily via Task Scheduler (installed by setup-windows.ps1) or manually.
 # ============================================================================
 
+param(
+    [string]$Mode = ""  # --check = only run if stale, --quiet = no banner
+)
+
 $InstallDir = "$env:USERPROFILE\autoapply"
 $LogDir = Join-Path $InstallDir "logs"
 $LogFile = Join-Path $LogDir "update-$(Get-Date -Format 'yyyy-MM-dd').log"
 $EnvFile = Join-Path $InstallDir ".env"
 $LockFile = Join-Path $env:TEMP "autoapply-update.lock"
+$LastUpdateFile = Join-Path $InstallDir ".last-update"
+$UpdateIntervalDays = 5
 
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 
@@ -24,6 +30,49 @@ function Log-OK($msg)   { Write-Log "[OK]   $msg" }
 function Log-Warn($msg) { Write-Log "[WARN] $msg" }
 function Log-Fail($msg) { Write-Log "[FAIL] $msg" }
 function Log-Info($msg) { Write-Log "[-->]  $msg" }
+
+# ── Check if update is needed ──────────────────────────────────────────────
+
+function Test-NeedsUpdate {
+    if (-not (Test-Path $LastUpdateFile)) { return $true }
+    $lastTs = Get-Content $LastUpdateFile -ErrorAction SilentlyContinue
+    if (-not $lastTs) { return $true }
+    $lastDate = [DateTimeOffset]::FromUnixTimeSeconds([long]$lastTs).LocalDateTime
+    $daysSince = ((Get-Date) - $lastDate).Days
+    return ($daysSince -ge $UpdateIntervalDays)
+}
+
+# If called with --check, only run if stale (for login triggers)
+if ($Mode -eq "--check") {
+    if (-not (Test-NeedsUpdate)) {
+        exit 0
+    }
+}
+
+# ── Visual Banner ──────────────────────────────────────────────────────────
+
+if ($Mode -ne "--quiet") {
+    Write-Host ""
+    Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "║        AutoApply - Checking for updates...       ║" -ForegroundColor Cyan
+    Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+
+    if (Test-Path $LastUpdateFile) {
+        $lastTs = Get-Content $LastUpdateFile -ErrorAction SilentlyContinue
+        if ($lastTs) {
+            $lastDate = [DateTimeOffset]::FromUnixTimeSeconds([long]$lastTs).LocalDateTime
+            $daysAgo = ((Get-Date) - $lastDate).Days
+            if ($daysAgo -gt 0) {
+                Write-Host "  Last updated: $daysAgo day(s) ago" -ForegroundColor Yellow
+            } else {
+                Write-Host "  Last updated: today" -ForegroundColor Green
+            }
+        }
+    } else {
+        Write-Host "  First update check" -ForegroundColor Yellow
+    }
+    Write-Host ""
+}
 
 # ── Lock (prevent concurrent updates) ──────────────────────────────────────
 
@@ -267,6 +316,21 @@ if ($UpdatesPulled) {
 }
 Write-Log "==================================================="
 Write-Log "Log saved to: $LogFile"
+
+# Save last-update timestamp
+[long]((Get-Date) - (Get-Date "1970-01-01")).TotalSeconds | Out-File -FilePath $LastUpdateFile -Force
+
+# Show completion banner
+if ($Mode -ne "--quiet") {
+    Write-Host ""
+    if ($UpdatesPulled) {
+        Write-Host "  [OK] AutoApply updated successfully!" -ForegroundColor Green
+    } else {
+        Write-Host "  [OK] AutoApply is up to date." -ForegroundColor Green
+    }
+    Write-Host "  Next check: in $UpdateIntervalDays days or on next login" -ForegroundColor Cyan
+    Write-Host ""
+}
 
 # Cleanup old logs (keep 30 days)
 Get-ChildItem -Path $LogDir -Filter "update-*.log" |
