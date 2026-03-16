@@ -333,10 +333,15 @@ Write-OK "Worker directories created"
 Write-Info "Setting up daily auto-updates..."
 
 $UpdateScript = Join-Path $InstallDir "update.ps1"
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Get script directory safely (null when run via iex from URL)
+$ScriptDir = $null
+if ($MyInvocation.MyCommand.Path) {
+    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
 
 # Copy update script into install dir
-if (Test-Path (Join-Path $ScriptDir "update-windows.ps1")) {
+if ($ScriptDir -and (Test-Path (Join-Path $ScriptDir "update-windows.ps1"))) {
     Copy-Item (Join-Path $ScriptDir "update-windows.ps1") $UpdateScript -Force
 } elseif (Test-Path (Join-Path $InstallDir "packages\web\public\setup\update-windows.ps1")) {
     Copy-Item (Join-Path $InstallDir "packages\web\public\setup\update-windows.ps1") $UpdateScript -Force
