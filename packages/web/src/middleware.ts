@@ -7,7 +7,6 @@ const PUBLIC_ROUTES = [
   "/auth/callback",
   "/auth/pending",
   "/auth/rejected",
-  "/setup-complete",
   "/api/stripe/webhook",
   "/api/health",
   "/api/auth/status",
