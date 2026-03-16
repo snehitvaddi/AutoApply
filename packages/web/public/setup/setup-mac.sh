@@ -187,11 +187,13 @@ log_step 7 "Installing dependencies..."
 
 # Python worker deps
 if [[ -f "packages/worker/requirements.txt" ]]; then
-  log_info "Installing Python packages..."
+  log_info "Installing Python packages from requirements.txt..."
   "$PYTHON_CMD" -m pip install --quiet -r packages/worker/requirements.txt
   log_ok "Python packages installed"
 else
-  log_warn "packages/worker/requirements.txt not found — skipping"
+  log_info "Installing core Python packages directly..."
+  "$PYTHON_CMD" -m pip install --quiet supabase httpx playwright cryptography google-auth google-auth-oauthlib google-api-python-client
+  log_ok "Core Python packages installed"
 fi
 
 # Node.js web deps

@@ -234,11 +234,13 @@ Write-Step 7 "Installing dependencies..."
 $ErrorActionPreference = "Continue"
 
 if (Test-Path "packages/worker/requirements.txt") {
-    Write-Info "Installing Python packages..."
+    Write-Info "Installing Python packages from requirements.txt..."
     & $PythonCmd -m pip install --quiet -r packages/worker/requirements.txt 2>&1 | Where-Object { $_ -notmatch "WARNING|warn" } | Write-Host
     Write-OK "Python packages installed"
 } else {
-    Write-Warn "packages/worker/requirements.txt not found — skipping"
+    Write-Info "Installing core Python packages directly..."
+    & $PythonCmd -m pip install --quiet supabase httpx playwright cryptography google-auth google-auth-oauthlib google-api-python-client 2>&1 | Where-Object { $_ -notmatch "WARNING|warn" } | Write-Host
+    Write-OK "Core Python packages installed"
 }
 
 if (Test-Path "packages/web/package.json") {
