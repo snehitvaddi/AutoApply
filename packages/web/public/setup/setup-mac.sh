@@ -358,165 +358,59 @@ else
   log_warn "Could not set up auto-updates — update script not found"
 fi
 
-# ── Step 9: LLM Configuration ──────────────────────────────────────────────
-log_step 9 "Configuring LLM providers..."
+# ── Step 9: LLM Provider ──────────────────────────────────────────────────
+log_step 9 "Configuring LLM provider..."
 
 echo ""
-echo -e "${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║              LLM CONFIGURATION                              ║${NC}"
-echo -e "${BOLD}╠══════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${BOLD}║  AutoApply uses LLMs at two levels:                         ║${NC}"
-echo -e "${BOLD}║                                                             ║${NC}"
-echo -e "${CYAN}║  Level 1: USER-FACING (Chat & AI Profile Import)            ║${NC}"
-echo -e "${CYAN}║    → Powers the chat thread where users interact            ║${NC}"
-echo -e "${CYAN}║    → Extracts profile data from conversations               ║${NC}"
-echo -e "${CYAN}║    → Visible to the end user                                ║${NC}"
-echo -e "${BOLD}║                                                             ║${NC}"
-echo -e "${CYAN}║  Level 2: BACKEND (Server-side Automation)                  ║${NC}"
-echo -e "${CYAN}║    → Powers smart form filling & resume tailoring           ║${NC}"
-echo -e "${CYAN}║    → Runs behind OpenClaw browser automation                ║${NC}"
-echo -e "${CYAN}║    → Not visible to the end user                            ║${NC}"
-echo -e "${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
+echo -e "  ${CYAN}One LLM powers everything (chat + OpenClaw backend).${NC}"
+echo -e "  ${CYAN}Pick your provider and access type — that's it.${NC}"
 echo ""
-
-# --- Level 1: User-Facing LLM ---
-echo -e "${BOLD}━━━ Level 1: User-Facing LLM ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo "    1. Claude (Anthropic)     2. GPT (OpenAI)"
+echo "    3. Gemini (Google)        4. Local/Ollama"
+echo "    5. None (skip for now)"
 echo ""
-echo "  Which LLM provider for the USER-FACING chat?"
-echo ""
-echo "    1. Claude (Anthropic)        — Best for reasoning & safety"
-echo "    2. GPT (OpenAI)              — Most popular, broad support"
-echo "    3. Gemini (Google)           — Good multimodal support"
-echo "    4. Local/Ollama              — Free, private, runs locally"
-echo "    5. None (keep manual copy-paste)"
-echo ""
-read -p "  Enter choice [1-5] (default: 1): " LLM_L1_CHOICE
-LLM_L1_CHOICE="${LLM_L1_CHOICE:-1}"
+read -p "  Provider [1-5] (default: 1): " LLM_CHOICE
+LLM_CHOICE="${LLM_CHOICE:-1}"
 
-LLM_PROVIDER=""
-LLM_MODEL=""
-LLM_API_KEY_NAME=""
-LLM_API_KEY=""
+LLM_PROVIDER="none"; LLM_MODEL=""; LLM_ACCESS_TYPE="none"; LLM_API_KEY_NAME=""; LLM_API_KEY=""
 
-LLM_ACCESS_TYPE=""
-
-case "$LLM_L1_CHOICE" in
+case "$LLM_CHOICE" in
   1)
     LLM_PROVIDER="anthropic"
     echo ""
-    echo -e "  ${BOLD}How will you access Claude?${NC}"
-    echo ""
-    echo -e "    ${CYAN}1. Subscription (Claude Pro \$20/mo, Max \$100-200/mo)${NC}"
-    echo "       → For personal use, chat-based, no API key needed"
-    echo -e "    ${CYAN}2. API (Pay-per-token, from console.anthropic.com)${NC}"
-    echo "       → For app integration, programmatic access, needs API key"
-    echo ""
-    read -p "  Enter choice [1-2] (default: 2): " ACCESS_CHOICE
-    ACCESS_CHOICE="${ACCESS_CHOICE:-2}"
-
-    if [[ "$ACCESS_CHOICE" == "1" ]]; then
+    echo "    1. Subscription (Pro \$20, Max \$100-200/mo)    2. API (pay-per-token)"
+    read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
+    if [[ "$AC" == "1" ]]; then
       LLM_ACCESS_TYPE="subscription"
-      echo ""
-      echo "  Select your Claude subscription:"
-      echo "    1. Claude Pro (\$20/mo)         — 5x usage"
-      echo "    2. Claude Max 5x (\$100/mo)     — 5x Pro limits"
-      echo "    3. Claude Max 20x (\$200/mo)    — 20x Pro limits"
-      echo ""
-      read -p "  Enter choice [1-3] (default: 1): " SUB_TIER
-      case "$SUB_TIER" in
-        2) LLM_MODEL="claude-max-5x" ;;
-        3) LLM_MODEL="claude-max-20x" ;;
-        *) LLM_MODEL="claude-pro" ;;
-      esac
-      LLM_API_KEY_NAME=""
-      LLM_API_KEY=""
-      log_ok "Claude subscription ($LLM_MODEL) selected"
-      echo ""
-      echo -e "  ${YELLOW}NOTE: Subscription access is for personal/chat use.${NC}"
-      echo -e "  ${YELLOW}For backend automation, the API (option 2) is recommended.${NC}"
+      echo "    1. Pro (\$20)  2. Max 5x (\$100)  3. Max 20x (\$200)"
+      read -p "  Tier [1-3] (default: 1): " ST
+      case "$ST" in 2) LLM_MODEL="claude-max-5x" ;; 3) LLM_MODEL="claude-max-20x" ;; *) LLM_MODEL="claude-pro" ;; esac
     else
       LLM_ACCESS_TYPE="api"
-      echo ""
-      echo "  Select Claude API model:"
-      echo "    1. claude-sonnet-4-6         — Fast, cost-effective (recommended)"
-      echo "    2. claude-opus-4-6           — Most capable, higher cost"
-      echo "    3. claude-haiku-4-5          — Fastest, lowest cost"
-      echo ""
-      read -p "  Enter choice [1-3] (default: 1): " CLAUDE_MODEL
-      CLAUDE_MODEL="${CLAUDE_MODEL:-1}"
-      case "$CLAUDE_MODEL" in
-        2) LLM_MODEL="claude-opus-4-6" ;;
-        3) LLM_MODEL="claude-haiku-4-5-20251001" ;;
-        *) LLM_MODEL="claude-sonnet-4-6" ;;
-      esac
+      echo "    1. Sonnet 4.6 (recommended)  2. Opus 4.6  3. Haiku 4.5"
+      read -p "  Model [1-3] (default: 1): " CM; CM="${CM:-1}"
+      case "$CM" in 2) LLM_MODEL="claude-opus-4-6" ;; 3) LLM_MODEL="claude-haiku-4-5-20251001" ;; *) LLM_MODEL="claude-sonnet-4-6" ;; esac
       LLM_API_KEY_NAME="ANTHROPIC_API_KEY"
-      echo ""
-      read -p "  Anthropic API Key (get one at console.anthropic.com): " LLM_API_KEY
-      if [[ -n "$LLM_API_KEY" ]]; then
-        log_ok "Anthropic API key saved — $LLM_MODEL"
-      else
-        log_warn "No API key entered — you can add it to .env later"
-      fi
+      read -p "  API Key (console.anthropic.com): " LLM_API_KEY
     fi
     ;;
   2)
     LLM_PROVIDER="openai"
     echo ""
-    echo -e "  ${BOLD}How will you access OpenAI?${NC}"
-    echo ""
-    echo -e "    ${CYAN}1. Subscription (ChatGPT Plus \$20/mo, Pro \$200/mo)${NC}"
-    echo "       → For personal use, chat-based, includes Codex"
-    echo -e "    ${CYAN}2. API (Pay-per-token, from platform.openai.com)${NC}"
-    echo "       → For app integration, programmatic access, needs API key"
-    echo ""
-    read -p "  Enter choice [1-2] (default: 2): " ACCESS_CHOICE
-    ACCESS_CHOICE="${ACCESS_CHOICE:-2}"
-
-    if [[ "$ACCESS_CHOICE" == "1" ]]; then
+    echo "    1. Subscription (Plus \$20, Pro \$200/mo)    2. API (pay-per-token)"
+    read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
+    if [[ "$AC" == "1" ]]; then
       LLM_ACCESS_TYPE="subscription"
-      echo ""
-      echo "  Select your ChatGPT subscription:"
-      echo "    1. ChatGPT Plus (\$20/mo)      — Standard access"
-      echo "    2. ChatGPT Pro (\$200/mo)       — Highest limits"
-      echo "    3. ChatGPT Business (\$30/user/mo)"
-      echo ""
-      read -p "  Enter choice [1-3] (default: 1): " SUB_TIER
-      case "$SUB_TIER" in
-        2) LLM_MODEL="chatgpt-pro" ;;
-        3) LLM_MODEL="chatgpt-business" ;;
-        *) LLM_MODEL="chatgpt-plus" ;;
-      esac
-      LLM_API_KEY_NAME=""
-      LLM_API_KEY=""
-      log_ok "ChatGPT subscription ($LLM_MODEL) selected"
-      echo ""
-      echo -e "  ${YELLOW}NOTE: Subscription access is for personal/chat use.${NC}"
-      echo -e "  ${YELLOW}For backend automation, the API (option 2) is recommended.${NC}"
+      echo "    1. Plus (\$20)  2. Pro (\$200)  3. Business (\$30/user)"
+      read -p "  Tier [1-3] (default: 1): " ST
+      case "$ST" in 2) LLM_MODEL="chatgpt-pro" ;; 3) LLM_MODEL="chatgpt-business" ;; *) LLM_MODEL="chatgpt-plus" ;; esac
     else
       LLM_ACCESS_TYPE="api"
-      echo ""
-      echo "  Select OpenAI API model:"
-      echo "    1. gpt-4.1                  — Latest, best quality (recommended)"
-      echo "    2. gpt-4.1-mini             — Fast, cost-effective"
-      echo "    3. gpt-4.1-nano             — Fastest, lowest cost"
-      echo "    4. o3                       — Best reasoning"
-      echo ""
-      read -p "  Enter choice [1-4] (default: 1): " OAI_MODEL
-      OAI_MODEL="${OAI_MODEL:-1}"
-      case "$OAI_MODEL" in
-        2) LLM_MODEL="gpt-4.1-mini" ;;
-        3) LLM_MODEL="gpt-4.1-nano" ;;
-        4) LLM_MODEL="o3" ;;
-        *) LLM_MODEL="gpt-4.1" ;;
-      esac
+      echo "    1. GPT-4.1 (recommended)  2. GPT-4.1-mini  3. GPT-4.1-nano  4. o3"
+      read -p "  Model [1-4] (default: 1): " OM; OM="${OM:-1}"
+      case "$OM" in 2) LLM_MODEL="gpt-4.1-mini" ;; 3) LLM_MODEL="gpt-4.1-nano" ;; 4) LLM_MODEL="o3" ;; *) LLM_MODEL="gpt-4.1" ;; esac
       LLM_API_KEY_NAME="OPENAI_API_KEY"
-      echo ""
-      read -p "  OpenAI API Key (get one at platform.openai.com): " LLM_API_KEY
-      if [[ -n "$LLM_API_KEY" ]]; then
-        log_ok "OpenAI API key saved — $LLM_MODEL"
-      else
-        log_warn "No API key entered — you can add it to .env later"
-      fi
+      read -p "  API Key (platform.openai.com): " LLM_API_KEY
     fi
     ;;
   3)
@@ -561,194 +455,47 @@ case "$LLM_L1_CHOICE" in
     esac
     log_info "Pulling model $LLM_MODEL (this may take a while)..."
     ollama pull "$LLM_MODEL" 2>/dev/null || log_warn "Model pull failed — run 'ollama pull $LLM_MODEL' manually"
-    LLM_API_KEY_NAME=""
-    LLM_API_KEY=""
     ;;
   5)
-    LLM_PROVIDER="none"
-    LLM_MODEL=""
-    log_ok "No user-facing LLM — keeping manual copy-paste mode"
+    LLM_PROVIDER="none"; LLM_MODEL=""; log_ok "No LLM — configure later via settings or openclaw config"
     ;;
 esac
 
-# --- Level 2: Backend LLM ---
-echo ""
-echo -e "${BOLD}━━━ Level 2: Backend LLM (Server Automation) ━━━━━━━━━━━━━━━${NC}"
-echo ""
-echo "  Which LLM provider for BACKEND automation?"
-echo -e "  ${CYAN}(Used for smart form filling, resume tailoring, cover letters)${NC}"
-echo ""
-echo "    1. Claude (Anthropic)        — Best for structured output"
-echo "    2. GPT (OpenAI)              — Strong function calling"
-echo "    3. Gemini (Google)           — Cost-effective for high volume"
-echo "    4. Local/Ollama              — Free, private, no API costs"
+[[ "$LLM_PROVIDER" != "none" ]] && log_ok "$LLM_PROVIDER / $LLM_MODEL ($LLM_ACCESS_TYPE) — used for chat + OpenClaw"
 
-if [[ "$LLM_PROVIDER" != "none" ]]; then
-  SAME_LABEL="Same as Level 1 ($LLM_PROVIDER — $LLM_MODEL)"
-  echo "    5. $SAME_LABEL"
+# Same provider for backend — no separate question
+LLM_BACKEND_PROVIDER="$LLM_PROVIDER"; LLM_BACKEND_MODEL="$LLM_MODEL"
+echo ""
+# Configure OpenClaw with the same LLM
+if [[ "$LLM_PROVIDER" != "none" ]] && check_command openclaw; then
+  log_info "Configuring OpenClaw to use $LLM_PROVIDER..."
+  openclaw config set ai.provider "$LLM_PROVIDER" 2>/dev/null
+  [[ -n "$LLM_MODEL" ]] && openclaw config set ai.model "$LLM_MODEL" 2>/dev/null
+  [[ -n "$LLM_API_KEY" ]] && openclaw config set ai.apiKey "$LLM_API_KEY" 2>/dev/null
+  log_ok "OpenClaw configured with same LLM"
 fi
 
-echo "    6. None (basic automation only — no LLM)"
-echo ""
-read -p "  Enter choice [1-6] (default: 5): " LLM_L2_CHOICE
-LLM_L2_CHOICE="${LLM_L2_CHOICE:-5}"
+# Install SDK
+[[ "$LLM_PROVIDER" == "anthropic" ]] && "$PYTHON_CMD" -m pip install --quiet anthropic 2>/dev/null
+[[ "$LLM_PROVIDER" == "openai" ]] && "$PYTHON_CMD" -m pip install --quiet openai 2>/dev/null
+[[ "$LLM_PROVIDER" == "google" ]] && "$PYTHON_CMD" -m pip install --quiet google-generativeai 2>/dev/null
 
-LLM_BACKEND_PROVIDER=""
-LLM_BACKEND_MODEL=""
-LLM_BACKEND_API_KEY_NAME=""
-LLM_BACKEND_API_KEY=""
-
-case "$LLM_L2_CHOICE" in
-  1)
-    LLM_BACKEND_PROVIDER="anthropic"
-    LLM_BACKEND_MODEL="claude-sonnet-4-6"
-    LLM_BACKEND_API_KEY_NAME="ANTHROPIC_API_KEY"
-    if [[ "$LLM_PROVIDER" == "anthropic" && -n "$LLM_API_KEY" ]]; then
-      LLM_BACKEND_API_KEY="$LLM_API_KEY"
-      log_ok "Reusing Anthropic API key from Level 1"
-    else
-      read -p "  Anthropic API Key: " LLM_BACKEND_API_KEY
-    fi
-    ;;
-  2)
-    LLM_BACKEND_PROVIDER="openai"
-    LLM_BACKEND_MODEL="gpt-4.1-mini"
-    LLM_BACKEND_API_KEY_NAME="OPENAI_API_KEY"
-    if [[ "$LLM_PROVIDER" == "openai" && -n "$LLM_API_KEY" ]]; then
-      LLM_BACKEND_API_KEY="$LLM_API_KEY"
-      log_ok "Reusing OpenAI API key from Level 1"
-    else
-      read -p "  OpenAI API Key: " LLM_BACKEND_API_KEY
-    fi
-    ;;
-  3)
-    LLM_BACKEND_PROVIDER="google"
-    LLM_BACKEND_MODEL="gemini-2.5-flash"
-    LLM_BACKEND_API_KEY_NAME="GOOGLE_AI_API_KEY"
-    if [[ "$LLM_PROVIDER" == "google" && -n "$LLM_API_KEY" ]]; then
-      LLM_BACKEND_API_KEY="$LLM_API_KEY"
-      log_ok "Reusing Google AI API key from Level 1"
-    else
-      read -p "  Google AI API Key: " LLM_BACKEND_API_KEY
-    fi
-    ;;
-  4)
-    LLM_BACKEND_PROVIDER="ollama"
-    LLM_BACKEND_MODEL="llama3.1:8b"
-    if ! check_command ollama; then
-      log_info "Installing Ollama..."
-      curl -fsSL https://ollama.com/install.sh | sh
-    fi
-    ollama pull "$LLM_BACKEND_MODEL" 2>/dev/null || true
-    ;;
-  5)
-    LLM_BACKEND_PROVIDER="$LLM_PROVIDER"
-    LLM_BACKEND_MODEL="$LLM_MODEL"
-    LLM_BACKEND_API_KEY_NAME="$LLM_API_KEY_NAME"
-    LLM_BACKEND_API_KEY="$LLM_API_KEY"
-    log_ok "Reusing Level 1 config for backend ($LLM_PROVIDER — $LLM_MODEL)"
-    ;;
-  6)
-    LLM_BACKEND_PROVIDER="none"
-    LLM_BACKEND_MODEL=""
-    log_ok "No backend LLM — basic automation only"
-    ;;
-esac
-
-# --- LLM Features ---
-echo ""
-echo -e "${BOLD}━━━ LLM Features ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
-
-LLM_RESUME_TAILORING="false"
-LLM_COVER_LETTERS="false"
-LLM_SMART_ANSWERS="false"
-LLM_MONTHLY_LIMIT="0"
-
-if [[ "$LLM_BACKEND_PROVIDER" != "none" ]]; then
-  read -p "  Enable resume tailoring per job? (LLM customizes resume) [Y/n]: " FEAT_RESUME
-  FEAT_RESUME="${FEAT_RESUME:-Y}"
-  [[ "$FEAT_RESUME" =~ ^[Yy] ]] && LLM_RESUME_TAILORING="true"
-
-  read -p "  Enable auto cover letter generation? [Y/n]: " FEAT_COVER
-  FEAT_COVER="${FEAT_COVER:-Y}"
-  [[ "$FEAT_COVER" =~ ^[Yy] ]] && LLM_COVER_LETTERS="true"
-
-  read -p "  Enable smart form-field answering? (\"Why do you want to work here?\" etc.) [Y/n]: " FEAT_SMART
-  FEAT_SMART="${FEAT_SMART:-Y}"
-  [[ "$FEAT_SMART" =~ ^[Yy] ]] && LLM_SMART_ANSWERS="true"
-
-  echo ""
-  read -p "  Set monthly LLM spending limit \$/month [0 = unlimited] (default: 50): " LLM_MONTHLY_LIMIT
-  LLM_MONTHLY_LIMIT="${LLM_MONTHLY_LIMIT:-50}"
-  echo -e "  ${GREEN}→ Monthly limit set: \$${LLM_MONTHLY_LIMIT}${NC}"
-else
-  log_info "Skipping LLM features (no backend LLM selected)"
-fi
-
-# --- Install LLM SDKs ---
-echo ""
-if [[ "$LLM_PROVIDER" == "anthropic" || "$LLM_BACKEND_PROVIDER" == "anthropic" ]]; then
-  log_info "Installing Anthropic SDK..."
-  "$PYTHON_CMD" -m pip install --quiet anthropic 2>/dev/null
-  log_ok "Anthropic Python SDK installed"
-fi
-
-if [[ "$LLM_PROVIDER" == "openai" || "$LLM_BACKEND_PROVIDER" == "openai" ]]; then
-  log_info "Installing OpenAI SDK..."
-  "$PYTHON_CMD" -m pip install --quiet openai 2>/dev/null
-  log_ok "OpenAI Python SDK installed"
-fi
-
-if [[ "$LLM_PROVIDER" == "google" || "$LLM_BACKEND_PROVIDER" == "google" ]]; then
-  log_info "Installing Google AI SDK..."
-  "$PYTHON_CMD" -m pip install --quiet google-generativeai 2>/dev/null
-  log_ok "Google AI Python SDK installed"
-fi
-
-# --- Write LLM config to .env ---
+# Write to .env
 if [[ -f "$ENV_FILE" ]]; then
-  # Append LLM config to existing .env
   cat >> "$ENV_FILE" <<LLMEOF
 
-# ── LLM Configuration ─────────────────────────────────────
-# Level 1: User-Facing (Chat & AI Import)
+# LLM (single provider for chat + OpenClaw)
 LLM_ACCESS_TYPE=$LLM_ACCESS_TYPE
 LLM_PROVIDER=$LLM_PROVIDER
 LLM_MODEL=$LLM_MODEL
-
-# Level 2: Backend (Server Automation)
 LLM_BACKEND_PROVIDER=$LLM_BACKEND_PROVIDER
 LLM_BACKEND_MODEL=$LLM_BACKEND_MODEL
-
-# API Keys
-$([ -n "$LLM_API_KEY_NAME" ] && [ -n "$LLM_API_KEY" ] && echo "${LLM_API_KEY_NAME}=${LLM_API_KEY}" || echo "# No Level 1 API key set")
-$([ -n "$LLM_BACKEND_API_KEY_NAME" ] && [ -n "$LLM_BACKEND_API_KEY" ] && [ "$LLM_BACKEND_API_KEY_NAME" != "$LLM_API_KEY_NAME" ] && echo "${LLM_BACKEND_API_KEY_NAME}=${LLM_BACKEND_API_KEY}" || echo "# Backend uses same key as Level 1")
-$([ "$LLM_BACKEND_PROVIDER" == "ollama" ] && echo "OLLAMA_BASE_URL=http://localhost:11434" || echo "# OLLAMA_BASE_URL=http://localhost:11434")
-
-# LLM Features
-LLM_RESUME_TAILORING=$LLM_RESUME_TAILORING
-LLM_COVER_LETTERS=$LLM_COVER_LETTERS
-LLM_SMART_ANSWERS=$LLM_SMART_ANSWERS
-LLM_MONTHLY_LIMIT=$LLM_MONTHLY_LIMIT
+$([ -n "$LLM_API_KEY_NAME" ] && [ -n "$LLM_API_KEY" ] && echo "${LLM_API_KEY_NAME}=${LLM_API_KEY}" || echo "# No API key set")
+$([ "$LLM_PROVIDER" == "ollama" ] && echo "OLLAMA_BASE_URL=http://localhost:11434")
 LLMEOF
-  log_ok "LLM configuration added to .env"
+  log_ok "LLM config saved to .env"
 fi
 
-# --- LLM Summary ---
-echo ""
-echo -e "${BOLD}╔══════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║  LLM CONFIGURATION SUMMARY                      ║${NC}"
-echo -e "${BOLD}╠──────────────────────────────────────────────────╣${NC}"
-printf "${BOLD}║${NC}  Level 1 (User-facing):  ${CYAN}%-24s${NC}${BOLD}║${NC}\n" "$LLM_PROVIDER / $LLM_MODEL"
-printf "${BOLD}║${NC}  Level 2 (Backend):      ${CYAN}%-24s${NC}${BOLD}║${NC}\n" "$LLM_BACKEND_PROVIDER / $LLM_BACKEND_MODEL"
-printf "${BOLD}║${NC}  Resume tailoring:       %-24s${BOLD}║${NC}\n" "$LLM_RESUME_TAILORING"
-printf "${BOLD}║${NC}  Cover letters:          %-24s${BOLD}║${NC}\n" "$LLM_COVER_LETTERS"
-printf "${BOLD}║${NC}  Smart form answers:     %-24s${BOLD}║${NC}\n" "$LLM_SMART_ANSWERS"
-printf "${BOLD}║${NC}  Monthly spend limit:    %-24s${BOLD}║${NC}\n" "\$${LLM_MONTHLY_LIMIT}"
-echo -e "${BOLD}╠──────────────────────────────────────────────────╣${NC}"
-echo -e "${BOLD}║${NC}  ${GREEN}API Keys saved to .env${NC}                          ${BOLD}║${NC}"
-echo -e "${BOLD}╚══════════════════════════════════════════════════╝${NC}"
 echo ""
 
 # ── Step 10: Verify ─────────────────────────────────────────────────────────

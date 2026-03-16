@@ -407,412 +407,93 @@ if (Test-Path $UpdateScript) {
     Write-Warn "Could not set up auto-updates - update script not found"
 }
 
-# ── Step 9: LLM Configuration ──────────────────────────────────────────────
-Write-Step 9 "Configuring LLM providers..."
+# ── Step 9: LLM Provider ──────────────────────────────────────────────────
+Write-Step 9 "Configuring LLM provider..."
 
 Write-Host ""
-Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor White
-Write-Host "║              LLM CONFIGURATION                              ║" -ForegroundColor White
-Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor White
-Write-Host "║  AutoApply uses LLMs at two levels:                         ║" -ForegroundColor White
-Write-Host "║                                                             ║" -ForegroundColor White
-Write-Host "║  Level 1: USER-FACING (Chat & AI Profile Import)            ║" -ForegroundColor Cyan
-Write-Host "║    -> Powers the chat thread where users interact           ║" -ForegroundColor Cyan
-Write-Host "║    -> Extracts profile data from conversations              ║" -ForegroundColor Cyan
-Write-Host "║    -> Visible to the end user                               ║" -ForegroundColor Cyan
-Write-Host "║                                                             ║" -ForegroundColor White
-Write-Host "║  Level 2: BACKEND (Server-side Automation)                  ║" -ForegroundColor Cyan
-Write-Host "║    -> Powers smart form filling & resume tailoring          ║" -ForegroundColor Cyan
-Write-Host "║    -> Runs behind OpenClaw browser automation               ║" -ForegroundColor Cyan
-Write-Host "║    -> Not visible to the end user                           ║" -ForegroundColor Cyan
-Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor White
+Write-Host "  One LLM powers everything (chat + OpenClaw backend)." -ForegroundColor Cyan
+Write-Host "  Pick your provider and access type — that's it." -ForegroundColor Cyan
+Write-Host ""
+Write-Host "    1. Claude (Anthropic)     2. GPT (OpenAI)"
+Write-Host "    3. Gemini (Google)        4. Local/Ollama"
+Write-Host "    5. None (skip for now)"
 Write-Host ""
 
-# --- Level 1: User-Facing LLM ---
-Write-Host "--- Level 1: User-Facing LLM ---" -ForegroundColor White
-Write-Host ""
-Write-Host "  Which LLM provider for the USER-FACING chat?" -ForegroundColor White
-Write-Host ""
-Write-Host "    1. Claude (Anthropic)        - Best for reasoning & safety"
-Write-Host "    2. GPT (OpenAI)              - Most popular, broad support"
-Write-Host "    3. Gemini (Google)           - Good multimodal support"
-Write-Host "    4. Local/Ollama              - Free, private, runs locally"
-Write-Host "    5. None (keep manual copy-paste)"
-Write-Host ""
+$LlmChoice = Read-Host "  Provider [1-5] (default: 1)"
+if (-not $LlmChoice) { $LlmChoice = "1" }
 
-$LlmL1Choice = Read-Host "  Enter choice [1-5] (default: 1)"
-if (-not $LlmL1Choice) { $LlmL1Choice = "1" }
+$LlmProvider = "none"; $LlmModel = ""; $LlmAccessType = "none"; $LlmApiKeyName = ""; $LlmApiKey = ""
 
-$LlmProvider = ""
-$LlmModel = ""
-$LlmApiKeyName = ""
-$LlmApiKey = ""
-
-$LlmAccessType = ""
-
-switch ($LlmL1Choice) {
+switch ($LlmChoice) {
     "1" {
         $LlmProvider = "anthropic"
-        Write-Host ""
-        Write-Host "  How will you access Claude?" -ForegroundColor White
-        Write-Host ""
-        Write-Host "    1. Subscription (Claude Pro `$20/mo, Max `$100-200/mo)" -ForegroundColor Cyan
-        Write-Host "       -> For personal use, chat-based, no API key needed"
-        Write-Host "    2. API (Pay-per-token, from console.anthropic.com)" -ForegroundColor Cyan
-        Write-Host "       -> For app integration, programmatic access, needs API key"
-        Write-Host ""
-        $accessChoice = Read-Host "  Enter choice [1-2] (default: 2)"
-        if (-not $accessChoice) { $accessChoice = "2" }
-
-        if ($accessChoice -eq "1") {
+        Write-Host ""; Write-Host "    1. Subscription (Pro `$20, Max `$100-200/mo)    2. API (pay-per-token)"
+        $ac = Read-Host "  Access type [1-2] (default: 2)"; if (-not $ac) { $ac = "2" }
+        if ($ac -eq "1") {
             $LlmAccessType = "subscription"
-            Write-Host ""
-            Write-Host "  Select your Claude subscription:" -ForegroundColor White
-            Write-Host "    1. Claude Pro (`$20/mo)         - 5x usage"
-            Write-Host "    2. Claude Max 5x (`$100/mo)     - 5x Pro limits"
-            Write-Host "    3. Claude Max 20x (`$200/mo)    - 20x Pro limits"
-            Write-Host ""
-            $subTier = Read-Host "  Enter choice [1-3] (default: 1)"
-            switch ($subTier) {
-                "2" { $LlmModel = "claude-max-5x" }
-                "3" { $LlmModel = "claude-max-20x" }
-                default { $LlmModel = "claude-pro" }
-            }
-            $LlmApiKeyName = ""
-            $LlmApiKey = ""
-            Write-OK "Claude subscription ($LlmModel) selected"
-            Write-Host ""
-            Write-Host "  NOTE: Subscription access is for personal/chat use." -ForegroundColor Yellow
-            Write-Host "  For backend automation, the API (option 2) is recommended." -ForegroundColor Yellow
+            Write-Host "    1. Pro (`$20)  2. Max 5x (`$100)  3. Max 20x (`$200)"
+            $st = Read-Host "  Tier [1-3] (default: 1)"
+            switch ($st) { "2" { $LlmModel = "claude-max-5x" } "3" { $LlmModel = "claude-max-20x" } default { $LlmModel = "claude-pro" } }
         } else {
             $LlmAccessType = "api"
-            Write-Host ""
-            Write-Host "  Select Claude API model:" -ForegroundColor White
-            Write-Host "    1. claude-sonnet-4-6         - Fast, cost-effective (recommended)"
-            Write-Host "    2. claude-opus-4-6           - Most capable, higher cost"
-            Write-Host "    3. claude-haiku-4-5          - Fastest, lowest cost"
-            Write-Host ""
-            $ClaudeModel = Read-Host "  Enter choice [1-3] (default: 1)"
-            if (-not $ClaudeModel) { $ClaudeModel = "1" }
-            switch ($ClaudeModel) {
-                "2" { $LlmModel = "claude-opus-4-6" }
-                "3" { $LlmModel = "claude-haiku-4-5-20251001" }
-                default { $LlmModel = "claude-sonnet-4-6" }
-            }
-            $LlmApiKeyName = "ANTHROPIC_API_KEY"
-            Write-Host ""
-            $LlmApiKey = Read-Host "  Anthropic API Key (get one at console.anthropic.com)"
-            if ($LlmApiKey) {
-                Write-OK "Anthropic API key saved - $LlmModel"
-            } else {
-                Write-Warn "No API key entered - you can add it to .env later"
-            }
+            Write-Host "    1. Sonnet 4.6 (recommended)  2. Opus 4.6  3. Haiku 4.5"
+            $cm = Read-Host "  Model [1-3] (default: 1)"
+            switch ($cm) { "2" { $LlmModel = "claude-opus-4-6" } "3" { $LlmModel = "claude-haiku-4-5-20251001" } default { $LlmModel = "claude-sonnet-4-6" } }
+            $LlmApiKeyName = "ANTHROPIC_API_KEY"; $LlmApiKey = Read-Host "  API Key (console.anthropic.com)"
         }
     }
     "2" {
         $LlmProvider = "openai"
-        Write-Host ""
-        Write-Host "  How will you access OpenAI?" -ForegroundColor White
-        Write-Host ""
-        Write-Host "    1. Subscription (ChatGPT Plus `$20/mo, Pro `$200/mo)" -ForegroundColor Cyan
-        Write-Host "       -> For personal use, chat-based, includes Codex"
-        Write-Host "    2. API (Pay-per-token, from platform.openai.com)" -ForegroundColor Cyan
-        Write-Host "       -> For app integration, programmatic access, needs API key"
-        Write-Host ""
-        $accessChoice = Read-Host "  Enter choice [1-2] (default: 2)"
-        if (-not $accessChoice) { $accessChoice = "2" }
-
-        if ($accessChoice -eq "1") {
+        Write-Host ""; Write-Host "    1. Subscription (Plus `$20, Pro `$200/mo)    2. API (pay-per-token)"
+        $ac = Read-Host "  Access type [1-2] (default: 2)"; if (-not $ac) { $ac = "2" }
+        if ($ac -eq "1") {
             $LlmAccessType = "subscription"
-            Write-Host ""
-            Write-Host "  Select your ChatGPT subscription:" -ForegroundColor White
-            Write-Host "    1. ChatGPT Plus (`$20/mo)      - Standard access"
-            Write-Host "    2. ChatGPT Pro (`$200/mo)       - Highest limits"
-            Write-Host "    3. ChatGPT Business (`$30/user/mo)"
-            Write-Host ""
-            $subTier = Read-Host "  Enter choice [1-3] (default: 1)"
-            switch ($subTier) {
-                "2" { $LlmModel = "chatgpt-pro" }
-                "3" { $LlmModel = "chatgpt-business" }
-                default { $LlmModel = "chatgpt-plus" }
-            }
-            $LlmApiKeyName = ""
-            $LlmApiKey = ""
-            Write-OK "ChatGPT subscription ($LlmModel) selected"
-            Write-Host ""
-            Write-Host "  NOTE: Subscription access is for personal/chat use." -ForegroundColor Yellow
-            Write-Host "  For backend automation, the API (option 2) is recommended." -ForegroundColor Yellow
+            Write-Host "    1. Plus (`$20)  2. Pro (`$200)  3. Business (`$30/user)"
+            $st = Read-Host "  Tier [1-3] (default: 1)"
+            switch ($st) { "2" { $LlmModel = "chatgpt-pro" } "3" { $LlmModel = "chatgpt-business" } default { $LlmModel = "chatgpt-plus" } }
         } else {
             $LlmAccessType = "api"
-            Write-Host ""
-            Write-Host "  Select OpenAI API model:" -ForegroundColor White
-            Write-Host "    1. gpt-4.1                  - Latest, best quality (recommended)"
-            Write-Host "    2. gpt-4.1-mini             - Fast, cost-effective"
-            Write-Host "    3. gpt-4.1-nano             - Fastest, lowest cost"
-            Write-Host "    4. o3                       - Best reasoning"
-            Write-Host ""
-            $OaiModel = Read-Host "  Enter choice [1-4] (default: 1)"
-            if (-not $OaiModel) { $OaiModel = "1" }
-            switch ($OaiModel) {
-                "2" { $LlmModel = "gpt-4.1-mini" }
-                "3" { $LlmModel = "gpt-4.1-nano" }
-                "4" { $LlmModel = "o3" }
-                default { $LlmModel = "gpt-4.1" }
-            }
-            $LlmApiKeyName = "OPENAI_API_KEY"
-            Write-Host ""
-            $LlmApiKey = Read-Host "  OpenAI API Key (get one at platform.openai.com)"
-            if ($LlmApiKey) {
-                Write-OK "OpenAI API key saved - $LlmModel"
-            } else {
-                Write-Warn "No API key entered - you can add it to .env later"
-            }
+            Write-Host "    1. GPT-4.1 (recommended)  2. GPT-4.1-mini  3. GPT-4.1-nano  4. o3"
+            $om = Read-Host "  Model [1-4] (default: 1)"
+            switch ($om) { "2" { $LlmModel = "gpt-4.1-mini" } "3" { $LlmModel = "gpt-4.1-nano" } "4" { $LlmModel = "o3" } default { $LlmModel = "gpt-4.1" } }
+            $LlmApiKeyName = "OPENAI_API_KEY"; $LlmApiKey = Read-Host "  API Key (platform.openai.com)"
         }
     }
-    "3" {
-        $LlmProvider = "google"
-        $LlmModel = "gemini-2.5-pro"
-        $LlmApiKeyName = "GOOGLE_AI_API_KEY"
-        Write-Host ""
-        $LlmApiKey = Read-Host "  Google AI API Key (get one at aistudio.google.com)"
-        if ($LlmApiKey) {
-            Write-OK "Google AI API key saved - $LlmModel"
-        } else {
-            Write-Warn "No API key entered - you can add it to .env later"
-        }
-    }
-    "4" {
-        $LlmProvider = "ollama"
-        Write-Host ""
-        if (Test-CommandExists "ollama") {
-            Write-OK "Ollama detected"
-        } else {
-            Write-Info "Installing Ollama..."
-            if (Test-CommandExists "winget") {
-                winget install --id Ollama.Ollama --accept-package-agreements --accept-source-agreements --silent
-                $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-            } else {
-                Write-Warn "Please install Ollama manually from https://ollama.com/download"
-            }
-        }
-        Write-Host ""
-        Write-Host "  Select local model:" -ForegroundColor White
-        Write-Host "    1. llama3.1:8b               - Good balance (8GB RAM)"
-        Write-Host "    2. llama3.1:70b              - High quality (64GB RAM)"
-        Write-Host "    3. mistral:7b                - Fast, lightweight"
-        Write-Host "    4. Custom model"
-        Write-Host ""
-        $LocalModel = Read-Host "  Enter choice [1-4] (default: 1)"
-        if (-not $LocalModel) { $LocalModel = "1" }
-        switch ($LocalModel) {
-            "2" { $LlmModel = "llama3.1:70b" }
-            "3" { $LlmModel = "mistral:7b" }
-            "4" { $LlmModel = Read-Host "  Enter model name" }
-            default { $LlmModel = "llama3.1:8b" }
-        }
-        Write-Info "Pulling model $LlmModel (this may take a while)..."
-        $ErrorActionPreference = "Continue"
-        ollama pull $LlmModel 2>&1 | Out-Null
-        $ErrorActionPreference = "Stop"
-    }
-    "5" {
-        $LlmProvider = "none"
-        $LlmModel = ""
-        Write-OK "No user-facing LLM - keeping manual copy-paste mode"
-    }
+    "3" { $LlmProvider = "google"; $LlmAccessType = "api"; $LlmModel = "gemini-2.5-pro"; $LlmApiKeyName = "GOOGLE_AI_API_KEY"; $LlmApiKey = Read-Host "  Google AI Key" }
+    "4" { $LlmProvider = "ollama"; $LlmAccessType = "local"; $LlmModel = "llama3.1:8b" }
+    default { Write-OK "No LLM - configure later via settings or openclaw config" }
 }
 
-# --- Level 2: Backend LLM ---
-Write-Host ""
-Write-Host "--- Level 2: Backend LLM (Server Automation) ---" -ForegroundColor White
-Write-Host ""
-Write-Host "  Which LLM provider for BACKEND automation?" -ForegroundColor White
-Write-Host "  (Used for smart form filling, resume tailoring, cover letters)" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "    1. Claude (Anthropic)        - Best for structured output"
-Write-Host "    2. GPT (OpenAI)              - Strong function calling"
-Write-Host "    3. Gemini (Google)           - Cost-effective for high volume"
-Write-Host "    4. Local/Ollama              - Free, private, no API costs"
-if ($LlmProvider -ne "none") {
-    Write-Host "    5. Same as Level 1 ($LlmProvider - $LlmModel)"
-}
-Write-Host "    6. None (basic automation only - no LLM)"
-Write-Host ""
+if ($LlmProvider -ne "none") { Write-OK "$LlmProvider / $LlmModel ($LlmAccessType) - used for chat + OpenClaw" }
 
-$LlmL2Choice = Read-Host "  Enter choice [1-6] (default: 5)"
-if (-not $LlmL2Choice) { $LlmL2Choice = "5" }
+# Same provider for backend — no separate question
+$LlmBackendProvider = $LlmProvider; $LlmBackendModel = $LlmModel
 
-$LlmBackendProvider = ""
-$LlmBackendModel = ""
-$LlmBackendApiKeyName = ""
-$LlmBackendApiKey = ""
-
-switch ($LlmL2Choice) {
-    "1" {
-        $LlmBackendProvider = "anthropic"
-        $LlmBackendModel = "claude-sonnet-4-6"
-        $LlmBackendApiKeyName = "ANTHROPIC_API_KEY"
-        if ($LlmProvider -eq "anthropic" -and $LlmApiKey) {
-            $LlmBackendApiKey = $LlmApiKey
-            Write-OK "Reusing Anthropic API key from Level 1"
-        } else {
-            $LlmBackendApiKey = Read-Host "  Anthropic API Key"
-        }
-    }
-    "2" {
-        $LlmBackendProvider = "openai"
-        $LlmBackendModel = "gpt-4.1-mini"
-        $LlmBackendApiKeyName = "OPENAI_API_KEY"
-        if ($LlmProvider -eq "openai" -and $LlmApiKey) {
-            $LlmBackendApiKey = $LlmApiKey
-            Write-OK "Reusing OpenAI API key from Level 1"
-        } else {
-            $LlmBackendApiKey = Read-Host "  OpenAI API Key"
-        }
-    }
-    "3" {
-        $LlmBackendProvider = "google"
-        $LlmBackendModel = "gemini-2.5-flash"
-        $LlmBackendApiKeyName = "GOOGLE_AI_API_KEY"
-        if ($LlmProvider -eq "google" -and $LlmApiKey) {
-            $LlmBackendApiKey = $LlmApiKey
-            Write-OK "Reusing Google AI API key from Level 1"
-        } else {
-            $LlmBackendApiKey = Read-Host "  Google AI API Key"
-        }
-    }
-    "4" {
-        $LlmBackendProvider = "ollama"
-        $LlmBackendModel = "llama3.1:8b"
-        if (-not (Test-CommandExists "ollama")) {
-            Write-Info "Installing Ollama..."
-            if (Test-CommandExists "winget") {
-                winget install --id Ollama.Ollama --accept-package-agreements --accept-source-agreements --silent
-            }
-        }
-        $ErrorActionPreference = "Continue"
-        ollama pull $LlmBackendModel 2>&1 | Out-Null
-        $ErrorActionPreference = "Stop"
-    }
-    "5" {
-        $LlmBackendProvider = $LlmProvider
-        $LlmBackendModel = $LlmModel
-        $LlmBackendApiKeyName = $LlmApiKeyName
-        $LlmBackendApiKey = $LlmApiKey
-        Write-OK "Reusing Level 1 config for backend ($LlmProvider - $LlmModel)"
-    }
-    "6" {
-        $LlmBackendProvider = "none"
-        $LlmBackendModel = ""
-        Write-OK "No backend LLM - basic automation only"
-    }
+# Configure OpenClaw with the same LLM
+if ($LlmProvider -ne "none" -and (Test-CommandExists "openclaw")) {
+    $ErrorActionPreference = "Continue"
+    openclaw config set ai.provider $LlmProvider 2>&1 | Out-Null
+    if ($LlmModel) { openclaw config set ai.model $LlmModel 2>&1 | Out-Null }
+    if ($LlmApiKey) { openclaw config set ai.apiKey $LlmApiKey 2>&1 | Out-Null }
+    $ErrorActionPreference = "Stop"
+    Write-OK "OpenClaw configured with same LLM"
 }
 
-# --- LLM Features ---
-Write-Host ""
-Write-Host "--- LLM Features ---" -ForegroundColor White
-Write-Host ""
-
-$LlmResumeTailoring = "false"
-$LlmCoverLetters = "false"
-$LlmSmartAnswers = "false"
-$LlmMonthlyLimit = "0"
-
-if ($LlmBackendProvider -ne "none") {
-    $featResume = Read-Host "  Enable resume tailoring per job? (LLM customizes resume) [Y/n]"
-    if (-not $featResume -or $featResume -match "^[Yy]") { $LlmResumeTailoring = "true" }
-
-    $featCover = Read-Host "  Enable auto cover letter generation? [Y/n]"
-    if (-not $featCover -or $featCover -match "^[Yy]") { $LlmCoverLetters = "true" }
-
-    $featSmart = Read-Host "  Enable smart form-field answering? ('Why do you want to work here?' etc.) [Y/n]"
-    if (-not $featSmart -or $featSmart -match "^[Yy]") { $LlmSmartAnswers = "true" }
-
-    Write-Host ""
-    $LlmMonthlyLimit = Read-Host "  Set monthly LLM spending limit $/month [0 = unlimited] (default: 50)"
-    if (-not $LlmMonthlyLimit) { $LlmMonthlyLimit = "50" }
-    Write-Host "  -> Monthly limit set: `$$LlmMonthlyLimit" -ForegroundColor Green
-} else {
-    Write-Info "Skipping LLM features (no backend LLM selected)"
-}
-
-# --- Install LLM SDKs ---
-Write-Host ""
+# Install SDK + write .env
 $ErrorActionPreference = "Continue"
-
-if ($LlmProvider -eq "anthropic" -or $LlmBackendProvider -eq "anthropic") {
-    Write-Info "Installing Anthropic SDK..."
-    & $PythonCmd -m pip install --quiet anthropic 2>&1 | Out-Null
-    Write-OK "Anthropic Python SDK installed"
-}
-
-if ($LlmProvider -eq "openai" -or $LlmBackendProvider -eq "openai") {
-    Write-Info "Installing OpenAI SDK..."
-    & $PythonCmd -m pip install --quiet openai 2>&1 | Out-Null
-    Write-OK "OpenAI Python SDK installed"
-}
-
-if ($LlmProvider -eq "google" -or $LlmBackendProvider -eq "google") {
-    Write-Info "Installing Google AI SDK..."
-    & $PythonCmd -m pip install --quiet google-generativeai 2>&1 | Out-Null
-    Write-OK "Google AI Python SDK installed"
-}
-
+if ($LlmProvider -eq "anthropic") { & $PythonCmd -m pip install --quiet anthropic 2>&1 | Out-Null }
+if ($LlmProvider -eq "openai") { & $PythonCmd -m pip install --quiet openai 2>&1 | Out-Null }
+if ($LlmProvider -eq "google") { & $PythonCmd -m pip install --quiet google-generativeai 2>&1 | Out-Null }
 $ErrorActionPreference = "Stop"
 
-# --- Write LLM config to .env ---
 if (Test-Path $EnvFile) {
-    $llmEnvBlock = @"
-
-# -- LLM Configuration ------------------------------------------
-# Level 1: User-Facing (Chat & AI Import)
-LLM_PROVIDER=$LlmProvider
-LLM_MODEL=$LlmModel
-
-# Level 2: Backend (Server Automation)
-LLM_BACKEND_PROVIDER=$LlmBackendProvider
-LLM_BACKEND_MODEL=$LlmBackendModel
-
-# API Keys
-"@
-    if ($LlmApiKeyName -and $LlmApiKey) {
-        $llmEnvBlock += "`n${LlmApiKeyName}=${LlmApiKey}"
-    } else {
-        $llmEnvBlock += "`n# No Level 1 API key set"
-    }
-    if ($LlmBackendApiKeyName -and $LlmBackendApiKey -and $LlmBackendApiKeyName -ne $LlmApiKeyName) {
-        $llmEnvBlock += "`n${LlmBackendApiKeyName}=${LlmBackendApiKey}"
-    }
-    if ($LlmBackendProvider -eq "ollama") {
-        $llmEnvBlock += "`nOLLAMA_BASE_URL=http://localhost:11434"
-    }
-
-    $llmEnvBlock += @"
-
-# LLM Features
-LLM_RESUME_TAILORING=$LlmResumeTailoring
-LLM_COVER_LETTERS=$LlmCoverLetters
-LLM_SMART_ANSWERS=$LlmSmartAnswers
-LLM_MONTHLY_LIMIT=$LlmMonthlyLimit
-"@
-    Add-Content -Path $EnvFile -Value $llmEnvBlock
-    Write-OK "LLM configuration added to .env"
+    $llmBlock = "`n# LLM (single provider for chat + OpenClaw)`nLLM_ACCESS_TYPE=$LlmAccessType`nLLM_PROVIDER=$LlmProvider`nLLM_MODEL=$LlmModel`nLLM_BACKEND_PROVIDER=$LlmBackendProvider`nLLM_BACKEND_MODEL=$LlmBackendModel"
+    if ($LlmApiKeyName -and $LlmApiKey) { $llmBlock += "`n${LlmApiKeyName}=${LlmApiKey}" }
+    if ($LlmProvider -eq "ollama") { $llmBlock += "`nOLLAMA_BASE_URL=http://localhost:11434" }
+    Add-Content -Path $EnvFile -Value $llmBlock
+    Write-OK "LLM config saved to .env"
 }
 
-# --- LLM Summary ---
-Write-Host ""
-Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor White
-Write-Host "║  LLM CONFIGURATION SUMMARY                      ║" -ForegroundColor White
-Write-Host "╠──────────────────────────────────────────────────╣" -ForegroundColor White
-Write-Host ("║  Level 1 (User-facing):  {0,-23} ║" -f "$LlmProvider / $LlmModel") -ForegroundColor Cyan
-Write-Host ("║  Level 2 (Backend):      {0,-23} ║" -f "$LlmBackendProvider / $LlmBackendModel") -ForegroundColor Cyan
-Write-Host ("║  Resume tailoring:       {0,-23} ║" -f $LlmResumeTailoring) -ForegroundColor White
-Write-Host ("║  Cover letters:          {0,-23} ║" -f $LlmCoverLetters) -ForegroundColor White
-Write-Host ("║  Smart form answers:     {0,-23} ║" -f $LlmSmartAnswers) -ForegroundColor White
-Write-Host ("║  Monthly spend limit:    `${0,-22} ║" -f $LlmMonthlyLimit) -ForegroundColor White
-Write-Host "╠──────────────────────────────────────────────────╣" -ForegroundColor White
-Write-Host "║  API Keys saved to .env                          ║" -ForegroundColor Green
-Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor White
 Write-Host ""
 
 # ── Step 10: Verify ─────────────────────────────────────────────────────────
