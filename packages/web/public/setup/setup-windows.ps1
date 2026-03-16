@@ -448,55 +448,125 @@ $LlmModel = ""
 $LlmApiKeyName = ""
 $LlmApiKey = ""
 
+$LlmAccessType = ""
+
 switch ($LlmL1Choice) {
     "1" {
         $LlmProvider = "anthropic"
         Write-Host ""
-        Write-Host "  Select Claude model:" -ForegroundColor White
-        Write-Host "    1. claude-sonnet-4-6         - Fast, cost-effective (recommended)"
-        Write-Host "    2. claude-opus-4-6           - Most capable, higher cost"
-        Write-Host "    3. claude-haiku-4-5          - Fastest, lowest cost"
+        Write-Host "  How will you access Claude?" -ForegroundColor White
         Write-Host ""
-        $ClaudeModel = Read-Host "  Enter choice [1-3] (default: 1)"
-        if (-not $ClaudeModel) { $ClaudeModel = "1" }
-        switch ($ClaudeModel) {
-            "2" { $LlmModel = "claude-opus-4-6" }
-            "3" { $LlmModel = "claude-haiku-4-5-20251001" }
-            default { $LlmModel = "claude-sonnet-4-6" }
-        }
-        $LlmApiKeyName = "ANTHROPIC_API_KEY"
+        Write-Host "    1. Subscription (Claude Pro `$20/mo, Max `$100-200/mo)" -ForegroundColor Cyan
+        Write-Host "       -> For personal use, chat-based, no API key needed"
+        Write-Host "    2. API (Pay-per-token, from console.anthropic.com)" -ForegroundColor Cyan
+        Write-Host "       -> For app integration, programmatic access, needs API key"
         Write-Host ""
-        $LlmApiKey = Read-Host "  Anthropic API Key (get one at console.anthropic.com)"
-        if ($LlmApiKey) {
-            Write-OK "Anthropic API key saved - $LlmModel"
+        $accessChoice = Read-Host "  Enter choice [1-2] (default: 2)"
+        if (-not $accessChoice) { $accessChoice = "2" }
+
+        if ($accessChoice -eq "1") {
+            $LlmAccessType = "subscription"
+            Write-Host ""
+            Write-Host "  Select your Claude subscription:" -ForegroundColor White
+            Write-Host "    1. Claude Pro (`$20/mo)         - 5x usage"
+            Write-Host "    2. Claude Max 5x (`$100/mo)     - 5x Pro limits"
+            Write-Host "    3. Claude Max 20x (`$200/mo)    - 20x Pro limits"
+            Write-Host ""
+            $subTier = Read-Host "  Enter choice [1-3] (default: 1)"
+            switch ($subTier) {
+                "2" { $LlmModel = "claude-max-5x" }
+                "3" { $LlmModel = "claude-max-20x" }
+                default { $LlmModel = "claude-pro" }
+            }
+            $LlmApiKeyName = ""
+            $LlmApiKey = ""
+            Write-OK "Claude subscription ($LlmModel) selected"
+            Write-Host ""
+            Write-Host "  NOTE: Subscription access is for personal/chat use." -ForegroundColor Yellow
+            Write-Host "  For backend automation, the API (option 2) is recommended." -ForegroundColor Yellow
         } else {
-            Write-Warn "No API key entered - you can add it to .env later"
+            $LlmAccessType = "api"
+            Write-Host ""
+            Write-Host "  Select Claude API model:" -ForegroundColor White
+            Write-Host "    1. claude-sonnet-4-6         - Fast, cost-effective (recommended)"
+            Write-Host "    2. claude-opus-4-6           - Most capable, higher cost"
+            Write-Host "    3. claude-haiku-4-5          - Fastest, lowest cost"
+            Write-Host ""
+            $ClaudeModel = Read-Host "  Enter choice [1-3] (default: 1)"
+            if (-not $ClaudeModel) { $ClaudeModel = "1" }
+            switch ($ClaudeModel) {
+                "2" { $LlmModel = "claude-opus-4-6" }
+                "3" { $LlmModel = "claude-haiku-4-5-20251001" }
+                default { $LlmModel = "claude-sonnet-4-6" }
+            }
+            $LlmApiKeyName = "ANTHROPIC_API_KEY"
+            Write-Host ""
+            $LlmApiKey = Read-Host "  Anthropic API Key (get one at console.anthropic.com)"
+            if ($LlmApiKey) {
+                Write-OK "Anthropic API key saved - $LlmModel"
+            } else {
+                Write-Warn "No API key entered - you can add it to .env later"
+            }
         }
     }
     "2" {
         $LlmProvider = "openai"
         Write-Host ""
-        Write-Host "  Select OpenAI model:" -ForegroundColor White
-        Write-Host "    1. gpt-4.1                  - Latest, best quality (recommended)"
-        Write-Host "    2. gpt-4.1-mini             - Fast, cost-effective"
-        Write-Host "    3. gpt-4.1-nano             - Fastest, lowest cost"
-        Write-Host "    4. o3                       - Best reasoning"
+        Write-Host "  How will you access OpenAI?" -ForegroundColor White
         Write-Host ""
-        $OaiModel = Read-Host "  Enter choice [1-4] (default: 1)"
-        if (-not $OaiModel) { $OaiModel = "1" }
-        switch ($OaiModel) {
-            "2" { $LlmModel = "gpt-4.1-mini" }
-            "3" { $LlmModel = "gpt-4.1-nano" }
-            "4" { $LlmModel = "o3" }
-            default { $LlmModel = "gpt-4.1" }
-        }
-        $LlmApiKeyName = "OPENAI_API_KEY"
+        Write-Host "    1. Subscription (ChatGPT Plus `$20/mo, Pro `$200/mo)" -ForegroundColor Cyan
+        Write-Host "       -> For personal use, chat-based, includes Codex"
+        Write-Host "    2. API (Pay-per-token, from platform.openai.com)" -ForegroundColor Cyan
+        Write-Host "       -> For app integration, programmatic access, needs API key"
         Write-Host ""
-        $LlmApiKey = Read-Host "  OpenAI API Key (get one at platform.openai.com)"
-        if ($LlmApiKey) {
-            Write-OK "OpenAI API key saved - $LlmModel"
+        $accessChoice = Read-Host "  Enter choice [1-2] (default: 2)"
+        if (-not $accessChoice) { $accessChoice = "2" }
+
+        if ($accessChoice -eq "1") {
+            $LlmAccessType = "subscription"
+            Write-Host ""
+            Write-Host "  Select your ChatGPT subscription:" -ForegroundColor White
+            Write-Host "    1. ChatGPT Plus (`$20/mo)      - Standard access"
+            Write-Host "    2. ChatGPT Pro (`$200/mo)       - Highest limits"
+            Write-Host "    3. ChatGPT Business (`$30/user/mo)"
+            Write-Host ""
+            $subTier = Read-Host "  Enter choice [1-3] (default: 1)"
+            switch ($subTier) {
+                "2" { $LlmModel = "chatgpt-pro" }
+                "3" { $LlmModel = "chatgpt-business" }
+                default { $LlmModel = "chatgpt-plus" }
+            }
+            $LlmApiKeyName = ""
+            $LlmApiKey = ""
+            Write-OK "ChatGPT subscription ($LlmModel) selected"
+            Write-Host ""
+            Write-Host "  NOTE: Subscription access is for personal/chat use." -ForegroundColor Yellow
+            Write-Host "  For backend automation, the API (option 2) is recommended." -ForegroundColor Yellow
         } else {
-            Write-Warn "No API key entered - you can add it to .env later"
+            $LlmAccessType = "api"
+            Write-Host ""
+            Write-Host "  Select OpenAI API model:" -ForegroundColor White
+            Write-Host "    1. gpt-4.1                  - Latest, best quality (recommended)"
+            Write-Host "    2. gpt-4.1-mini             - Fast, cost-effective"
+            Write-Host "    3. gpt-4.1-nano             - Fastest, lowest cost"
+            Write-Host "    4. o3                       - Best reasoning"
+            Write-Host ""
+            $OaiModel = Read-Host "  Enter choice [1-4] (default: 1)"
+            if (-not $OaiModel) { $OaiModel = "1" }
+            switch ($OaiModel) {
+                "2" { $LlmModel = "gpt-4.1-mini" }
+                "3" { $LlmModel = "gpt-4.1-nano" }
+                "4" { $LlmModel = "o3" }
+                default { $LlmModel = "gpt-4.1" }
+            }
+            $LlmApiKeyName = "OPENAI_API_KEY"
+            Write-Host ""
+            $LlmApiKey = Read-Host "  OpenAI API Key (get one at platform.openai.com)"
+            if ($LlmApiKey) {
+                Write-OK "OpenAI API key saved - $LlmModel"
+            } else {
+                Write-Warn "No API key entered - you can add it to .env later"
+            }
         }
     }
     "3" {

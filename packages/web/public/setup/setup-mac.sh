@@ -398,55 +398,125 @@ LLM_MODEL=""
 LLM_API_KEY_NAME=""
 LLM_API_KEY=""
 
+LLM_ACCESS_TYPE=""
+
 case "$LLM_L1_CHOICE" in
   1)
     LLM_PROVIDER="anthropic"
     echo ""
-    echo "  Select Claude model:"
-    echo "    1. claude-sonnet-4-6         — Fast, cost-effective (recommended)"
-    echo "    2. claude-opus-4-6           — Most capable, higher cost"
-    echo "    3. claude-haiku-4-5          — Fastest, lowest cost"
+    echo -e "  ${BOLD}How will you access Claude?${NC}"
     echo ""
-    read -p "  Enter choice [1-3] (default: 1): " CLAUDE_MODEL
-    CLAUDE_MODEL="${CLAUDE_MODEL:-1}"
-    case "$CLAUDE_MODEL" in
-      2) LLM_MODEL="claude-opus-4-6" ;;
-      3) LLM_MODEL="claude-haiku-4-5-20251001" ;;
-      *) LLM_MODEL="claude-sonnet-4-6" ;;
-    esac
-    LLM_API_KEY_NAME="ANTHROPIC_API_KEY"
+    echo -e "    ${CYAN}1. Subscription (Claude Pro \$20/mo, Max \$100-200/mo)${NC}"
+    echo "       → For personal use, chat-based, no API key needed"
+    echo -e "    ${CYAN}2. API (Pay-per-token, from console.anthropic.com)${NC}"
+    echo "       → For app integration, programmatic access, needs API key"
     echo ""
-    read -p "  Anthropic API Key (get one at console.anthropic.com): " LLM_API_KEY
-    if [[ -n "$LLM_API_KEY" ]]; then
-      log_ok "Anthropic API key saved — $LLM_MODEL"
+    read -p "  Enter choice [1-2] (default: 2): " ACCESS_CHOICE
+    ACCESS_CHOICE="${ACCESS_CHOICE:-2}"
+
+    if [[ "$ACCESS_CHOICE" == "1" ]]; then
+      LLM_ACCESS_TYPE="subscription"
+      echo ""
+      echo "  Select your Claude subscription:"
+      echo "    1. Claude Pro (\$20/mo)         — 5x usage"
+      echo "    2. Claude Max 5x (\$100/mo)     — 5x Pro limits"
+      echo "    3. Claude Max 20x (\$200/mo)    — 20x Pro limits"
+      echo ""
+      read -p "  Enter choice [1-3] (default: 1): " SUB_TIER
+      case "$SUB_TIER" in
+        2) LLM_MODEL="claude-max-5x" ;;
+        3) LLM_MODEL="claude-max-20x" ;;
+        *) LLM_MODEL="claude-pro" ;;
+      esac
+      LLM_API_KEY_NAME=""
+      LLM_API_KEY=""
+      log_ok "Claude subscription ($LLM_MODEL) selected"
+      echo ""
+      echo -e "  ${YELLOW}NOTE: Subscription access is for personal/chat use.${NC}"
+      echo -e "  ${YELLOW}For backend automation, the API (option 2) is recommended.${NC}"
     else
-      log_warn "No API key entered — you can add it to .env later"
+      LLM_ACCESS_TYPE="api"
+      echo ""
+      echo "  Select Claude API model:"
+      echo "    1. claude-sonnet-4-6         — Fast, cost-effective (recommended)"
+      echo "    2. claude-opus-4-6           — Most capable, higher cost"
+      echo "    3. claude-haiku-4-5          — Fastest, lowest cost"
+      echo ""
+      read -p "  Enter choice [1-3] (default: 1): " CLAUDE_MODEL
+      CLAUDE_MODEL="${CLAUDE_MODEL:-1}"
+      case "$CLAUDE_MODEL" in
+        2) LLM_MODEL="claude-opus-4-6" ;;
+        3) LLM_MODEL="claude-haiku-4-5-20251001" ;;
+        *) LLM_MODEL="claude-sonnet-4-6" ;;
+      esac
+      LLM_API_KEY_NAME="ANTHROPIC_API_KEY"
+      echo ""
+      read -p "  Anthropic API Key (get one at console.anthropic.com): " LLM_API_KEY
+      if [[ -n "$LLM_API_KEY" ]]; then
+        log_ok "Anthropic API key saved — $LLM_MODEL"
+      else
+        log_warn "No API key entered — you can add it to .env later"
+      fi
     fi
     ;;
   2)
     LLM_PROVIDER="openai"
     echo ""
-    echo "  Select OpenAI model:"
-    echo "    1. gpt-4.1                  — Latest, best quality (recommended)"
-    echo "    2. gpt-4.1-mini             — Fast, cost-effective"
-    echo "    3. gpt-4.1-nano             — Fastest, lowest cost"
-    echo "    4. o3                       — Best reasoning"
+    echo -e "  ${BOLD}How will you access OpenAI?${NC}"
     echo ""
-    read -p "  Enter choice [1-4] (default: 1): " OAI_MODEL
-    OAI_MODEL="${OAI_MODEL:-1}"
-    case "$OAI_MODEL" in
-      2) LLM_MODEL="gpt-4.1-mini" ;;
-      3) LLM_MODEL="gpt-4.1-nano" ;;
-      4) LLM_MODEL="o3" ;;
-      *) LLM_MODEL="gpt-4.1" ;;
-    esac
-    LLM_API_KEY_NAME="OPENAI_API_KEY"
+    echo -e "    ${CYAN}1. Subscription (ChatGPT Plus \$20/mo, Pro \$200/mo)${NC}"
+    echo "       → For personal use, chat-based, includes Codex"
+    echo -e "    ${CYAN}2. API (Pay-per-token, from platform.openai.com)${NC}"
+    echo "       → For app integration, programmatic access, needs API key"
     echo ""
-    read -p "  OpenAI API Key (get one at platform.openai.com): " LLM_API_KEY
-    if [[ -n "$LLM_API_KEY" ]]; then
-      log_ok "OpenAI API key saved — $LLM_MODEL"
+    read -p "  Enter choice [1-2] (default: 2): " ACCESS_CHOICE
+    ACCESS_CHOICE="${ACCESS_CHOICE:-2}"
+
+    if [[ "$ACCESS_CHOICE" == "1" ]]; then
+      LLM_ACCESS_TYPE="subscription"
+      echo ""
+      echo "  Select your ChatGPT subscription:"
+      echo "    1. ChatGPT Plus (\$20/mo)      — Standard access"
+      echo "    2. ChatGPT Pro (\$200/mo)       — Highest limits"
+      echo "    3. ChatGPT Business (\$30/user/mo)"
+      echo ""
+      read -p "  Enter choice [1-3] (default: 1): " SUB_TIER
+      case "$SUB_TIER" in
+        2) LLM_MODEL="chatgpt-pro" ;;
+        3) LLM_MODEL="chatgpt-business" ;;
+        *) LLM_MODEL="chatgpt-plus" ;;
+      esac
+      LLM_API_KEY_NAME=""
+      LLM_API_KEY=""
+      log_ok "ChatGPT subscription ($LLM_MODEL) selected"
+      echo ""
+      echo -e "  ${YELLOW}NOTE: Subscription access is for personal/chat use.${NC}"
+      echo -e "  ${YELLOW}For backend automation, the API (option 2) is recommended.${NC}"
     else
-      log_warn "No API key entered — you can add it to .env later"
+      LLM_ACCESS_TYPE="api"
+      echo ""
+      echo "  Select OpenAI API model:"
+      echo "    1. gpt-4.1                  — Latest, best quality (recommended)"
+      echo "    2. gpt-4.1-mini             — Fast, cost-effective"
+      echo "    3. gpt-4.1-nano             — Fastest, lowest cost"
+      echo "    4. o3                       — Best reasoning"
+      echo ""
+      read -p "  Enter choice [1-4] (default: 1): " OAI_MODEL
+      OAI_MODEL="${OAI_MODEL:-1}"
+      case "$OAI_MODEL" in
+        2) LLM_MODEL="gpt-4.1-mini" ;;
+        3) LLM_MODEL="gpt-4.1-nano" ;;
+        4) LLM_MODEL="o3" ;;
+        *) LLM_MODEL="gpt-4.1" ;;
+      esac
+      LLM_API_KEY_NAME="OPENAI_API_KEY"
+      echo ""
+      read -p "  OpenAI API Key (get one at platform.openai.com): " LLM_API_KEY
+      if [[ -n "$LLM_API_KEY" ]]; then
+        log_ok "OpenAI API key saved — $LLM_MODEL"
+      else
+        log_warn "No API key entered — you can add it to .env later"
+      fi
     fi
     ;;
   3)
@@ -643,6 +713,7 @@ if [[ -f "$ENV_FILE" ]]; then
 
 # ── LLM Configuration ─────────────────────────────────────
 # Level 1: User-Facing (Chat & AI Import)
+LLM_ACCESS_TYPE=$LLM_ACCESS_TYPE
 LLM_PROVIDER=$LLM_PROVIDER
 LLM_MODEL=$LLM_MODEL
 
