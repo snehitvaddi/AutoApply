@@ -27,5 +27,10 @@ if %errorlevel% neq 0 (
 powershell -ExecutionPolicy Bypass -Command "& { irm 'https://autoapply-web.vercel.app/setup/setup-windows.ps1' | iex }"
 
 echo.
-echo   Setup complete. You can close this window.
+if %errorlevel% equ 0 (
+    echo   Setup complete. If the AI assistant didn't launch, run it manually:
+    echo   codex --cd %USERPROFILE%\autoapply
+    echo   OR: claude --cd %USERPROFILE%\autoapply
+)
+echo.
 pause

@@ -71,9 +71,9 @@ echo "  4. Install OpenClaw CLI"
 echo "  5. Install Playwright browsers"
 echo "  6. Clone AutoApply repository"
 echo "  7. Install all dependencies"
-echo "  8. Configure environment variables"
-echo "  9. Configure LLM providers (Claude / OpenAI / Local)"
-echo "  10. Verify the setup"
+echo "  8. Configure LLM provider + install CLI (Claude Code / Codex)"
+echo "  9. Generate setup status + AGENTS.md"
+echo "  10. Launch LLM CLI for remaining setup (or manual steps)"
 echo ""
 echo -e "${YELLOW}Estimated time: 5-10 minutes${NC}"
 echo ""
@@ -205,15 +205,237 @@ else
   log_warn "packages/web/package.json not found — skipping"
 fi
 
-# ── Step 8: Environment configuration ───────────────────────────────────────
-log_step 8 "Configuring environment..."
+# ── Step 8: LLM Provider + CLI Installation ────────────────────────────────
+log_step 8 "Configuring LLM provider + installing CLI..."
+
+echo ""
+echo -e "  ${CYAN}One LLM powers everything (chat + OpenClaw backend).${NC}"
+echo -e "  ${CYAN}Pick your provider and access type — that's it.${NC}"
+echo ""
+echo "    1. Claude (Anthropic)     2. GPT (OpenAI)"
+echo "    3. Gemini (Google)        4. Local/Ollama"
+echo "    5. None (skip for now)"
+echo ""
+read -p "  Provider [1-5] (default: 1): " LLM_CHOICE
+LLM_CHOICE="${LLM_CHOICE:-1}"
+
+LLM_PROVIDER="none"; LLM_MODEL=""; LLM_ACCESS_TYPE="none"; LLM_API_KEY_NAME=""; LLM_API_KEY=""
+# Track which CLI tool to use (claude or codex)
+LLM_CLI_TOOL=""
+
+case "$LLM_CHOICE" in
+  1)
+    LLM_PROVIDER="anthropic"
+    echo ""
+    echo "    1. Subscription (Pro \$20, Max \$100-200/mo)    2. API (pay-per-token)"
+    read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
+    if [[ "$AC" == "1" ]]; then
+      LLM_ACCESS_TYPE="subscription"
+      echo "    1. Pro (\$20)  2. Max 5x (\$100)  3. Max 20x (\$200)"
+      read -p "  Tier [1-3] (default: 1): " ST
+      case "$ST" in 2) LLM_MODEL="claude-max-5x" ;; 3) LLM_MODEL="claude-max-20x" ;; *) LLM_MODEL="claude-pro" ;; esac
+
+      # Install Claude Code CLI (subscription — browser OAuth)
+      log_info "Installing Claude Code CLI..."
+      npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
+      if check_command claude; then
+        log_ok "Claude Code CLI installed"
+        log_info "Launching Claude login (browser OAuth)..."
+        claude login 2>/dev/null || log_warn "Claude login skipped — run 'claude login' later"
+        LLM_CLI_TOOL="claude"
+      fi
+    else
+      LLM_ACCESS_TYPE="api"
+      echo "    1. Sonnet 4.6 (recommended)  2. Opus 4.6  3. Haiku 4.5"
+      read -p "  Model [1-3] (default: 1): " CM; CM="${CM:-1}"
+      case "$CM" in 2) LLM_MODEL="claude-opus-4-6" ;; 3) LLM_MODEL="claude-haiku-4-5-20251001" ;; *) LLM_MODEL="claude-sonnet-4-6" ;; esac
+      LLM_API_KEY_NAME="ANTHROPIC_API_KEY"
+      read -p "  API Key (console.anthropic.com): " LLM_API_KEY
+
+      # Install Claude Code CLI (API — set key as env var)
+      log_info "Installing Claude Code CLI..."
+      npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
+      if check_command claude; then
+        log_ok "Claude Code CLI installed"
+        if [[ -n "$LLM_API_KEY" ]]; then
+          export ANTHROPIC_API_KEY="$LLM_API_KEY"
+          log_ok "ANTHROPIC_API_KEY set for Claude Code CLI"
+        fi
+        LLM_CLI_TOOL="claude"
+      fi
+    fi
+    ;;
+  2)
+    LLM_PROVIDER="openai"
+    echo ""
+    echo "    1. Subscription (Plus \$20, Pro \$200/mo)    2. API (pay-per-token)"
+    read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
+    if [[ "$AC" == "1" ]]; then
+      LLM_ACCESS_TYPE="subscription"
+      echo "    1. Plus (\$20)  2. Pro (\$200)  3. Business (\$30/user)"
+      read -p "  Tier [1-3] (default: 1): " ST
+      case "$ST" in 2) LLM_MODEL="chatgpt-pro" ;; 3) LLM_MODEL="chatgpt-business" ;; *) LLM_MODEL="chatgpt-plus" ;; esac
+
+      # Install Codex CLI (subscription — browser OAuth)
+      log_info "Installing OpenAI Codex CLI..."
+      npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
+      if check_command codex; then
+        log_ok "Codex CLI installed"
+        log_info "Launching Codex login (browser OAuth)..."
+        codex login 2>/dev/null || log_warn "Codex login skipped — run 'codex login' later"
+        LLM_CLI_TOOL="codex"
+      fi
+    else
+      LLM_ACCESS_TYPE="api"
+      echo "    1. GPT-4.1 (recommended)  2. GPT-4.1-mini  3. GPT-4.1-nano  4. o3"
+      read -p "  Model [1-4] (default: 1): " OM; OM="${OM:-1}"
+      case "$OM" in 2) LLM_MODEL="gpt-4.1-mini" ;; 3) LLM_MODEL="gpt-4.1-nano" ;; 4) LLM_MODEL="o3" ;; *) LLM_MODEL="gpt-4.1" ;; esac
+      LLM_API_KEY_NAME="OPENAI_API_KEY"
+      read -p "  API Key (platform.openai.com): " LLM_API_KEY
+
+      # Install Codex CLI (API — pipe key)
+      log_info "Installing OpenAI Codex CLI..."
+      npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
+      if check_command codex; then
+        log_ok "Codex CLI installed"
+        if [[ -n "$LLM_API_KEY" ]]; then
+          echo "$LLM_API_KEY" | codex login --with-api-key 2>/dev/null || log_warn "Codex API key login failed — run 'codex login' later"
+          log_ok "Codex authenticated with API key"
+        fi
+        LLM_CLI_TOOL="codex"
+      fi
+    fi
+    ;;
+  3)
+    LLM_PROVIDER="google"
+    LLM_MODEL="gemini-2.5-pro"
+    LLM_API_KEY_NAME="GOOGLE_AI_API_KEY"
+    echo ""
+    read -p "  Google AI API Key (get one at aistudio.google.com): " LLM_API_KEY
+    if [[ -n "$LLM_API_KEY" ]]; then
+      log_ok "Google AI API key saved — $LLM_MODEL"
+    else
+      log_warn "No API key entered — you can add it to .env later"
+    fi
+    # No CLI tool for Gemini
+    ;;
+  4)
+    LLM_PROVIDER="ollama"
+    echo ""
+    if check_command ollama; then
+      log_ok "Ollama detected"
+    else
+      log_info "Installing Ollama..."
+      if check_command brew; then
+        brew install ollama
+      else
+        curl -fsSL https://ollama.com/install.sh | sh
+      fi
+    fi
+    echo ""
+    echo "  Select local model:"
+    echo "    1. llama3.1:8b               — Good balance (8GB RAM)"
+    echo "    2. llama3.1:70b              — High quality (64GB RAM)"
+    echo "    3. mistral:7b                — Fast, lightweight"
+    echo "    4. Custom model"
+    echo ""
+    read -p "  Enter choice [1-4] (default: 1): " LOCAL_MODEL
+    LOCAL_MODEL="${LOCAL_MODEL:-1}"
+    case "$LOCAL_MODEL" in
+      2) LLM_MODEL="llama3.1:70b" ;;
+      3) LLM_MODEL="mistral:7b" ;;
+      4) read -p "  Enter model name: " LLM_MODEL ;;
+      *) LLM_MODEL="llama3.1:8b" ;;
+    esac
+    log_info "Pulling model $LLM_MODEL (this may take a while)..."
+    ollama pull "$LLM_MODEL" 2>/dev/null || log_warn "Model pull failed — run 'ollama pull $LLM_MODEL' manually"
+    # No CLI tool for local/Ollama
+    ;;
+  5)
+    LLM_PROVIDER="none"; LLM_MODEL=""; log_ok "No LLM — configure later via settings or openclaw config"
+    ;;
+esac
+
+[[ "$LLM_PROVIDER" != "none" ]] && log_ok "$LLM_PROVIDER / $LLM_MODEL ($LLM_ACCESS_TYPE) — used for chat + OpenClaw"
+
+# Same provider for backend — no separate question
+LLM_BACKEND_PROVIDER="$LLM_PROVIDER"; LLM_BACKEND_MODEL="$LLM_MODEL"
+echo ""
+# Configure OpenClaw with the same LLM
+if [[ "$LLM_PROVIDER" != "none" ]] && check_command openclaw; then
+  log_info "Configuring OpenClaw to use $LLM_PROVIDER..."
+  openclaw config set ai.provider "$LLM_PROVIDER" 2>/dev/null
+  [[ -n "$LLM_MODEL" ]] && openclaw config set ai.model "$LLM_MODEL" 2>/dev/null
+  [[ -n "$LLM_API_KEY" ]] && openclaw config set ai.apiKey "$LLM_API_KEY" 2>/dev/null
+  log_ok "OpenClaw configured with same LLM"
+fi
+
+# Install SDK
+[[ "$LLM_PROVIDER" == "anthropic" ]] && "$PYTHON_CMD" -m pip install --quiet anthropic 2>/dev/null
+[[ "$LLM_PROVIDER" == "openai" ]] && "$PYTHON_CMD" -m pip install --quiet openai 2>/dev/null
+[[ "$LLM_PROVIDER" == "google" ]] && "$PYTHON_CMD" -m pip install --quiet google-generativeai 2>/dev/null
+
+# ── Environment configuration ──────────────────────────────────────────────
+# If an LLM CLI is available, skip interactive .env prompts (let the CLI handle it).
+# If no CLI, keep current interactive prompts.
 
 ENV_FILE="$INSTALL_DIR/.env"
 
 if [[ -f "$ENV_FILE" ]]; then
   log_ok ".env file already exists"
   log_info "To reconfigure, edit: $ENV_FILE"
+elif [[ -n "$LLM_CLI_TOOL" ]]; then
+  # LLM CLI is available — create a minimal .env with what we know,
+  # let the CLI handle the rest (Supabase credentials, etc.)
+  log_info "LLM CLI available ($LLM_CLI_TOOL) — creating minimal .env (CLI will help complete it)"
+
+  # Generate encryption key
+  ENCRYPTION_KEY=$(openssl rand -hex 32)
+
+  cat > "$ENV_FILE" <<ENVEOF
+# AutoApply Environment Configuration
+# Generated by setup-mac.sh on $(date)
+# NOTE: Supabase credentials and other settings will be configured via $LLM_CLI_TOOL
+
+# Supabase (to be configured)
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_URL=
+SUPABASE_SERVICE_KEY=
+
+# App
+NEXT_PUBLIC_APP_URL=https://autoapply-web.vercel.app
+ENCRYPTION_KEY=$ENCRYPTION_KEY
+
+# Worker
+WORKER_ID=worker-1
+POLL_INTERVAL=10
+APPLY_COOLDOWN=30
+RESUME_DIR=/tmp/autoapply/resumes
+SCREENSHOT_DIR=/tmp/autoapply/screenshots
+
+# Telegram (optional)
+TELEGRAM_BOT_TOKEN=
+
+# Stripe (optional — set these if enabling billing)
+# STRIPE_SECRET_KEY=
+# STRIPE_WEBHOOK_SECRET=
+# STRIPE_STARTER_PRICE_ID=
+# STRIPE_PRO_PRICE_ID=
+
+# Redis rate limiting (optional)
+# UPSTASH_REDIS_REST_URL=
+# UPSTASH_REDIS_REST_TOKEN=
+
+# Google OAuth for Gmail (optional — Pro tier)
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+ENVEOF
+
+  log_ok ".env file created at $ENV_FILE (Supabase creds pending — CLI will help)"
 else
+  # No LLM CLI — use interactive prompts (original behavior)
   echo ""
   echo -e "${BOLD}Enter your configuration (press Enter to skip optional fields):${NC}"
   echo ""
@@ -360,129 +582,7 @@ else
   log_warn "Could not set up auto-updates — update script not found"
 fi
 
-# ── Step 9: LLM Provider ──────────────────────────────────────────────────
-log_step 9 "Configuring LLM provider..."
-
-echo ""
-echo -e "  ${CYAN}One LLM powers everything (chat + OpenClaw backend).${NC}"
-echo -e "  ${CYAN}Pick your provider and access type — that's it.${NC}"
-echo ""
-echo "    1. Claude (Anthropic)     2. GPT (OpenAI)"
-echo "    3. Gemini (Google)        4. Local/Ollama"
-echo "    5. None (skip for now)"
-echo ""
-read -p "  Provider [1-5] (default: 1): " LLM_CHOICE
-LLM_CHOICE="${LLM_CHOICE:-1}"
-
-LLM_PROVIDER="none"; LLM_MODEL=""; LLM_ACCESS_TYPE="none"; LLM_API_KEY_NAME=""; LLM_API_KEY=""
-
-case "$LLM_CHOICE" in
-  1)
-    LLM_PROVIDER="anthropic"
-    echo ""
-    echo "    1. Subscription (Pro \$20, Max \$100-200/mo)    2. API (pay-per-token)"
-    read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
-    if [[ "$AC" == "1" ]]; then
-      LLM_ACCESS_TYPE="subscription"
-      echo "    1. Pro (\$20)  2. Max 5x (\$100)  3. Max 20x (\$200)"
-      read -p "  Tier [1-3] (default: 1): " ST
-      case "$ST" in 2) LLM_MODEL="claude-max-5x" ;; 3) LLM_MODEL="claude-max-20x" ;; *) LLM_MODEL="claude-pro" ;; esac
-    else
-      LLM_ACCESS_TYPE="api"
-      echo "    1. Sonnet 4.6 (recommended)  2. Opus 4.6  3. Haiku 4.5"
-      read -p "  Model [1-3] (default: 1): " CM; CM="${CM:-1}"
-      case "$CM" in 2) LLM_MODEL="claude-opus-4-6" ;; 3) LLM_MODEL="claude-haiku-4-5-20251001" ;; *) LLM_MODEL="claude-sonnet-4-6" ;; esac
-      LLM_API_KEY_NAME="ANTHROPIC_API_KEY"
-      read -p "  API Key (console.anthropic.com): " LLM_API_KEY
-    fi
-    ;;
-  2)
-    LLM_PROVIDER="openai"
-    echo ""
-    echo "    1. Subscription (Plus \$20, Pro \$200/mo)    2. API (pay-per-token)"
-    read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
-    if [[ "$AC" == "1" ]]; then
-      LLM_ACCESS_TYPE="subscription"
-      echo "    1. Plus (\$20)  2. Pro (\$200)  3. Business (\$30/user)"
-      read -p "  Tier [1-3] (default: 1): " ST
-      case "$ST" in 2) LLM_MODEL="chatgpt-pro" ;; 3) LLM_MODEL="chatgpt-business" ;; *) LLM_MODEL="chatgpt-plus" ;; esac
-    else
-      LLM_ACCESS_TYPE="api"
-      echo "    1. GPT-4.1 (recommended)  2. GPT-4.1-mini  3. GPT-4.1-nano  4. o3"
-      read -p "  Model [1-4] (default: 1): " OM; OM="${OM:-1}"
-      case "$OM" in 2) LLM_MODEL="gpt-4.1-mini" ;; 3) LLM_MODEL="gpt-4.1-nano" ;; 4) LLM_MODEL="o3" ;; *) LLM_MODEL="gpt-4.1" ;; esac
-      LLM_API_KEY_NAME="OPENAI_API_KEY"
-      read -p "  API Key (platform.openai.com): " LLM_API_KEY
-    fi
-    ;;
-  3)
-    LLM_PROVIDER="google"
-    LLM_MODEL="gemini-2.5-pro"
-    LLM_API_KEY_NAME="GOOGLE_AI_API_KEY"
-    echo ""
-    read -p "  Google AI API Key (get one at aistudio.google.com): " LLM_API_KEY
-    if [[ -n "$LLM_API_KEY" ]]; then
-      log_ok "Google AI API key saved — $LLM_MODEL"
-    else
-      log_warn "No API key entered — you can add it to .env later"
-    fi
-    ;;
-  4)
-    LLM_PROVIDER="ollama"
-    echo ""
-    if check_command ollama; then
-      log_ok "Ollama detected"
-    else
-      log_info "Installing Ollama..."
-      if check_command brew; then
-        brew install ollama
-      else
-        curl -fsSL https://ollama.com/install.sh | sh
-      fi
-    fi
-    echo ""
-    echo "  Select local model:"
-    echo "    1. llama3.1:8b               — Good balance (8GB RAM)"
-    echo "    2. llama3.1:70b              — High quality (64GB RAM)"
-    echo "    3. mistral:7b                — Fast, lightweight"
-    echo "    4. Custom model"
-    echo ""
-    read -p "  Enter choice [1-4] (default: 1): " LOCAL_MODEL
-    LOCAL_MODEL="${LOCAL_MODEL:-1}"
-    case "$LOCAL_MODEL" in
-      2) LLM_MODEL="llama3.1:70b" ;;
-      3) LLM_MODEL="mistral:7b" ;;
-      4) read -p "  Enter model name: " LLM_MODEL ;;
-      *) LLM_MODEL="llama3.1:8b" ;;
-    esac
-    log_info "Pulling model $LLM_MODEL (this may take a while)..."
-    ollama pull "$LLM_MODEL" 2>/dev/null || log_warn "Model pull failed — run 'ollama pull $LLM_MODEL' manually"
-    ;;
-  5)
-    LLM_PROVIDER="none"; LLM_MODEL=""; log_ok "No LLM — configure later via settings or openclaw config"
-    ;;
-esac
-
-[[ "$LLM_PROVIDER" != "none" ]] && log_ok "$LLM_PROVIDER / $LLM_MODEL ($LLM_ACCESS_TYPE) — used for chat + OpenClaw"
-
-# Same provider for backend — no separate question
-LLM_BACKEND_PROVIDER="$LLM_PROVIDER"; LLM_BACKEND_MODEL="$LLM_MODEL"
-echo ""
-# Configure OpenClaw with the same LLM
-if [[ "$LLM_PROVIDER" != "none" ]] && check_command openclaw; then
-  log_info "Configuring OpenClaw to use $LLM_PROVIDER..."
-  openclaw config set ai.provider "$LLM_PROVIDER" 2>/dev/null
-  [[ -n "$LLM_MODEL" ]] && openclaw config set ai.model "$LLM_MODEL" 2>/dev/null
-  [[ -n "$LLM_API_KEY" ]] && openclaw config set ai.apiKey "$LLM_API_KEY" 2>/dev/null
-  log_ok "OpenClaw configured with same LLM"
-fi
-
-# Install SDK
-[[ "$LLM_PROVIDER" == "anthropic" ]] && "$PYTHON_CMD" -m pip install --quiet anthropic 2>/dev/null
-[[ "$LLM_PROVIDER" == "openai" ]] && "$PYTHON_CMD" -m pip install --quiet openai 2>/dev/null
-[[ "$LLM_PROVIDER" == "google" ]] && "$PYTHON_CMD" -m pip install --quiet google-generativeai 2>/dev/null
-
-# Write to .env
+# Write LLM config to .env
 if [[ -f "$ENV_FILE" ]]; then
   cat >> "$ENV_FILE" <<LLMEOF
 
@@ -500,60 +600,272 @@ fi
 
 echo ""
 
-# ── Step 10: Verify ─────────────────────────────────────────────────────────
-log_step 10 "Verifying setup..."
+# ── Step 9: Generate setup status + AGENTS.md ─────────────────────────────
+log_step 9 "Generating setup status + AGENTS.md..."
 
-PASS=0
-FAIL=0
+# ── Build status data (used for both console dashboard and AGENTS.md) ──────
 
-check_verify() {
-  if $1; then
-    log_ok "$2"
-    ((PASS++))
+# Collect component statuses into arrays for reuse
+declare -a STATUS_COMPONENTS=()
+declare -a STATUS_CONFIG=()
+declare -a STATUS_SERVICES=()
+declare -a STATUS_TODOS=()
+
+# --- Component checks ---
+add_component() {
+  local ok=$1 name=$2 detail=$3
+  if $ok; then
+    STATUS_COMPONENTS+=("[READY]   $name  $detail")
   else
-    log_fail "$2"
-    ((FAIL++))
+    STATUS_COMPONENTS+=("[MISSING] $name  $detail")
   fi
 }
 
-check_verify "check_command $PYTHON_CMD" "Python ($($PYTHON_CMD --version 2>&1))"
-check_verify "check_command node" "Node.js ($(node --version 2>&1))"
-check_verify "check_command npm" "npm ($(npm --version 2>&1))"
-check_verify "check_command openclaw" "OpenClaw CLI"
-check_verify "$PYTHON_CMD -c 'import playwright' 2>/dev/null" "Playwright (Python)"
-check_verify "$PYTHON_CMD -c 'import supabase' 2>/dev/null" "Supabase client (Python)"
-check_verify "$PYTHON_CMD -c 'import httpx' 2>/dev/null" "httpx (Python)"
-check_verify "test -f $ENV_FILE" "Environment config (.env)"
-check_verify "test -d /tmp/autoapply/resumes" "Worker directories"
+add_component "check_command $PYTHON_CMD" "Python" "$($PYTHON_CMD --version 2>&1)"
+add_component "check_command node" "Node.js" "$(node --version 2>&1)"
+add_component "check_command npm" "npm" "$(npm --version 2>&1)"
+add_component "check_command git" "Git" "$(git --version 2>&1 | head -1)"
+add_component "check_command openclaw" "OpenClaw CLI" "$(openclaw --version 2>&1 || echo '')"
+add_component "$PYTHON_CMD -c 'import playwright' 2>/dev/null" "Playwright" ""
+add_component "$PYTHON_CMD -c 'import supabase' 2>/dev/null" "Supabase SDK" ""
+add_component "$PYTHON_CMD -c 'import httpx' 2>/dev/null" "httpx" ""
 
-echo ""
-echo -e "${BOLD}════════════════════════════════════════════════${NC}"
-if [[ $FAIL -eq 0 ]]; then
-  echo -e "${GREEN}${BOLD}  Setup complete! All $PASS checks passed.${NC}"
-else
-  echo -e "${YELLOW}${BOLD}  Setup done with $FAIL issue(s). $PASS/$((PASS+FAIL)) checks passed.${NC}"
+# LLM CLI
+if [[ -n "$LLM_CLI_TOOL" ]]; then
+  add_component "check_command $LLM_CLI_TOOL" "$LLM_CLI_TOOL CLI" "$(command -v $LLM_CLI_TOOL 2>/dev/null || echo '')"
 fi
-echo -e "${BOLD}════════════════════════════════════════════════${NC}"
 
-echo ""
-echo -e "${BOLD}Next steps:${NC}"
-echo ""
-echo "  1. Start the worker:"
-echo -e "     ${CYAN}cd $INSTALL_DIR/packages/worker${NC}"
-echo -e "     ${CYAN}source ../../.env && $PYTHON_CMD worker.py${NC}"
-echo ""
-echo "  2. Run the job scanner:"
-echo -e "     ${CYAN}cd $INSTALL_DIR/packages/worker${NC}"
-echo -e "     ${CYAN}source ../../.env && $PYTHON_CMD -m scanner.run${NC}"
-echo ""
-echo "  3. Start the web app (development):"
-echo -e "     ${CYAN}cd $INSTALL_DIR/packages/web${NC}"
-echo -e "     ${CYAN}npm run dev${NC}"
-echo ""
-echo -e "  ${YELLOW}Need help? See docs/CLIENT-ONBOARDING.md${NC}"
-echo ""
+# LLM SDKs
+if [[ -f "$ENV_FILE" ]]; then
+  L1_PROV=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
+  L2_PROV=$(grep "^LLM_BACKEND_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
+fi
+[[ "$L1_PROV" == "anthropic" || "$L2_PROV" == "anthropic" ]] && add_component "$PYTHON_CMD -c 'import anthropic' 2>/dev/null" "Anthropic SDK" ""
+[[ "$L1_PROV" == "openai" || "$L2_PROV" == "openai" ]] && add_component "$PYTHON_CMD -c 'import openai' 2>/dev/null" "OpenAI SDK" ""
+[[ "$L1_PROV" == "google" || "$L2_PROV" == "google" ]] && add_component "$PYTHON_CMD -c 'import google.generativeai' 2>/dev/null" "Google AI SDK" ""
+[[ "$L1_PROV" == "ollama" || "$L2_PROV" == "ollama" ]] && add_component "check_command ollama" "Ollama" ""
 
-# ── Post-Setup Status Dashboard ──────────────────────────────────────────────
+# --- Config checks ---
+add_config() {
+  local key=$1 label=$2
+  if [[ -f "$ENV_FILE" ]] && grep -q "^${key}=.\+" "$ENV_FILE" 2>/dev/null; then
+    STATUS_CONFIG+=("[SET]     $label")
+  else
+    STATUS_CONFIG+=("[NOT SET] $label  <-- action needed")
+  fi
+}
+
+add_config "NEXT_PUBLIC_SUPABASE_URL" "Supabase URL          (required)"
+add_config "NEXT_PUBLIC_SUPABASE_ANON_KEY" "Supabase Anon Key     (required)"
+add_config "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service Key  (required)"
+add_config "ENCRYPTION_KEY" "Encryption Key        (required)"
+add_config "WORKER_ID" "Worker ID             (required)"
+add_config "TELEGRAM_BOT_TOKEN" "Telegram Bot Token    (optional)"
+add_config "STRIPE_SECRET_KEY" "Stripe Secret Key     (optional)"
+add_config "GOOGLE_CLIENT_ID" "Google OAuth Client   (optional)"
+add_config "LLM_PROVIDER" "LLM Provider          (required)"
+add_config "LLM_MODEL" "LLM Model             (required)"
+add_config "LLM_BACKEND_PROVIDER" "LLM Backend Provider  (required)"
+add_config "LLM_BACKEND_MODEL" "LLM Backend Model     (required)"
+add_config "ANTHROPIC_API_KEY" "Anthropic API Key     (if Claude)"
+add_config "OPENAI_API_KEY" "OpenAI API Key        (if GPT)"
+
+# --- Service checks ---
+if [[ -f "$ENV_FILE" ]]; then
+  SB_URL=$(grep "^NEXT_PUBLIC_SUPABASE_URL=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
+  if [[ -n "$SB_URL" ]] && curl -sf "${SB_URL}/rest/v1/" -o /dev/null 2>/dev/null; then
+    STATUS_SERVICES+=("[ONLINE]  Supabase API")
+  else
+    STATUS_SERVICES+=("[OFFLINE] Supabase API  <-- check URL/keys")
+  fi
+else
+  STATUS_SERVICES+=("[OFFLINE] Supabase API  <-- no .env file")
+fi
+
+if [[ -f "$INSTALL_DIR/packages/worker/worker.py" ]]; then
+  STATUS_SERVICES+=("[READY]   Worker code")
+else
+  STATUS_SERVICES+=("[MISSING] Worker code  <-- repo not cloned?")
+fi
+
+if check_command openclaw; then
+  OC_STATUS=$(openclaw status 2>&1 || echo "")
+  if echo "$OC_STATUS" | grep -qi "pro\|active\|licensed"; then
+    STATUS_SERVICES+=("[ACTIVE]  OpenClaw Pro License")
+  else
+    STATUS_SERVICES+=("[FREE]    OpenClaw Pro License  <-- Pro needed (\$20/mo)")
+  fi
+fi
+
+if [[ -d "/tmp/autoapply/resumes" ]]; then
+  STATUS_SERVICES+=("[READY]   Worker directories")
+else
+  STATUS_SERVICES+=("[MISSING] Worker directories")
+fi
+
+# --- TODO checks ---
+add_todo() {
+  STATUS_TODOS+=("$1")
+}
+
+if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^NEXT_PUBLIC_SUPABASE_URL=.\+" "$ENV_FILE" 2>/dev/null; then
+  add_todo "(required) Add Supabase credentials to .env"
+fi
+
+if ! check_command openclaw; then
+  add_todo "(required) Install OpenClaw CLI: npm install -g openclaw"
+elif ! (openclaw status 2>&1 | grep -qi "pro\|active\|licensed" 2>/dev/null); then
+  add_todo "(required) Activate OpenClaw Pro: https://openclaw.com/pricing"
+fi
+
+if ! [[ -f "$INSTALL_DIR/packages/worker/worker.py" ]]; then
+  add_todo "(required) Clone the AutoApply repo (private — ask admin for access)"
+fi
+
+if [[ "$LLM_PROVIDER" == "none" && "$LLM_BACKEND_PROVIDER" == "none" ]]; then
+  add_todo "(required) Configure LLM provider — re-run setup or edit .env"
+elif [[ -f "$ENV_FILE" ]]; then
+  if [[ "$LLM_PROVIDER" == "anthropic" || "$LLM_BACKEND_PROVIDER" == "anthropic" ]] && ! grep -q "^ANTHROPIC_API_KEY=.\+" "$ENV_FILE" 2>/dev/null; then
+    add_todo "(required) Add Anthropic API key to .env (console.anthropic.com)"
+  fi
+  if [[ "$LLM_PROVIDER" == "openai" || "$LLM_BACKEND_PROVIDER" == "openai" ]] && ! grep -q "^OPENAI_API_KEY=.\+" "$ENV_FILE" 2>/dev/null; then
+    add_todo "(required) Add OpenAI API key to .env (platform.openai.com)"
+  fi
+fi
+
+add_todo "(required) Log in at https://autoapply-web.vercel.app and complete onboarding"
+add_todo "(required) Start the worker: cd packages/worker && $PYTHON_CMD worker.py"
+
+if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^STRIPE_SECRET_KEY=.\+" "$ENV_FILE" 2>/dev/null; then
+  add_todo "(optional) Set up Stripe billing keys in .env"
+fi
+
+if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^GOOGLE_CLIENT_ID=.\+" "$ENV_FILE" 2>/dev/null; then
+  add_todo "(optional) Set up Google OAuth for Gmail connect"
+fi
+
+# ── Write AGENTS.md ────────────────────────────────────────────────────────
+AGENTS_FILE="$INSTALL_DIR/AGENTS.md"
+
+{
+  cat <<'AGENTSHEADER'
+# AutoApply — Agent Context
+
+## What is AutoApply?
+AutoApply is an automated job application engine. It consists of:
+- A **web dashboard** (Next.js) for configuration and monitoring
+- A **Python worker** that runs locally, scanning for jobs and submitting applications
+- An **OpenClaw CLI** for controlling the worker and managing settings
+- **Playwright** for browser automation (form filling, resume uploads)
+
+The worker polls Supabase for pending job applications, uses Playwright to fill out
+application forms, and reports results back to the dashboard.
+
+AGENTSHEADER
+
+  echo "## Setup Status"
+  echo ""
+  echo "Generated on: $(date)"
+  echo ""
+  echo "### Installed Components"
+  echo '```'
+  for line in "${STATUS_COMPONENTS[@]}"; do
+    echo "  $line"
+  done
+  echo '```'
+  echo ""
+
+  echo "### Configuration (.env)"
+  echo '```'
+  for line in "${STATUS_CONFIG[@]}"; do
+    echo "  $line"
+  done
+  echo '```'
+  echo ""
+
+  echo "### Services & Connections"
+  echo '```'
+  for line in "${STATUS_SERVICES[@]}"; do
+    echo "  $line"
+  done
+  echo '```'
+  echo ""
+
+  echo "## TODO — Remaining Tasks"
+  echo ""
+  if [[ ${#STATUS_TODOS[@]} -eq 0 ]]; then
+    echo "Nothing! Setup is fully complete."
+  else
+    local_i=0
+    for todo in "${STATUS_TODOS[@]}"; do
+      ((local_i++))
+      echo "$local_i. $todo"
+    done
+  fi
+  echo ""
+
+  cat <<AGENTSCMDS
+## OpenClaw Commands Reference
+
+\`\`\`bash
+openclaw start              # Start the worker
+openclaw stop               # Stop the worker
+openclaw status             # Show worker status
+openclaw logs               # View worker logs
+openclaw config set <k> <v> # Set a config value
+openclaw config get <k>     # Get a config value
+openclaw scan               # Run a single scan cycle
+openclaw apply <job-id>     # Apply to a specific job
+\`\`\`
+
+## Settings API Endpoints
+
+All endpoints require authentication. Use the Supabase anon key from .env:
+
+\`\`\`bash
+# Auth header (replace with actual values from .env)
+AUTH="Authorization: Bearer \$(grep NEXT_PUBLIC_SUPABASE_ANON_KEY $ENV_FILE | cut -d= -f2-)"
+BASE="\$(grep NEXT_PUBLIC_APP_URL $ENV_FILE | cut -d= -f2-)"
+
+# User settings
+curl -H "\$AUTH" "\$BASE/api/settings"
+curl -X PATCH -H "\$AUTH" -H "Content-Type: application/json" -d '{"key":"value"}' "\$BASE/api/settings"
+
+# Worker status
+curl -H "\$AUTH" "\$BASE/api/worker/status"
+
+# Job queue
+curl -H "\$AUTH" "\$BASE/api/jobs"
+curl -H "\$AUTH" "\$BASE/api/jobs?status=pending"
+\`\`\`
+
+## Key Paths
+
+- **Install directory:** $INSTALL_DIR
+- **Environment file:** $ENV_FILE
+- **Python command:** $(which $PYTHON_CMD 2>/dev/null || echo $PYTHON_CMD)
+- **Worker code:** $INSTALL_DIR/packages/worker/worker.py
+- **Web app:** $INSTALL_DIR/packages/web/
+- **Resumes dir:** /tmp/autoapply/resumes
+- **Screenshots dir:** /tmp/autoapply/screenshots
+
+## How to Edit .env
+
+\`\`\`bash
+# Open in default editor
+\${EDITOR:-nano} $ENV_FILE
+
+# Or set a specific variable
+echo 'NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co' >> $ENV_FILE
+\`\`\`
+AGENTSCMDS
+
+} > "$AGENTS_FILE"
+
+log_ok "AGENTS.md written to $AGENTS_FILE"
+
+# ── Print console status dashboard ─────────────────────────────────────────
+
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}║                  SETUP STATUS DASHBOARD                     ║${NC}"
@@ -581,11 +893,12 @@ status_line "$PYTHON_CMD -c 'import playwright' 2>/dev/null" "Playwright" ""
 status_line "$PYTHON_CMD -c 'import supabase' 2>/dev/null" "Supabase SDK" ""
 status_line "$PYTHON_CMD -c 'import httpx' 2>/dev/null" "httpx" ""
 
-# LLM SDKs
-if [[ -f "$ENV_FILE" ]]; then
-  L1_PROV=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
-  L2_PROV=$(grep "^LLM_BACKEND_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
+# LLM CLI
+if [[ -n "$LLM_CLI_TOOL" ]]; then
+  status_line "check_command $LLM_CLI_TOOL" "$LLM_CLI_TOOL CLI" ""
 fi
+
+# LLM SDKs
 if [[ "$L1_PROV" == "anthropic" || "$L2_PROV" == "anthropic" ]]; then
   status_line "$PYTHON_CMD -c 'import anthropic' 2>/dev/null" "Anthropic SDK" ""
 fi
@@ -727,3 +1040,90 @@ echo -e "${BOLD}╚════════════════════�
 echo ""
 echo -e "  Run this status check anytime: ${CYAN}bash ~/autoapply/status.sh${NC}"
 echo ""
+
+# ── Step 10: Launch LLM CLI (or fall back to manual) ──────────────────────
+log_step 10 "Launching setup assistant..."
+
+# Build a context prompt with setup status for the CLI
+build_cli_prompt() {
+  local prompt="I am the AutoApply setup assistant. Here is the current setup status:\n\n"
+
+  prompt+="INSTALLED COMPONENTS:\n"
+  for line in "${STATUS_COMPONENTS[@]}"; do
+    prompt+="  $line\n"
+  done
+
+  prompt+="\nCONFIGURATION:\n"
+  for line in "${STATUS_CONFIG[@]}"; do
+    prompt+="  $line\n"
+  done
+
+  prompt+="\nSERVICES:\n"
+  for line in "${STATUS_SERVICES[@]}"; do
+    prompt+="  $line\n"
+  done
+
+  prompt+="\nREMAINING TODO:\n"
+  if [[ ${#STATUS_TODOS[@]} -eq 0 ]]; then
+    prompt+="  Nothing — setup is complete!\n"
+  else
+    local i=0
+    for todo in "${STATUS_TODOS[@]}"; do
+      ((i++))
+      prompt+="  $i. $todo\n"
+    done
+  fi
+
+  prompt+="\nThe AGENTS.md file at $AGENTS_FILE has full details."
+  prompt+=" The .env file is at $ENV_FILE."
+  prompt+=" I'm ready to help complete any remaining setup tasks."
+
+  echo -e "$prompt"
+}
+
+# Determine which CLI is available based on LLM_PROVIDER
+CLI_CMD=""
+if [[ "$LLM_PROVIDER" == "anthropic" ]] && check_command claude; then
+  CLI_CMD="claude"
+elif [[ "$LLM_PROVIDER" == "openai" ]] && check_command codex; then
+  CLI_CMD="codex"
+fi
+
+if [[ -n "$CLI_CMD" ]]; then
+  CLI_PROMPT="$(build_cli_prompt)"
+  echo ""
+  echo -e "${BOLD}Launching $CLI_CMD to help complete remaining setup...${NC}"
+  echo -e "${CYAN}The AI assistant has full context of your setup status.${NC}"
+  echo -e "${CYAN}It can help configure Supabase credentials, run migrations, and more.${NC}"
+  echo ""
+
+  # Export API key so the CLI can use it
+  if [[ "$LLM_PROVIDER" == "anthropic" && -n "$LLM_API_KEY" ]]; then
+    export ANTHROPIC_API_KEY="$LLM_API_KEY"
+  elif [[ "$LLM_PROVIDER" == "openai" && -n "$LLM_API_KEY" ]]; then
+    export OPENAI_API_KEY="$LLM_API_KEY"
+  fi
+
+  # exec replaces the shell — this is the final action
+  exec "$CLI_CMD" --cd "$INSTALL_DIR" "$CLI_PROMPT"
+else
+  # No CLI available — show manual next steps (original behavior)
+  echo ""
+  echo -e "${BOLD}Next steps:${NC}"
+  echo ""
+  echo "  1. Start the worker:"
+  echo -e "     ${CYAN}cd $INSTALL_DIR/packages/worker${NC}"
+  echo -e "     ${CYAN}source ../../.env && $PYTHON_CMD worker.py${NC}"
+  echo ""
+  echo "  2. Run the job scanner:"
+  echo -e "     ${CYAN}cd $INSTALL_DIR/packages/worker${NC}"
+  echo -e "     ${CYAN}source ../../.env && $PYTHON_CMD -m scanner.run${NC}"
+  echo ""
+  echo "  3. Start the web app (development):"
+  echo -e "     ${CYAN}cd $INSTALL_DIR/packages/web${NC}"
+  echo -e "     ${CYAN}npm run dev${NC}"
+  echo ""
+  echo -e "  ${YELLOW}Need help? See docs/CLIENT-ONBOARDING.md${NC}"
+  echo -e "  ${YELLOW}Setup status saved to: $AGENTS_FILE${NC}"
+  echo ""
+fi
