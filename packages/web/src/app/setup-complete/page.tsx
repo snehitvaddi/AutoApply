@@ -69,29 +69,44 @@ export default function SetupCompletePage() {
             </a>
           </div>
 
-          {/* Windows */}
-          <div className={`border rounded-lg p-4 flex items-center justify-between ${
+          {/* Windows — .bat launcher (recommended) */}
+          <div className={`border rounded-lg p-4 ${
             os === "windows" ? "border-brand-500 bg-brand-50" : "border-gray-200"
           }`}>
-            <div className="flex items-center gap-3">
-              <div className="text-2xl">&#9783;</div>
-              <div>
-                <p className="font-medium">Windows</p>
-                <p className="text-sm text-gray-500">PowerShell script — requires winget</p>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-2xl">&#9783;</div>
+                <div>
+                  <p className="font-medium">Windows</p>
+                  <p className="text-sm text-gray-500">Double-click to run — no extra steps</p>
+                </div>
+                {os === "windows" && (
+                  <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">
+                    Detected
+                  </span>
+                )}
               </div>
-              {os === "windows" && (
-                <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">
-                  Detected
-                </span>
-              )}
+              <div className="flex gap-2">
+                <a
+                  href="/setup/install.bat"
+                  download="install.bat"
+                  className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
+                >
+                  Download .bat
+                </a>
+                <a
+                  href="/setup/setup-windows.ps1"
+                  download="setup-windows.ps1"
+                  className="px-3 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
+                >
+                  .ps1
+                </a>
+              </div>
             </div>
-            <a
-              href="/setup/setup-windows.ps1"
-              download="setup-windows.ps1"
-              className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
-            >
-              Download .ps1
-            </a>
+            <p className="text-xs text-gray-500 mt-2 ml-9">
+              Use the <strong>.bat</strong> file (recommended) — it works without Smart App Control issues.
+              Right-click → <em>Run as administrator</em>.
+            </p>
           </div>
         </div>
 
@@ -109,10 +124,15 @@ export default function SetupCompletePage() {
             </div>
 
             <div>
-              <p className="text-sm font-medium text-gray-700 mb-1">Windows (PowerShell as Admin):</p>
+              <p className="text-sm font-medium text-gray-700 mb-1">Windows (recommended — .bat file):</p>
               <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto">
-{`Set-ExecutionPolicy Bypass -Scope Process
-.\\setup-windows.ps1`}
+{`Right-click install.bat → "Run as administrator"`}
+              </pre>
+              <p className="text-xs text-gray-500 mt-2">
+                Or paste this into PowerShell (Admin) if .bat is also blocked:
+              </p>
+              <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto mt-1">
+{`irm https://autoapply-web.vercel.app/setup/setup-windows.ps1 | iex`}
               </pre>
             </div>
           </div>
