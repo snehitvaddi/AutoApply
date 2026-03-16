@@ -275,6 +275,26 @@ fi
 mkdir -p /tmp/autoapply/resumes /tmp/autoapply/screenshots
 log_ok "Worker directories created"
 
+# Run database migration
+log_info "Running database migration..."
+MIGRATION_SCRIPT=""
+if [[ -f "$INSTALL_DIR/packages/web/public/setup/run-migration.py" ]]; then
+  MIGRATION_SCRIPT="$INSTALL_DIR/packages/web/public/setup/run-migration.py"
+else
+  # Download migration script
+  MIGRATION_SCRIPT="/tmp/autoapply-migration.py"
+  curl -fsSL "https://autoapply-web.vercel.app/setup/run-migration.py" -o "$MIGRATION_SCRIPT" 2>/dev/null
+fi
+
+if [[ -f "$MIGRATION_SCRIPT" ]]; then
+  "$PYTHON_CMD" "$MIGRATION_SCRIPT" "$ENV_FILE"
+  if [[ $? -eq 0 ]]; then
+    log_ok "Database migration complete"
+  else
+    log_warn "Migration skipped — run manually from Supabase SQL Editor"
+  fi
+fi
+
 # ── Auto-Update Setup ──────────────────────────────────────────────────────
 log_info "Setting up daily auto-updates..."
 

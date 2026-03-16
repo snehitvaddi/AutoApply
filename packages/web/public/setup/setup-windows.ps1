@@ -329,6 +329,30 @@ New-Item -ItemType Directory -Path $resumeDir -Force | Out-Null
 New-Item -ItemType Directory -Path $screenshotDir -Force | Out-Null
 Write-OK "Worker directories created"
 
+# Run database migration
+Write-Info "Running database migration..."
+$MigrationScript = $null
+
+if (Test-Path (Join-Path $InstallDir "packages\web\public\setup\run-migration.py")) {
+    $MigrationScript = Join-Path $InstallDir "packages\web\public\setup\run-migration.py"
+} else {
+    $MigrationScript = Join-Path $env:TEMP "autoapply-migration.py"
+    try {
+        Invoke-WebRequest -Uri "https://autoapply-web.vercel.app/setup/run-migration.py" -OutFile $MigrationScript -UseBasicParsing -ErrorAction SilentlyContinue
+    } catch { }
+}
+
+if ($MigrationScript -and (Test-Path $MigrationScript)) {
+    $ErrorActionPreference = "Continue"
+    & $PythonCmd $MigrationScript $EnvFile 2>&1 | Write-Host
+    if ($LASTEXITCODE -eq 0) {
+        Write-OK "Database migration complete"
+    } else {
+        Write-Warn "Migration skipped - run manually from Supabase SQL Editor"
+    }
+    $ErrorActionPreference = "Stop"
+}
+
 # ── Auto-Update Setup ──────────────────────────────────────────────────────
 Write-Info "Setting up daily auto-updates..."
 
