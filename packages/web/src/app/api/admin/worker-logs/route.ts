@@ -86,7 +86,7 @@ export async function PATCH(request: NextRequest) {
   const { log_id, resolved, resolution_note } = body;
 
   if (!log_id) {
-    return apiError("bad_request", "log_id is required");
+    return apiError("validation_error", "log_id is required");
   }
 
   const updates: Record<string, unknown> = {
