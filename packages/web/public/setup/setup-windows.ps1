@@ -186,7 +186,9 @@ if (Test-CommandExists "openclaw") {
     Write-OK "OpenClaw already installed"
 } else {
     Write-Info "Installing OpenClaw CLI..."
-    npm install -g openclaw 2>$null
+    $ErrorActionPreference = "Continue"
+    npm install -g openclaw 2>&1 | Where-Object { $_ -notmatch "npm warn" } | Write-Host
+    $ErrorActionPreference = "Stop"
     if (Test-CommandExists "openclaw") {
         Write-OK "OpenClaw installed"
     } else {
