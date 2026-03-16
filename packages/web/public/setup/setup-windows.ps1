@@ -197,9 +197,6 @@ if (Test-CommandExists "openclaw") {
     }
 }
 
-Write-Host ""
-Write-Host "  NOTE: OpenClaw Pro subscription (`$20/mo) is required for browser automation." -ForegroundColor Yellow
-Write-Host "  Sign up at: https://openclaw.com/pricing" -ForegroundColor Yellow
 
 # ── Step 5: Playwright ──────────────────────────────────────────────────────
 Write-Step 5 "Installing Playwright browsers..."

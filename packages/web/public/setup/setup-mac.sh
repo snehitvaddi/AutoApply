@@ -146,9 +146,6 @@ else
   log_ok "OpenClaw installed: $(openclaw --version 2>&1 || echo 'installed')"
 fi
 
-echo ""
-echo -e "  ${YELLOW}NOTE: OpenClaw Pro subscription (\$20/mo) is required for browser automation.${NC}"
-echo -e "  ${YELLOW}Sign up at: https://openclaw.com/pricing${NC}"
 
 # ── Step 5: Playwright ──────────────────────────────────────────────────────
 log_step 5 "Installing Playwright browsers..."
