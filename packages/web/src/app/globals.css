@@ -2,23 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap');
 
 body {
-  @apply bg-gray-50 text-gray-900 antialiased;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  @apply bg-white text-gray-900 antialiased;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
 }
 
-/* Gradient text utility */
-.gradient-text {
-  @apply bg-clip-text text-transparent;
-  background-image: linear-gradient(135deg, #3478ff 0%, #1443e1 50%, #f97316 100%);
-}
-
-/* Hero gradient background */
-.hero-gradient {
-  background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(52, 120, 255, 0.15), transparent),
-              radial-gradient(ellipse 60% 40% at 80% 50%, rgba(249, 115, 22, 0.08), transparent);
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Sora', system-ui, -apple-system, sans-serif;
 }
 
 /* Card hover effect */
@@ -27,13 +19,4 @@ body {
 }
 .card-hover:hover {
   @apply -translate-y-1 shadow-lg;
-}
-
-/* Glow effect */
-.glow-blue {
-  box-shadow: 0 0 40px rgba(52, 120, 255, 0.15);
-}
-
-.glow-orange {
-  box-shadow: 0 0 40px rgba(249, 115, 22, 0.15);
 }
