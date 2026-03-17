@@ -1,260 +1,316 @@
-import Link from "next/link";
-import type { Metadata } from "next";
+"use client";
 
-export const metadata: Metadata = {
-  title: "AutoApply — Stop Applying Manually. Start Getting Interviews.",
-  description:
-    "AI-powered job application engine. AutoApply fills out applications, tailors resumes, and writes cover letters while you sleep.",
-};
+import Link from "next/link";
+import { useEffect, useRef } from "react";
 
 const STATS = [
-  { value: "10x", label: "Faster than manual" },
+  { value: "900+", label: "Applications submitted" },
   { value: "85%", label: "ATS pass rate" },
-  { value: "200+", label: "Applications/week" },
-  { value: "3x", label: "More interviews" },
+  { value: "50/day", label: "On autopilot" },
+  { value: "5", label: "ATS platforms" },
 ];
 
 const STEPS = [
   {
     num: "01",
-    title: "Upload Your Resume",
-    desc: "Drop your PDF. Our AI parses skills, experience, and preferences instantly.",
+    title: "Upload your resume",
+    desc: "Drop your PDF. AI parses your skills, experience, and preferences in seconds.",
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+      </svg>
+    ),
   },
   {
     num: "02",
-    title: "Set Your Preferences",
-    desc: "Target roles, salary range, excluded companies. You control what gets applied to.",
+    title: "Set your preferences",
+    desc: "Target roles, salary, location, excluded companies. You control everything.",
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+      </svg>
+    ),
   },
   {
     num: "03",
-    title: "AI Applies For You",
-    desc: "Our worker scans job boards, fills forms, tailors resumes, and submits — 24/7.",
+    title: "AI applies for you",
+    desc: "Scans 370+ company boards, fills forms, tailors resumes, submits — 24/7.",
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+      </svg>
+    ),
   },
   {
     num: "04",
-    title: "Track & Get Interviews",
-    desc: "Monitor every application. See screenshots, statuses, and interview invites.",
+    title: "Get screenshot proof",
+    desc: "Every application logged with screenshots. Track status via Telegram or dashboard.",
+    icon: (
+      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
+      </svg>
+    ),
   },
 ];
 
 const FEATURES = [
-  {
-    title: "Smart Resume Tailoring",
-    desc: "AI rewrites your resume for each job. Matches keywords, highlights relevant experience, passes ATS filters.",
-  },
-  {
-    title: "Auto Cover Letters",
-    desc: "Every cover letter references the company's mission, recent news, and role requirements. Never generic.",
-  },
-  {
-    title: "Multi-ATS Support",
-    desc: "Works with Greenhouse, Lever, Ashby, SmartRecruiters, and more. One setup, every platform.",
-  },
-  {
-    title: "Smart Form Answers",
-    desc: "\"Why do you want to work here?\" — answered intelligently for each company, not copy-pasted.",
-  },
-  {
-    title: "Real-Time Dashboard",
-    desc: "See every application: status, screenshots, errors. Know exactly what was submitted and when.",
-  },
-  {
-    title: "Telegram Notifications",
-    desc: "Send a job link. Get a screenshot proof 90 seconds later. Track everything from your phone.",
-  },
+  { title: "Gmail OTP Verification", desc: "Reads security codes from your email automatically. Handles Greenhouse 8-character codes no other bot can." },
+  { title: "Smart Resume Matching", desc: "Picks the right resume per job based on keyword matching. AI Engineer? ML resume. Data role? Analytics resume." },
+  { title: "Auto Cover Letters", desc: "Every cover letter references the company, role, and your specific experience. Never generic." },
+  { title: "reCAPTCHA Handling", desc: "Detects and handles reCAPTCHA, security codes, multi-page wizards, and consent forms." },
+  { title: "Telegram Integration", desc: "Send a job link. Get a screenshot proof 90 seconds later. Full control from your phone." },
+  { title: "Runs Locally", desc: "Your data never leaves your machine. Not a cloud service. Not a Chrome extension. A full autonomous agent." },
 ];
+
+const ATS_PLATFORMS = [
+  { name: "Greenhouse", count: "271 companies" },
+  { name: "Ashby", count: "102 companies" },
+  { name: "Lever", count: "Active" },
+  { name: "SmartRecruiters", count: "Growing" },
+  { name: "Workday", count: "Coming soon" },
+];
+
+const ACTIVITY_FEED = [
+  { company: "Stripe", role: "ML Engineer", status: "submitted", time: "12s ago", ats: "Greenhouse" },
+  { company: "Anthropic", role: "AI Engineer", status: "submitted", time: "2m ago", ats: "Greenhouse" },
+  { company: "Notion", role: "Data Scientist", status: "submitted", time: "4m ago", ats: "Ashby" },
+  { company: "Ramp", role: "ML Platform", status: "submitted", time: "7m ago", ats: "Ashby" },
+  { company: "Coinbase", role: "Applied Scientist", status: "submitted", time: "11m ago", ats: "Greenhouse" },
+  { company: "Figma", role: "Research Engineer", status: "submitted", time: "15m ago", ats: "Greenhouse" },
+];
+
+const COMPANIES = ["Stripe", "Anthropic", "Coinbase", "Airbnb", "Notion", "Figma", "Ramp", "Vercel", "Linear", "Cursor", "OpenAI", "Netflix"];
 
 const PRICING = [
   {
     name: "Starter",
     price: "15",
+    period: "/mo",
     desc: "For casual job seekers",
-    features: [
-      "25 applications/day",
-      "Resume tailoring",
-      "Basic form filling",
-      "Email notifications",
-      "Dashboard access",
-    ],
+    features: ["25 applications/day", "Resume tailoring", "Greenhouse + Ashby", "Dashboard access", "Email notifications"],
     cta: "Get Started",
-    highlighted: false,
+    dark: false,
   },
   {
     name: "Pro",
     price: "29",
+    period: "/mo",
     desc: "For serious job hunters",
-    features: [
-      "Unlimited applications",
-      "Smart cover letters",
-      "AI form answers",
-      "Resume tailoring per job",
-      "Priority support",
-      "Gmail integration",
-      "Telegram alerts",
-    ],
+    features: ["Unlimited applications", "All 5 ATS platforms", "Smart cover letters", "AI form answers", "Gmail OTP verification", "Telegram alerts", "Priority support"],
     cta: "Start Free Trial",
-    highlighted: true,
+    dark: true,
   },
   {
-    name: "Enterprise",
-    price: "Custom",
-    desc: "For career services & agencies",
-    features: [
-      "Everything in Pro",
-      "Multi-user management",
-      "Custom ATS integrations",
-      "Dedicated support",
-      "SLA guarantees",
-      "White-label option",
-    ],
-    cta: "Contact Sales",
-    highlighted: false,
+    name: "Done For You",
+    price: "150",
+    period: " one-time",
+    desc: "We set it up for you",
+    features: ["Full infrastructure setup", "Profile + resume config", "Gmail + Telegram wired", "Test application together", "Running in 2 hours", "1 week of support"],
+    cta: "Book a Call",
+    dark: false,
   },
 ];
 
-/* Simple company logo SVGs for social proof */
-const CompanyLogos = () => (
-  <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-6 opacity-40">
-    {/* Google */}
-    <svg className="h-7" viewBox="0 0 272 92" fill="currentColor">
-      <path d="M115.75 47.18c0 12.77-9.99 22.18-22.25 22.18s-22.25-9.41-22.25-22.18C71.25 34.32 81.24 25 93.5 25s22.25 9.32 22.25 22.18zm-9.74 0c0-7.98-5.79-13.44-12.51-13.44S80.99 39.2 80.99 47.18c0 7.9 5.79 13.44 12.51 13.44s12.51-5.55 12.51-13.44z"/>
-      <path d="M163.75 47.18c0 12.77-9.99 22.18-22.25 22.18s-22.25-9.41-22.25-22.18c0-12.85 9.99-22.18 22.25-22.18s22.25 9.32 22.25 22.18zm-9.74 0c0-7.98-5.79-13.44-12.51-13.44s-12.51 5.46-12.51 13.44c0 7.9 5.79 13.44 12.51 13.44s12.51-5.55 12.51-13.44z"/>
-      <path d="M209.75 26.34v39.82c0 16.38-9.66 23.07-21.08 23.07-10.75 0-17.22-7.19-19.66-13.07l8.48-3.53c1.51 3.61 5.21 7.87 11.17 7.87 7.31 0 11.84-4.51 11.84-13v-3.19h-.34c-2.18 2.69-6.38 5.04-11.68 5.04-11.09 0-21.25-9.66-21.25-22.09 0-12.52 10.16-22.26 21.25-22.26 5.29 0 9.49 2.35 11.68 4.96h.34v-3.61h9.25zm-8.56 20.92c0-7.81-5.21-13.52-11.84-13.52-6.72 0-12.35 5.71-12.35 13.52 0 7.73 5.63 13.36 12.35 13.36 6.63 0 11.84-5.63 11.84-13.36z"/>
-      <path d="M225 3v65h-9.5V3h9.5z"/>
-      <path d="M262.02 54.48l7.56 5.04c-2.44 3.61-8.32 9.83-18.48 9.83-12.6 0-22.01-9.74-22.01-22.18 0-13.19 9.49-22.18 20.92-22.18 11.51 0 17.14 9.16 18.98 14.11l1.01 2.52-29.65 12.28c2.27 4.45 5.8 6.72 10.75 6.72 4.96 0 8.4-2.44 10.92-6.14zm-23.27-7.98l19.82-8.23c-1.09-2.77-4.37-4.7-8.23-4.7-4.95 0-11.84 4.37-11.59 12.93z"/>
-      <path d="M35.29 41.19V32H67c.31 1.64.47 3.58.47 5.68 0 7.06-1.93 15.79-8.15 22.01-6.05 6.3-13.78 9.66-24.02 9.66C16.32 69.35.36 53.89.36 34.91.36 15.93 16.32.47 35.3.47c10.5 0 17.98 4.12 23.6 9.49l-6.64 6.64c-4.03-3.78-9.49-6.72-16.97-6.72-13.86 0-24.7 11.17-24.7 25.03 0 13.86 10.84 25.03 24.7 25.03 8.99 0 14.11-3.61 17.39-6.89 2.66-2.66 4.41-6.46 5.1-11.65l-22.49-.01z"/>
-    </svg>
-    {/* Amazon */}
-    <svg className="h-6" viewBox="0 0 603 182" fill="currentColor">
-      <path d="M374.01 142.06c-34.53 25.49-84.6 39.05-127.7 39.05-60.43 0-114.87-22.35-156.05-59.52-3.23-2.92-.34-6.9 3.54-4.63 44.44 25.83 99.35 41.39 156.1 41.39 38.27 0 80.37-7.93 119.07-24.38 5.84-2.48 10.72 3.83 5.04 8.09z"/>
-      <path d="M388.42 125.72c-4.41-5.65-29.19-2.67-40.31-1.35-3.38.41-3.9-2.54-.85-4.66 19.74-13.88 52.1-9.88 55.88-5.23 3.78 4.67-.99 37.05-19.52 52.49-2.85 2.37-5.56 1.11-4.3-2.04 4.17-10.42 13.52-33.58 9.1-39.21z"/>
-      <path d="M349.19 23.74V7.42c0-2.47 1.88-4.13 4.14-4.13h73.14c2.35 0 4.23 1.69 4.23 4.13v13.97c-.03 2.35-2.01 5.42-5.52 10.28l-37.88 54.1c14.07-.34 28.93 1.76 41.67 8.97 2.87 1.63 3.65 4.01 3.87 6.36v17.42c0 2.38-2.63 5.17-5.39 3.73-22.51-11.81-52.42-13.1-77.27.14-2.53 1.35-5.19-1.38-5.19-3.76v-16.55c0-2.67.03-7.22 2.72-11.28l43.88-62.97H353.36c-2.35 0-4.23-1.66-4.23-4.06z"/>
-    </svg>
-    {/* Meta */}
-    <span className="text-2xl font-bold tracking-tight">Meta</span>
-    {/* Stripe */}
-    <span className="text-2xl font-bold tracking-tight">Stripe</span>
-    {/* Coinbase */}
-    <span className="text-2xl font-bold tracking-tight">Coinbase</span>
-    {/* Netflix */}
-    <span className="text-2xl font-bold tracking-tight">Netflix</span>
-    {/* Airbnb */}
-    <span className="text-2xl font-bold tracking-tight">Airbnb</span>
-  </div>
-);
+function ScrollObserver() {
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("visible");
+          }
+        });
+      },
+      { threshold: 0.1, rootMargin: "0px 0px -40px 0px" }
+    );
+    document.querySelectorAll(".animate-on-scroll").forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
+  return null;
+}
+
+function LiveActivityFeed() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const interval = setInterval(() => {
+      el.scrollTop += 1;
+      if (el.scrollTop >= el.scrollHeight - el.clientHeight) {
+        el.scrollTop = 0;
+      }
+    }, 50);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div ref={ref} className="h-[280px] overflow-hidden space-y-3">
+      {[...ACTIVITY_FEED, ...ACTIVITY_FEED].map((item, i) => (
+        <div key={i} className="flex items-center justify-between bg-white rounded-xl px-5 py-3.5 border border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center text-xs font-bold text-gray-500 font-display">
+              {item.company[0]}
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-900">{item.company}</p>
+              <p className="text-xs text-gray-400">{item.role}</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full live-pulse" />
+              {item.status}
+            </span>
+            <p className="text-[10px] text-gray-300 mt-0.5">{item.time} via {item.ats}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-white">
-      {/* Navigation */}
-      <nav className="fixed top-0 w-full bg-white/90 backdrop-blur-md border-b border-gray-100 z-50">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-brand-900 rounded-lg flex items-center justify-center">
+    <div className="min-h-screen" style={{ backgroundColor: "#f7f7f7" }}>
+      <ScrollObserver />
+
+      {/* Nav */}
+      <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-lg z-50 border-b border-gray-100/80">
+        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
               <span className="text-white font-bold text-sm font-display">A</span>
             </div>
-            <span className="font-display font-bold text-xl text-brand-950">AutoApply</span>
+            <span className="font-display font-bold text-lg">AutoApply</span>
           </div>
-          <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-500">
-            <a href="#how-it-works" className="hover:text-brand-900 transition-colors">How It Works</a>
-            <a href="#features" className="hover:text-brand-900 transition-colors">Features</a>
-            <a href="#pricing" className="hover:text-brand-900 transition-colors">Pricing</a>
+          <div className="hidden md:flex items-center gap-8 text-[13px] font-medium text-gray-400">
+            <a href="#how-it-works" className="hover:text-gray-900 transition-colors">How It Works</a>
+            <a href="#features" className="hover:text-gray-900 transition-colors">Features</a>
+            <a href="#pricing" className="hover:text-gray-900 transition-colors">Pricing</a>
           </div>
-          <div className="flex items-center gap-4">
-            <Link
-              href="/auth/login"
-              className="text-sm font-medium text-gray-600 hover:text-brand-900 transition-colors"
-            >
+          <div className="flex items-center gap-3">
+            <Link href="/auth/login" className="text-[13px] font-medium text-gray-500 hover:text-gray-900 transition-colors">
               Sign In
             </Link>
-            <Link
-              href="/auth/login"
-              className="text-sm font-semibold px-5 py-2.5 bg-brand-900 text-white rounded-lg hover:bg-brand-950 transition-colors"
-            >
-              Get Started Free
+            <Link href="/auth/login" className="text-[13px] font-semibold px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-black transition-colors">
+              Get Started
             </Link>
           </div>
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <section className="pt-32 pb-20 px-6 bg-white">
-        <div className="max-w-4xl mx-auto text-center animate-fade-in">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-gray-50 text-gray-600 rounded-full text-sm font-medium mb-8 border border-gray-200">
-            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-            Now auto-applying to 200+ jobs/week
+      {/* Hero */}
+      <section className="pt-28 pb-16 px-6">
+        <div className="max-w-4xl mx-auto text-center">
+          <div className="fade-in inline-flex items-center gap-2 px-3.5 py-1.5 bg-white text-gray-500 rounded-full text-xs font-medium mb-8 border border-gray-200 shadow-sm">
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full live-pulse" />
+            Applying to 50+ jobs per day on autopilot
           </div>
 
-          <h1 className="font-display text-5xl md:text-7xl font-extrabold text-brand-950 leading-[1.1] tracking-tight">
-            Stop applying manually.
+          <h1 className="fade-in fade-in-delay-1 font-display text-[3.2rem] md:text-[4.5rem] font-extrabold text-gray-900 leading-[1.05] tracking-tight">
+            Your next interview
             <br />
-            <span className="text-brand-500">Start getting interviews.</span>
+            is one click away.
           </h1>
 
-          <p className="mt-6 text-lg md:text-xl text-gray-500 max-w-2xl mx-auto leading-relaxed font-body">
-            AutoApply fills out job applications, tailors your resume, and writes cover
-            letters while you sleep. Powered by AI. Built for results.
+          <p className="fade-in fade-in-delay-2 mt-6 text-lg text-gray-400 max-w-xl mx-auto leading-relaxed">
+            AutoApply fills out applications, tailors resumes, handles security codes, and sends you screenshot proof — while you sleep.
           </p>
 
-          <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link
-              href="/auth/login"
-              className="px-8 py-4 bg-brand-900 text-white font-semibold rounded-lg text-base hover:bg-brand-950 transition-colors shadow-sm"
-            >
-              Start Applying Free
+          <div className="fade-in fade-in-delay-3 mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+            <Link href="/auth/login" className="px-7 py-3 bg-gray-900 text-white font-semibold rounded-lg text-sm hover:bg-black transition-colors">
+              Try AutoApply Free
             </Link>
-            <a
-              href="#how-it-works"
-              className="px-8 py-4 border border-gray-200 text-gray-700 font-semibold rounded-lg text-base hover:border-gray-400 hover:text-brand-900 transition-colors"
-            >
-              See How It Works
+            <a href="#how-it-works" className="px-7 py-3 text-gray-500 font-medium rounded-lg text-sm hover:text-gray-900 transition-colors">
+              See how it works &darr;
             </a>
+          </div>
+        </div>
+
+        {/* Live Activity + Stats */}
+        <div className="max-w-5xl mx-auto mt-16 grid md:grid-cols-2 gap-6">
+          {/* Activity Feed */}
+          <div className="fade-in fade-in-delay-3 card rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display text-sm font-semibold text-gray-900">Live Applications</h3>
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-emerald-600">
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full live-pulse" />
+                LIVE
+              </span>
+            </div>
+            <LiveActivityFeed />
           </div>
 
           {/* Stats */}
-          <div className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-8 max-w-3xl mx-auto">
+          <div className="fade-in fade-in-delay-4 grid grid-cols-2 gap-4">
             {STATS.map((s) => (
-              <div key={s.label} className="text-center">
-                <p className="font-display text-3xl md:text-4xl font-extrabold text-brand-900">{s.value}</p>
-                <p className="text-sm text-gray-400 mt-1 font-body">{s.label}</p>
+              <div key={s.label} className="card rounded-2xl p-6 flex flex-col justify-center">
+                <p className="font-display text-3xl font-extrabold text-gray-900">{s.value}</p>
+                <p className="text-xs text-gray-400 mt-1">{s.label}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Social Proof */}
-      <section className="py-14 border-y border-gray-100">
-        <div className="max-w-5xl mx-auto px-6 text-center">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-[0.2em] mb-8 font-body">
-            Trusted by job seekers applying to
-          </p>
-          <CompanyLogos />
+      {/* Trusted By — Marquee */}
+      <section className="py-10 overflow-hidden">
+        <p className="text-center text-[10px] font-semibold text-gray-300 uppercase tracking-[0.25em] mb-6">
+          Scanning jobs from 370+ companies
+        </p>
+        <div className="relative">
+          <div className="marquee flex items-center gap-12 whitespace-nowrap">
+            {[...COMPANIES, ...COMPANIES].map((co, i) => (
+              <span key={i} className="text-lg font-semibold text-gray-200 font-display select-none">{co}</span>
+            ))}
+          </div>
         </div>
       </section>
 
       {/* How It Works */}
-      <section id="how-it-works" className="py-24 px-6">
+      <section id="how-it-works" className="py-20 px-6">
         <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-xs font-semibold text-brand-500 uppercase tracking-[0.2em] mb-3 font-body">How It Works</p>
-            <h2 className="font-display text-4xl md:text-5xl font-extrabold text-brand-950">
-              Four steps to autopilot
+          <div className="text-center mb-14 animate-on-scroll">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-[0.25em] mb-3">How It Works</p>
+            <h2 className="font-display text-3xl md:text-4xl font-extrabold text-gray-900">
+              Four steps. Fully automated.
             </h2>
-            <p className="mt-4 text-lg text-gray-500 max-w-2xl mx-auto font-body">
-              Set it up once. Let AI handle the rest. You focus on interviews.
-            </p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-5">
-            {STEPS.map((step) => (
-              <div
-                key={step.num}
-                className="card-hover bg-white rounded-2xl border border-gray-100 p-8 hover:border-gray-200"
-              >
-                <span className="font-display text-xs font-bold text-brand-400 uppercase tracking-[0.15em]">Step {step.num}</span>
-                <h3 className="font-display text-xl font-bold text-brand-950 mt-2">{step.title}</h3>
-                <p className="text-gray-500 mt-3 leading-relaxed font-body">{step.desc}</p>
+          <div className="grid md:grid-cols-2 gap-4">
+            {STEPS.map((step, i) => (
+              <div key={step.num} className={`animate-on-scroll card rounded-2xl p-7`} style={{ transitionDelay: `${i * 100}ms` }}>
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400 flex-shrink-0">
+                    {step.icon}
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-gray-300 uppercase tracking-[0.15em] font-display">Step {step.num}</span>
+                    <h3 className="font-display text-base font-bold text-gray-900 mt-1">{step.title}</h3>
+                    <p className="text-sm text-gray-400 mt-1.5 leading-relaxed">{step.desc}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ATS Platforms */}
+      <section className="py-16 px-6">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-10 animate-on-scroll">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-[0.25em] mb-3">ATS Support</p>
+            <h2 className="font-display text-3xl md:text-4xl font-extrabold text-gray-900">
+              Works everywhere you apply
+            </h2>
+          </div>
+          <div className="flex flex-wrap justify-center gap-3 animate-on-scroll">
+            {ATS_PLATFORMS.map((ats) => (
+              <div key={ats.name} className="card rounded-xl px-6 py-4 text-center min-w-[140px]">
+                <p className="font-display text-sm font-bold text-gray-900">{ats.name}</p>
+                <p className="text-[10px] text-gray-400 mt-0.5">{ats.count}</p>
               </div>
             ))}
           </div>
@@ -262,31 +318,28 @@ export default function LandingPage() {
       </section>
 
       {/* Features */}
-      <section id="features" className="py-24 px-6 bg-brand-950">
+      <section id="features" className="py-20 px-6 bg-gray-900">
         <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-xs font-semibold text-brand-400 uppercase tracking-[0.2em] mb-3 font-body">Features</p>
-            <h2 className="font-display text-4xl md:text-5xl font-extrabold text-white">
-              Everything you need to land interviews
+          <div className="text-center mb-14 animate-on-scroll">
+            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.25em] mb-3">Features</p>
+            <h2 className="font-display text-3xl md:text-4xl font-extrabold text-white">
+              Built different from every other bot
             </h2>
-            <p className="mt-4 text-lg text-brand-300 max-w-2xl mx-auto font-body">
-              No fluff. No generic templates. Just tools that get results.
+            <p className="mt-3 text-sm text-gray-500 max-w-lg mx-auto">
+              Battle-tested across 900+ real applications. 864 lines of ATS-specific learnings.
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {FEATURES.map((f) => (
-              <div
-                key={f.title}
-                className="card-hover bg-brand-900 rounded-2xl border border-brand-800 p-7"
-              >
-                <div className="w-10 h-10 rounded-lg bg-brand-800 flex items-center justify-center mb-4">
-                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {FEATURES.map((f, i) => (
+              <div key={f.title} className="animate-on-scroll bg-gray-800 rounded-2xl p-6 hover:bg-gray-750 transition-colors" style={{ transitionDelay: `${i * 80}ms` }}>
+                <div className="w-9 h-9 bg-gray-700 rounded-lg flex items-center justify-center mb-4">
+                  <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                   </svg>
                 </div>
-                <h3 className="font-display text-lg font-bold text-white">{f.title}</h3>
-                <p className="text-brand-300 mt-2 leading-relaxed text-sm font-body">{f.desc}</p>
+                <h3 className="font-display text-sm font-bold text-white">{f.title}</h3>
+                <p className="text-[13px] text-gray-400 mt-2 leading-relaxed">{f.desc}</p>
               </div>
             ))}
           </div>
@@ -294,61 +347,49 @@ export default function LandingPage() {
       </section>
 
       {/* Pricing */}
-      <section id="pricing" className="py-24 px-6">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-xs font-semibold text-brand-500 uppercase tracking-[0.2em] mb-3 font-body">Pricing</p>
-            <h2 className="font-display text-4xl md:text-5xl font-extrabold text-brand-950">
-              Simple, transparent pricing
+      <section id="pricing" className="py-20 px-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-14 animate-on-scroll">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-[0.25em] mb-3">Pricing</p>
+            <h2 className="font-display text-3xl md:text-4xl font-extrabold text-gray-900">
+              Start free. Scale when ready.
             </h2>
-            <p className="mt-4 text-lg text-gray-500 font-body">
-              Start free. Upgrade when you&apos;re ready to go all-in.
-            </p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-5">
+          <div className="grid md:grid-cols-3 gap-4 animate-on-scroll">
             {PRICING.map((plan) => (
               <div
                 key={plan.name}
-                className={`rounded-2xl border p-8 flex flex-col ${
-                  plan.highlighted
-                    ? "border-brand-900 bg-brand-950 text-white shadow-xl relative"
-                    : "border-gray-200 bg-white"
+                className={`rounded-2xl p-7 flex flex-col ${
+                  plan.dark
+                    ? "bg-gray-900 text-white"
+                    : "card"
                 }`}
               >
-                {plan.highlighted && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-brand-900 text-white text-xs font-bold rounded-full uppercase tracking-wider font-body">
-                    Most Popular
-                  </div>
-                )}
-                <h3 className={`font-display text-xl font-bold ${plan.highlighted ? "text-white" : "text-brand-950"}`}>{plan.name}</h3>
-                <p className={`text-sm mt-1 font-body ${plan.highlighted ? "text-brand-300" : "text-gray-500"}`}>{plan.desc}</p>
-                <div className="mt-6">
-                  {plan.price === "Custom" ? (
-                    <p className={`font-display text-4xl font-extrabold ${plan.highlighted ? "text-white" : "text-brand-950"}`}>Custom</p>
-                  ) : (
-                    <p className={`font-display text-4xl font-extrabold ${plan.highlighted ? "text-white" : "text-brand-950"}`}>
-                      ${plan.price}
-                      <span className={`text-lg font-normal ${plan.highlighted ? "text-brand-400" : "text-gray-400"}`}>/mo</span>
-                    </p>
-                  )}
+                <p className={`font-display text-sm font-bold ${plan.dark ? "text-white" : "text-gray-900"}`}>{plan.name}</p>
+                <p className={`text-xs mt-0.5 ${plan.dark ? "text-gray-400" : "text-gray-400"}`}>{plan.desc}</p>
+                <div className="mt-5">
+                  <span className={`font-display text-4xl font-extrabold ${plan.dark ? "text-white" : "text-gray-900"}`}>
+                    ${plan.price}
+                  </span>
+                  <span className={`text-sm ${plan.dark ? "text-gray-500" : "text-gray-400"}`}>{plan.period}</span>
                 </div>
-                <ul className="mt-6 space-y-3 flex-1">
-                  {plan.features.map((feat) => (
-                    <li key={feat} className={`flex items-start gap-2.5 text-sm font-body ${plan.highlighted ? "text-brand-200" : "text-gray-600"}`}>
-                      <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${plan.highlighted ? "text-white" : "text-brand-700"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <ul className="mt-5 space-y-2.5 flex-1">
+                  {plan.features.map((f) => (
+                    <li key={f} className={`flex items-center gap-2 text-[13px] ${plan.dark ? "text-gray-300" : "text-gray-500"}`}>
+                      <svg className={`w-3.5 h-3.5 flex-shrink-0 ${plan.dark ? "text-white" : "text-gray-900"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                       </svg>
-                      {feat}
+                      {f}
                     </li>
                   ))}
                 </ul>
                 <Link
                   href="/auth/login"
-                  className={`mt-8 block text-center py-3 rounded-lg font-semibold text-sm transition-colors font-body ${
-                    plan.highlighted
-                      ? "bg-white text-brand-900 hover:bg-gray-100"
-                      : "border border-gray-200 text-gray-700 hover:border-brand-700 hover:text-brand-900"
+                  className={`mt-6 block text-center py-2.5 rounded-lg font-semibold text-sm transition-colors ${
+                    plan.dark
+                      ? "bg-white text-gray-900 hover:bg-gray-100"
+                      : "bg-gray-900 text-white hover:bg-black"
                   }`}
                 >
                   {plan.cta}
@@ -359,40 +400,36 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-24 px-6 bg-brand-950">
-        <div className="max-w-3xl mx-auto text-center">
-          <h2 className="font-display text-4xl md:text-5xl font-extrabold text-white">
+      {/* CTA */}
+      <section className="py-20 px-6">
+        <div className="max-w-2xl mx-auto text-center animate-on-scroll">
+          <h2 className="font-display text-3xl md:text-4xl font-extrabold text-gray-900">
             Ready to stop applying manually?
           </h2>
-          <p className="mt-4 text-xl text-brand-300 font-body">
-            Join job seekers who went from 200 applications with 3 responses
-            to 80 applications with 12 interviews.
+          <p className="mt-4 text-base text-gray-400">
+            Join job seekers who went from 200 applications with 3 responses to 80 applications with 12 interviews.
           </p>
-          <Link
-            href="/auth/login"
-            className="mt-10 inline-block px-10 py-4 bg-white text-brand-900 font-bold rounded-lg text-lg hover:bg-gray-100 transition-colors font-body"
-          >
+          <Link href="/auth/login" className="mt-8 inline-block px-8 py-3.5 bg-gray-900 text-white font-semibold rounded-lg text-sm hover:bg-black transition-colors">
             Get Started Free
           </Link>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="py-12 px-6 bg-brand-950 border-t border-brand-800">
-        <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 bg-brand-800 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-xs font-display">A</span>
+      <footer className="py-10 px-6 border-t border-gray-200">
+        <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-gray-900 rounded flex items-center justify-center">
+              <span className="text-white font-bold text-[10px] font-display">A</span>
             </div>
-            <span className="font-display font-bold text-white">AutoApply</span>
+            <span className="font-display font-bold text-sm text-gray-900">AutoApply</span>
           </div>
-          <div className="flex gap-8 text-sm text-brand-400 font-body">
-            <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
-            <Link href="/auth/login" className="hover:text-white transition-colors">Dashboard</Link>
+          <div className="flex gap-6 text-xs text-gray-400">
+            <a href="#features" className="hover:text-gray-900 transition-colors">Features</a>
+            <a href="#pricing" className="hover:text-gray-900 transition-colors">Pricing</a>
+            <Link href="/auth/login" className="hover:text-gray-900 transition-colors">Dashboard</Link>
           </div>
-          <p className="text-sm text-brand-500 font-body">&copy; {new Date().getFullYear()} AutoApply. All rights reserved.</p>
+          <p className="text-xs text-gray-300">&copy; {new Date().getFullYear()} AutoApply</p>
         </div>
       </footer>
     </div>

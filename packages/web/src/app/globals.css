@@ -2,21 +2,81 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
 
 body {
-  @apply bg-white text-gray-900 antialiased;
+  @apply text-gray-900 antialiased;
   font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  background-color: #f7f7f7;
 }
 
 h1, h2, h3, h4, h5, h6 {
   font-family: 'Sora', system-ui, -apple-system, sans-serif;
 }
 
-/* Card hover effect */
-.card-hover {
-  @apply transition-all duration-300;
+/* Scroll-triggered animations */
+.animate-on-scroll {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
 }
-.card-hover:hover {
-  @apply -translate-y-1 shadow-lg;
+.animate-on-scroll.visible {
+  opacity: 1;
+  transform: translateY(0);
 }
+
+/* Card styles */
+.card {
+  @apply bg-white rounded-2xl transition-all duration-300;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
+}
+.card:hover {
+  box-shadow: 0 8px 25px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.03);
+  transform: translateY(-2px);
+}
+
+/* Floating animation */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.float {
+  animation: float 4s ease-in-out infinite;
+}
+.float-delayed {
+  animation: float 4s ease-in-out infinite 1s;
+}
+.float-slow {
+  animation: float 6s ease-in-out infinite 0.5s;
+}
+
+/* Logo marquee */
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.marquee {
+  animation: marquee 30s linear infinite;
+}
+
+/* Subtle pulse for live indicator */
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.live-pulse {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+/* Fade in */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in {
+  animation: fadeIn 0.6s ease-out forwards;
+}
+.fade-in-delay-1 { animation-delay: 0.1s; opacity: 0; }
+.fade-in-delay-2 { animation-delay: 0.2s; opacity: 0; }
+.fade-in-delay-3 { animation-delay: 0.3s; opacity: 0; }
+.fade-in-delay-4 { animation-delay: 0.4s; opacity: 0; }
