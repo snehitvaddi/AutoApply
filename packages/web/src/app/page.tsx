@@ -209,22 +209,32 @@ export default function LandingPage() {
         <div className="max-w-4xl mx-auto text-center">
           <div className="fade-in inline-flex items-center gap-2 px-3.5 py-1.5 bg-white text-gray-500 rounded-full text-xs font-medium mb-8 border border-gray-200 shadow-sm">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full live-pulse" />
-            Applying to 50+ jobs per day on autopilot
+            50+ jobs applied daily while you sleep
           </div>
 
           <h1 className="fade-in fade-in-delay-1 font-display text-[3.2rem] md:text-[4.5rem] font-extrabold text-gray-900 leading-[1.05] tracking-tight">
-            Your next interview
+            The world&apos;s best job applier.
             <br />
-            is one click away.
+            <span className="text-gray-300">You sleep. It applies.</span>
           </h1>
 
           <p className="fade-in fade-in-delay-2 mt-6 text-lg text-gray-400 max-w-xl mx-auto leading-relaxed">
-            ApplyLoop fills out applications, tailors resumes, handles security codes, and sends you screenshot proof — while you sleep.
+            Fine-tunes your resume per job. Works on every ATS. Handles OTPs, CAPTCHAs, and multi-page forms. Sends you screenshot proof via Telegram.
           </p>
+
+          {/* ATS Platform Logos */}
+          <div className="fade-in fade-in-delay-2 mt-6 flex items-center justify-center gap-5 flex-wrap">
+            {["Greenhouse", "Ashby", "Lever", "SmartRecruiters", "Workday"].map((ats) => (
+              <span key={ats} className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-gray-100 rounded-full text-[11px] font-medium text-gray-400 shadow-sm">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full" />
+                {ats}
+              </span>
+            ))}
+          </div>
 
           <div className="fade-in fade-in-delay-3 mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link href="/auth/login" className="px-7 py-3 bg-gray-900 text-white font-semibold rounded-lg text-sm hover:bg-black transition-colors">
-              Try ApplyLoop Free
+              Get Started Free
             </Link>
             <a href="#how-it-works" className="px-7 py-3 text-gray-500 font-medium rounded-lg text-sm hover:text-gray-900 transition-colors">
               See how it works &darr;
