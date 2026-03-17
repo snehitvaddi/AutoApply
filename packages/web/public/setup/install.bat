@@ -24,7 +24,7 @@ if %errorlevel% neq 0 (
 )
 
 :: Download and run the PowerShell setup script
-powershell -ExecutionPolicy Bypass -Command "& { irm 'https://autoapply-web.vercel.app/setup/setup-windows.ps1' | iex }"
+powershell -ExecutionPolicy Bypass -Command "& { irm 'https://applyloop.vercel.app/setup/setup-windows.ps1' | iex }"
 
 echo.
 if %errorlevel% equ 0 (

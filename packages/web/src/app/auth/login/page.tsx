@@ -30,7 +30,7 @@ export default function LoginPage() {
       <div className="max-w-md w-full bg-white rounded-xl shadow-sm border p-8">
         {/* Branding */}
         <h1 className="text-3xl font-bold text-center mb-2 text-gray-900">
-          AutoApply
+          ApplyLoop
         </h1>
         <p className="text-gray-500 text-center mb-8">
           Automated job applications, powered by AI

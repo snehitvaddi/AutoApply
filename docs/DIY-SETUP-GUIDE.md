@@ -1,4 +1,4 @@
-# AutoApply — Complete DIY Setup Guide
+# ApplyLoop — Complete DIY Setup Guide
 
 > Build your own autonomous job application bot from scratch.
 > Estimated time: 4-8 hours (technical users) | 1-2 weekends (everyone else)
@@ -86,7 +86,7 @@ WHERE email = 'your@email.com';
 ## Phase 2: Google OAuth Configuration (5 sub-steps)
 
 ### Step 10: Create Google Cloud project
-Go to console.cloud.google.com → New Project → Name it "AutoApply"
+Go to console.cloud.google.com → New Project → Name it "ApplyLoop"
 
 ### Step 11: Configure OAuth consent screen
 - User type: External
@@ -98,7 +98,7 @@ Go to console.cloud.google.com → New Project → Name it "AutoApply"
 - Application type: Web application
 - Authorized JavaScript origins:
   ```
-  https://autoapply-web.vercel.app
+  https://applyloop.vercel.app
   http://localhost:3000
   ```
 - Authorized redirect URIs:
@@ -114,7 +114,7 @@ Go to console.cloud.google.com → New Project → Name it "AutoApply"
 ### Step 14: Configure Supabase Auth
 - Supabase Dashboard → Auth → Providers → Google → Enable
 - Paste Client ID and Client Secret from Step 12
-- Set Site URL to `https://autoapply-web.vercel.app`
+- Set Site URL to `https://applyloop.vercel.app`
 - Add redirect URLs for both production and localhost
 
 ---
@@ -136,7 +136,7 @@ cd AutoApply
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbG...
 SUPABASE_SERVICE_ROLE_KEY=eyJhbG...
-NEXT_PUBLIC_APP_URL=https://autoapply-web.vercel.app
+NEXT_PUBLIC_APP_URL=https://applyloop.vercel.app
 ENCRYPTION_KEY=<openssl rand -hex 32>
 GOOGLE_CLIENT_ID=xxx.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-xxx

@@ -35,7 +35,7 @@ export default function SetupCompletePage() {
           <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
             <li>Download and run the setup script for your OS</li>
             <li>The script installs Python, Node.js, OpenClaw, and all dependencies</li>
-            <li>It connects to your AutoApply account via Supabase</li>
+            <li>It connects to your ApplyLoop account via Supabase</li>
             <li>The worker starts scanning job boards and auto-applying</li>
           </ol>
         </div>
@@ -132,7 +132,7 @@ export default function SetupCompletePage() {
                 Or paste this into PowerShell (Admin) if .bat is also blocked:
               </p>
               <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto mt-1">
-{`irm https://autoapply-web.vercel.app/setup/setup-windows.ps1 | iex`}
+{`irm https://applyloop.vercel.app/setup/setup-windows.ps1 | iex`}
               </pre>
             </div>
           </div>

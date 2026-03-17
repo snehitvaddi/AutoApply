@@ -186,7 +186,7 @@ export default function LandingPage() {
             <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
               <span className="text-white font-bold text-sm font-display">A</span>
             </div>
-            <span className="font-display font-bold text-lg">AutoApply</span>
+            <span className="font-display font-bold text-lg">ApplyLoop</span>
           </div>
           <div className="hidden md:flex items-center gap-8 text-[13px] font-medium text-gray-400">
             <a href="#how-it-works" className="hover:text-gray-900 transition-colors">How It Works</a>
@@ -219,12 +219,12 @@ export default function LandingPage() {
           </h1>
 
           <p className="fade-in fade-in-delay-2 mt-6 text-lg text-gray-400 max-w-xl mx-auto leading-relaxed">
-            AutoApply fills out applications, tailors resumes, handles security codes, and sends you screenshot proof — while you sleep.
+            ApplyLoop fills out applications, tailors resumes, handles security codes, and sends you screenshot proof — while you sleep.
           </p>
 
           <div className="fade-in fade-in-delay-3 mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link href="/auth/login" className="px-7 py-3 bg-gray-900 text-white font-semibold rounded-lg text-sm hover:bg-black transition-colors">
-              Try AutoApply Free
+              Try ApplyLoop Free
             </Link>
             <a href="#how-it-works" className="px-7 py-3 text-gray-500 font-medium rounded-lg text-sm hover:text-gray-900 transition-colors">
               See how it works &darr;
@@ -421,14 +421,14 @@ export default function LandingPage() {
             <div className="w-6 h-6 bg-gray-900 rounded flex items-center justify-center">
               <span className="text-white font-bold text-[10px] font-display">A</span>
             </div>
-            <span className="font-display font-bold text-sm text-gray-900">AutoApply</span>
+            <span className="font-display font-bold text-sm text-gray-900">ApplyLoop</span>
           </div>
           <div className="flex gap-6 text-xs text-gray-400">
             <a href="#features" className="hover:text-gray-900 transition-colors">Features</a>
             <a href="#pricing" className="hover:text-gray-900 transition-colors">Pricing</a>
             <Link href="/auth/login" className="hover:text-gray-900 transition-colors">Dashboard</Link>
           </div>
-          <p className="text-xs text-gray-300">&copy; {new Date().getFullYear()} AutoApply</p>
+          <p className="text-xs text-gray-300">&copy; {new Date().getFullYear()} ApplyLoop</p>
         </div>
       </footer>
     </div>

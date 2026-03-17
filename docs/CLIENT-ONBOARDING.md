@@ -1,4 +1,4 @@
-# AutoApply — Client Onboarding Guide
+# ApplyLoop — Client Onboarding Guide
 
 Get from zero to automated job applications in ~10 minutes.
 
@@ -17,7 +17,7 @@ That's it. No API keys, no subscriptions, no technical setup.
 
 ## Step 1: Sign In
 
-Go to **[autoapply-web.vercel.app](https://autoapply-web.vercel.app)** and click **"Sign in with Google"**.
+Go to **[applyloop.vercel.app](https://applyloop.vercel.app)** and click **"Sign in with Google"**.
 
 ![Login Page](images/01-login-page.png)
 
@@ -51,7 +51,7 @@ The onboarding wizard starts with **AI Import** — the fastest way to fill your
 2. Paste it into ChatGPT, Claude, or any AI assistant
 3. Along with the prompt, paste your resume text or LinkedIn profile
 4. The AI generates a JSON object with all your details
-5. Paste that JSON back into AutoApply
+5. Paste that JSON back into ApplyLoop
 6. Click **"Import"** — all profile fields auto-fill
 
 This saves ~5 minutes of manual typing. You can still edit any field afterward.
@@ -98,13 +98,13 @@ Fill in your professional background:
 | Veteran Status | Optional | For EEO compliance (voluntary) |
 | Disability Status | Optional | For EEO compliance (voluntary) |
 
-> **Note:** EEO fields are voluntary. Many applications ask these questions — if you fill them here, AutoApply handles them automatically.
+> **Note:** EEO fields are voluntary. Many applications ask these questions — if you fill them here, ApplyLoop handles them automatically.
 
 ---
 
 ## Step 6: Job Preferences
 
-Tell AutoApply what jobs to look for:
+Tell ApplyLoop what jobs to look for:
 
 ![Job Preferences](images/07-onboarding-step4-preferences.png)
 
@@ -171,7 +171,7 @@ Set-ExecutionPolicy Bypass -Scope Process
 The script automatically:
 - Installs Python 3.11+, Node.js 18+, OpenClaw CLI
 - Installs Playwright browsers (Chromium)
-- Clones the AutoApply repo
+- Clones the ApplyLoop repo
 - Installs all Python and Node.js dependencies
 - Prompts for your Supabase credentials
 - Verifies everything is working
@@ -251,7 +251,7 @@ Manage multiple resumes:
 ![Telegram Settings](images/14-settings-telegram.png)
 
 To connect Telegram:
-1. Open Telegram and search for **@AutoApplyBot**
+1. Open Telegram and search for **@ApplyLoopBot**
 2. Send `/start` to the bot
 3. The bot replies with your **Chat ID**
 4. Paste the Chat ID into this settings page
@@ -296,8 +296,8 @@ Once you complete onboarding:
 
 ## FAQ
 
-### Q: How does AutoApply fill out applications?
-AutoApply uses browser automation (OpenClaw) to navigate real application forms, fill in your details, upload your resume, and submit. Each application gets a screenshot as proof.
+### Q: How does ApplyLoop fill out applications?
+ApplyLoop uses browser automation (OpenClaw) to navigate real application forms, fill in your details, upload your resume, and submit. Each application gets a screenshot as proof.
 
 ### Q: What job boards does it support?
 Currently: **Greenhouse** (271+ companies), **Ashby** (102+ companies), **Lever** (~7 companies), **SmartRecruiters** (growing list). Workday support is coming soon.
@@ -345,7 +345,7 @@ Contact the admin or open an issue on GitHub.
 
 The authenticated page screenshots (onboarding, dashboard, settings, admin) require a logged-in session. To capture them:
 
-1. Log into AutoApply in Chrome
+1. Log into ApplyLoop in Chrome
 2. Close Chrome completely (Cmd+Q)
 3. Run: `python3 docs/capture-screenshots.py`
 

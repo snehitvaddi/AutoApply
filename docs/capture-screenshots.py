@@ -1,7 +1,7 @@
 """Capture authenticated screenshots for CLIENT-ONBOARDING.md.
 
 Usage:
-    1. Open Chrome and log into https://autoapply-web.vercel.app
+    1. Open Chrome and log into https://applyloop.vercel.app
     2. Close Chrome completely (Cmd+Q)
     3. Run: python3 docs/capture-screenshots.py
 
@@ -15,7 +15,7 @@ from playwright.async_api import async_playwright
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "images")
 CHROME_PROFILE = os.path.expanduser("~/Library/Application Support/Google/Chrome")
-BASE = "https://autoapply-web.vercel.app"
+BASE = "https://applyloop.vercel.app"
 
 PAGES = [
     (f"{BASE}/auth/login", "01-login-page.png"),

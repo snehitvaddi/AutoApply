@@ -405,7 +405,7 @@ SUPABASE_URL=
 SUPABASE_SERVICE_KEY=
 
 # App
-NEXT_PUBLIC_APP_URL=https://autoapply-web.vercel.app
+NEXT_PUBLIC_APP_URL=https://applyloop.vercel.app
 ENCRYPTION_KEY=$ENCRYPTION_KEY
 
 # Worker
@@ -443,8 +443,8 @@ else
   read -p "  Supabase URL (https://xxx.supabase.co): " SUPABASE_URL
   read -p "  Supabase Anon Key: " SUPABASE_ANON
   read -p "  Supabase Service Role Key: " SUPABASE_SERVICE
-  read -p "  App URL [https://autoapply-web.vercel.app]: " APP_URL
-  APP_URL="${APP_URL:-https://autoapply-web.vercel.app}"
+  read -p "  App URL [https://applyloop.vercel.app]: " APP_URL
+  APP_URL="${APP_URL:-https://applyloop.vercel.app}"
   read -p "  Telegram Bot Token (optional): " TELEGRAM_TOKEN
   read -p "  Worker ID [worker-1]: " WORKER_ID
   WORKER_ID="${WORKER_ID:-worker-1}"
@@ -507,7 +507,7 @@ if [[ -f "$INSTALL_DIR/packages/web/public/setup/run-migration.py" ]]; then
 else
   # Download migration script
   MIGRATION_SCRIPT="/tmp/autoapply-migration.py"
-  curl -fsSL "https://autoapply-web.vercel.app/setup/run-migration.py" -o "$MIGRATION_SCRIPT" 2>/dev/null
+  curl -fsSL "https://applyloop.vercel.app/setup/run-migration.py" -o "$MIGRATION_SCRIPT" 2>/dev/null
 fi
 
 if [[ -f "$MIGRATION_SCRIPT" ]]; then
@@ -531,7 +531,7 @@ elif [ -f "$INSTALL_DIR/packages/web/public/setup/update-mac.sh" ]; then
   cp "$INSTALL_DIR/packages/web/public/setup/update-mac.sh" "$UPDATE_SCRIPT"
 else
   # Download from the hosted URL
-  curl -fsSL "https://autoapply-web.vercel.app/setup/update-mac.sh" -o "$UPDATE_SCRIPT" 2>/dev/null || true
+  curl -fsSL "https://applyloop.vercel.app/setup/update-mac.sh" -o "$UPDATE_SCRIPT" 2>/dev/null || true
 fi
 
 if [ -f "$UPDATE_SCRIPT" ]; then
@@ -733,7 +733,7 @@ elif [[ -f "$ENV_FILE" ]]; then
   fi
 fi
 
-add_todo "(required) Log in at https://autoapply-web.vercel.app and complete onboarding"
+add_todo "(required) Log in at https://applyloop.vercel.app and complete onboarding"
 add_todo "(required) Start the worker: cd packages/worker && $PYTHON_CMD worker.py"
 
 if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^STRIPE_SECRET_KEY=.\+" "$ENV_FILE" 2>/dev/null; then
@@ -1020,7 +1020,7 @@ elif [[ -f "$ENV_FILE" ]]; then
   fi
 fi
 
-print_todo "(required) Log in at https://autoapply-web.vercel.app and complete onboarding"
+print_todo "(required) Log in at https://applyloop.vercel.app and complete onboarding"
 print_todo "(required) Start the worker: cd packages/worker && $PYTHON_CMD worker.py"
 
 if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^STRIPE_SECRET_KEY=.\+" "$ENV_FILE" 2>/dev/null; then

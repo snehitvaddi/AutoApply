@@ -58,7 +58,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
       `}>
         <div className="p-6 border-b flex items-center justify-between">
-          <h1 className="text-xl font-bold text-brand-600">AutoApply</h1>
+          <h1 className="text-xl font-bold text-brand-600">ApplyLoop</h1>
           <button className="md:hidden text-gray-400" onClick={() => setSidebarOpen(false)}>
             &#x2715;
           </button>
@@ -112,7 +112,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <button onClick={() => setSidebarOpen(true)} className="text-gray-600 text-xl mr-3">
             &#x2630;
           </button>
-          <h1 className="text-lg font-bold text-brand-600">AutoApply</h1>
+          <h1 className="text-lg font-bold text-brand-600">ApplyLoop</h1>
         </div>
         <main className="flex-1 p-8 overflow-auto">{children}</main>
       </div>

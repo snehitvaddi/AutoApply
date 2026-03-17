@@ -913,7 +913,7 @@ export default function SettingsPage() {
         <section className="bg-white rounded-xl border p-6">
           <h2 className="font-semibold mb-4">Telegram Notifications</h2>
           <p className="text-sm text-gray-500 mb-4">
-            Message <span className="font-mono">@AutoApplyBot</span> with{" "}
+            Message <span className="font-mono">@ApplyLoopBot</span> with{" "}
             <span className="font-mono">/start</span>, then enter your chat ID below to receive
             notifications when applications are submitted.
           </p>

@@ -421,7 +421,7 @@ SUPABASE_URL=
 SUPABASE_SERVICE_KEY=
 
 # App
-NEXT_PUBLIC_APP_URL=https://autoapply-web.vercel.app
+NEXT_PUBLIC_APP_URL=https://applyloop.vercel.app
 ENCRYPTION_KEY=$EncryptionKey
 
 # Worker
@@ -490,7 +490,7 @@ if ($ScriptDir -and (Test-Path (Join-Path $ScriptDir "update-windows.ps1"))) {
 } else {
     # Download from hosted URL
     try {
-        Invoke-WebRequest -Uri "https://autoapply-web.vercel.app/setup/update-windows.ps1" -OutFile $UpdateScript -UseBasicParsing -ErrorAction SilentlyContinue
+        Invoke-WebRequest -Uri "https://applyloop.vercel.app/setup/update-windows.ps1" -OutFile $UpdateScript -UseBasicParsing -ErrorAction SilentlyContinue
     } catch { }
 }
 
@@ -534,7 +534,7 @@ if (Test-Path (Join-Path $InstallDir "packages\web\public\setup\run-migration.py
 } else {
     $MigrationScript = Join-Path $env:TEMP "autoapply-migration.py"
     try {
-        Invoke-WebRequest -Uri "https://autoapply-web.vercel.app/setup/run-migration.py" -OutFile $MigrationScript -UseBasicParsing -ErrorAction SilentlyContinue
+        Invoke-WebRequest -Uri "https://applyloop.vercel.app/setup/run-migration.py" -OutFile $MigrationScript -UseBasicParsing -ErrorAction SilentlyContinue
     } catch { }
 }
 
@@ -711,7 +711,7 @@ if ($LlmProvider -eq "none" -and $LlmBackendProvider -eq "none") {
     }
 }
 
-$todoNum++; $todoLines += "$todoNum. **(required)** Log in at https://autoapply-web.vercel.app and complete onboarding"
+$todoNum++; $todoLines += "$todoNum. **(required)** Log in at https://applyloop.vercel.app and complete onboarding"
 $todoNum++; $todoLines += "$todoNum. **(required)** Run database migration if not done: ``$PythonCmd run-migration.py $EnvFile``"
 $todoNum++; $todoLines += "$todoNum. **(required)** Start the worker: ``cd packages\worker && $PythonCmd worker.py``"
 

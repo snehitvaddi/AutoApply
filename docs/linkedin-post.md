@@ -1,4 +1,4 @@
-# LinkedIn Post — AutoApply
+# LinkedIn Post — ApplyLoop
 
 ## Post Text (Copy-paste ready)
 
