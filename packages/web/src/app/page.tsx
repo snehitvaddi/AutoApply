@@ -84,30 +84,41 @@ const COMPANIES = ["Stripe", "Anthropic", "Coinbase", "Airbnb", "Notion", "Figma
 
 const PRICING = [
   {
-    name: "Starter",
-    price: "15",
+    name: "Monthly",
+    price: "49",
     period: "/mo",
-    desc: "For casual job seekers",
-    features: ["25 applications/day", "Resume tailoring", "Greenhouse + Ashby", "Dashboard access", "Email notifications"],
-    cta: "Get Started",
-    dark: false,
-  },
-  {
-    name: "Pro",
-    price: "29",
-    period: "/mo",
-    desc: "For serious job hunters",
-    features: ["Unlimited applications", "All 5 ATS platforms", "Smart cover letters", "AI form answers", "Gmail OTP verification", "Telegram alerts", "Priority support"],
+    desc: "Full access, cancel anytime",
+    features: [
+      "Unlimited applications",
+      "All 5 ATS platforms",
+      "$200/mo worth of LLM included",
+      "Smart cover letters + AI form answers",
+      "Gmail OTP verification",
+      "Resume tailoring per job",
+      "Telegram alerts + screenshots",
+      "Full setup + onboarding included",
+      "Priority support",
+    ],
     cta: "Start Free Trial",
     dark: true,
   },
   {
-    name: "Done For You",
-    price: "150",
+    name: "Lifetime",
+    price: "250",
     period: " one-time",
-    desc: "We set it up for you",
-    features: ["Full infrastructure setup", "Profile + resume config", "Gmail + Telegram wired", "Test application together", "Running in 2 hours", "1 week of support"],
-    cta: "Book a Call",
+    desc: "Pay once, use forever",
+    features: [
+      "Everything in Monthly — forever",
+      "Full infrastructure setup by us",
+      "Profile + resume configured",
+      "Gmail + Telegram wired",
+      "Test application together",
+      "Running in 2 hours",
+      "Lifetime updates",
+      "1 month of LLM credits included",
+      "Community access",
+    ],
+    cta: "Get Lifetime Access",
     dark: false,
   },
 ];
@@ -356,7 +367,7 @@ export default function LandingPage() {
             </h2>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-4 animate-on-scroll">
+          <div className="grid md:grid-cols-2 gap-5 max-w-3xl mx-auto animate-on-scroll">
             {PRICING.map((plan) => (
               <div
                 key={plan.name}
