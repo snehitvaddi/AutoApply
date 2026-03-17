@@ -85,40 +85,33 @@ const COMPANIES = ["Stripe", "Anthropic", "Coinbase", "Airbnb", "Notion", "Figma
 const PRICING = [
   {
     name: "Monthly",
-    price: "49",
-    period: "/mo",
-    desc: "Full access, cancel anytime",
+    desc: "Full access. Cancel anytime.",
     features: [
       "Unlimited applications",
       "All 5 ATS platforms",
-      "$200/mo worth of LLM included",
-      "Smart cover letters + AI form answers",
-      "Gmail OTP verification",
+      "LLM-powered automation included",
       "Resume tailoring per job",
-      "Telegram alerts + screenshots",
-      "Full setup + onboarding included",
+      "Gmail OTP + security codes",
+      "Telegram alerts + screenshot proof",
+      "Full setup + onboarding",
       "Priority support",
     ],
-    cta: "Start Free Trial",
+    cta: "DM for Pricing",
     dark: true,
   },
   {
     name: "Lifetime",
-    price: "250",
-    period: " one-time",
-    desc: "Pay once, use forever",
+    desc: "Own it forever. One-time payment.",
     features: [
-      "Everything in Monthly — forever",
+      "Everything in Monthly",
       "Full infrastructure setup by us",
       "Profile + resume configured",
       "Gmail + Telegram wired",
-      "Test application together",
-      "Running in 2 hours",
+      "Test application together live",
       "Lifetime updates",
-      "1 month of LLM credits included",
       "Community access",
     ],
-    cta: "Get Lifetime Access",
+    cta: "DM for Pricing",
     dark: false,
   },
 ];
@@ -379,12 +372,7 @@ export default function LandingPage() {
               >
                 <p className={`font-display text-sm font-bold ${plan.dark ? "text-white" : "text-gray-900"}`}>{plan.name}</p>
                 <p className={`text-xs mt-0.5 ${plan.dark ? "text-gray-400" : "text-gray-400"}`}>{plan.desc}</p>
-                <div className="mt-5">
-                  <span className={`font-display text-4xl font-extrabold ${plan.dark ? "text-white" : "text-gray-900"}`}>
-                    ${plan.price}
-                  </span>
-                  <span className={`text-sm ${plan.dark ? "text-gray-500" : "text-gray-400"}`}>{plan.period}</span>
-                </div>
+                <div className="mt-4" />
                 <ul className="mt-5 space-y-2.5 flex-1">
                   {plan.features.map((f) => (
                     <li key={f} className={`flex items-center gap-2 text-[13px] ${plan.dark ? "text-gray-300" : "text-gray-500"}`}>
