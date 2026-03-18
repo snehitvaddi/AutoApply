@@ -3,6 +3,16 @@
 -- Adds per-user worker configuration (LLM, features) and worker event logging
 -- ============================================================================
 
+-- ── Helper function ───────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION update_modified_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- ── Worker Config (per-user, synced between UI and worker) ────────────────
 
 CREATE TABLE IF NOT EXISTS public.worker_config (
