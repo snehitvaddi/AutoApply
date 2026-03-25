@@ -1,4 +1,4 @@
--- AutoApply SaaS Database Schema
+-- ApplyLoop SaaS Database Schema
 -- Migration 001: Initial schema
 
 -- ============================================================================

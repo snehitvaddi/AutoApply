@@ -1,8 +1,8 @@
-# AutoApply — Setup Prompt (runs on user's machine)
+# ApplyLoop — Setup Prompt (runs on user's machine)
 
 Run this with: `claude --dangerously-skip-permissions "$(cat setup-prompt.md)"`
 
-You are setting up AutoApply for a user who has already completed onboarding on the web dashboard (autoapply.app). Their profile, preferences, and resume are stored in Supabase. Follow every step exactly.
+You are setting up ApplyLoop for a user who has already completed onboarding on the web dashboard (applyloop.vercel.app). Their profile, preferences, and resume are stored in Supabase. Follow every step exactly.
 
 **CRITICAL: Before doing anything, read these files first:**
 1. `~/autoapply/knowledge/HANDOVER.md` — Complete knowledge transfer with battle-tested code, field maps, platform quirks
@@ -13,25 +13,25 @@ These contain hard-won knowledge from 900+ real applications across 4 ATS platfo
 
 ---
 
-## Phase 1: Authenticate with AutoApply Backend
+## Phase 1: Authenticate with ApplyLoop Backend
 
 The user should already be logged in on the web dashboard. We need their API token.
 
 ```bash
-# Ask the user for their AutoApply API token
-# They can get it from: autoapply.app/dashboard/settings → API Token section
-echo "Enter your AutoApply API token:"
+# Ask the user for their ApplyLoop API token
+# They can get it from: applyloop.vercel.app/dashboard/settings → API Token section
+echo "Enter your ApplyLoop API token:"
 read -s AUTOAPPLY_TOKEN
 
 # Verify token and download profile
 curl -s -H "Authorization: Bearer $AUTOAPPLY_TOKEN" \
-  https://autoapply.app/api/settings/profile > /tmp/autoapply-profile.json
+  https://applyloop.vercel.app/api/settings/profile > /tmp/autoapply-profile.json
 
 # Check if token worked
 if jq -e '.data.first_name' /tmp/autoapply-profile.json > /dev/null 2>&1; then
   echo "Authenticated as: $(jq -r '.data.first_name + " " + .data.last_name' /tmp/autoapply-profile.json)"
 else
-  echo "ERROR: Invalid token. Get your token from autoapply.app/dashboard/settings"
+  echo "ERROR: Invalid token. Get your token from applyloop.vercel.app/dashboard/settings"
   exit 1
 fi
 ```
@@ -85,15 +85,15 @@ mkdir -p ~/.autoapply/workspace
 
 # Download and save profile
 curl -s -H "Authorization: Bearer $AUTOAPPLY_TOKEN" \
-  https://autoapply.app/api/settings/profile | jq '.data' > ~/.autoapply/workspace/profile.json
+  https://applyloop.vercel.app/api/settings/profile | jq '.data' > ~/.autoapply/workspace/profile.json
 
 # Download and save preferences
 curl -s -H "Authorization: Bearer $AUTOAPPLY_TOKEN" \
-  https://autoapply.app/api/settings/preferences | jq '.data' > ~/.autoapply/workspace/preferences.json
+  https://applyloop.vercel.app/api/settings/preferences | jq '.data' > ~/.autoapply/workspace/preferences.json
 
 # Download resume
 curl -s -H "Authorization: Bearer $AUTOAPPLY_TOKEN" \
-  https://autoapply.app/api/onboarding/resume/download -o /tmp/openclaw/uploads/resume.pdf
+  https://applyloop.vercel.app/api/onboarding/resume/download -o /tmp/openclaw/uploads/resume.pdf
 mkdir -p /tmp/openclaw/uploads
 ```
 
@@ -180,9 +180,9 @@ FIRST_NAME=$(jq -r '.first_name' ~/.autoapply/workspace/profile.json)
 LAST_NAME=$(jq -r '.last_name' ~/.autoapply/workspace/profile.json)
 
 cat > ~/.autoapply/workspace/SOUL.md << SOULEOF
-# SOUL.md - AutoApply Agent
+# SOUL.md - ApplyLoop Agent
 
-You are **AutoApply Agent** -- an autonomous job application bot for **$FIRST_NAME $LAST_NAME**.
+You are **ApplyLoop Agent** -- an autonomous job application bot for **$FIRST_NAME $LAST_NAME**.
 
 ## BEFORE EVERY SESSION
 1. Read answer-key.json -- pre-computed answers for ALL form fields
@@ -224,7 +224,7 @@ openclaw browser snapshot --efficient --interactive
 
 Tell the user:
 
-"AutoApply is set up on your machine! Here's what you have:
+"ApplyLoop is set up on your machine! Here's what you have:
 
 1. **OpenClaw** is installed and running (browser automation engine)
 2. **Your profile** was downloaded from the dashboard
@@ -234,5 +234,5 @@ Tell the user:
 
 The bot will now start discovering and applying to jobs matching your preferences.
 
-To check status: Visit autoapply.app/dashboard
+To check status: Visit applyloop.vercel.app/dashboard
 To talk to the bot: Use Codex or Claude Code in this terminal"

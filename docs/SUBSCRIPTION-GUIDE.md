@@ -1,6 +1,6 @@
-# AutoApply — Subscription & Tools Guide
+# ApplyLoop — Subscription & Tools Guide
 
-What you need (and what you don't) to use AutoApply.
+What you need (and what you don't) to use ApplyLoop.
 
 ---
 
@@ -10,7 +10,7 @@ You only need a Google account and a resume. Everything else runs on our infrast
 
 | What | Required? | Cost | Purpose |
 |------|-----------|------|---------|
-| **AutoApply Account** | Yes | Free / $15 / $29 per month | The app itself |
+| **ApplyLoop Account** | Yes | Free / $15 / $29 per month | The app itself |
 | **Google Account** | Yes | Free | Sign in with Google OAuth |
 | **Resume (PDF)** | Yes | Free | Uploaded during onboarding |
 | **Telegram App** | Recommended | Free | Real-time notifications when applications are submitted |
@@ -41,7 +41,7 @@ All tiers include:
 
 ## For Operators (Self-Hosting)
 
-If you want to run your own AutoApply instance, here's what you need:
+If you want to run your own ApplyLoop instance, here's what you need:
 
 | Service | Required? | Cost | Purpose |
 |---------|-----------|------|---------|
@@ -84,4 +84,4 @@ The Pro plan ($20/mo) is required for the `browser` command family and the `gate
 
 ### What About Claude Code?
 
-Claude Code is **not needed for running AutoApply**. It's only used during development. The worker interacts with OpenClaw CLI directly — no AI API calls are made at runtime from the worker itself.
+Claude Code is **not needed for running ApplyLoop**. It's only used during development. The worker interacts with OpenClaw CLI directly — no AI API calls are made at runtime from the worker itself.

@@ -1,4 +1,4 @@
-# AutoApply Setup Carousel — Slide Content
+# ApplyLoop Setup Carousel — Slide Content
 
 Design in Canva/Figma. Dark tech aesthetic (charcoal/navy bg, white text, blue/orange accents).
 Monospace font for code. Number steps sequentially across ALL slides (Step 1 through 50+).
@@ -7,7 +7,7 @@ Monospace font for code. Number steps sequentially across ALL slides (Step 1 thr
 
 ## Slide 1: Title
 
-**AutoApply**
+**ApplyLoop**
 *Full Setup Guide: From Zero to Automated Job Applications*
 
 50+ steps. 5 ATS platforms. 370+ company boards.
@@ -193,7 +193,7 @@ OPENAI_API_KEY (or ANTHROPIC_API_KEY)
 
 When you apply on Greenhouse, some companies (Stripe, Datadog, Plaid) send a security code to your email.
 
-Most bots fail here. AutoApply doesn't.
+Most bots fail here. ApplyLoop doesn't.
 
 - Step 42: Set up Gmail OAuth (gmail.readonly scope)
 - Step 43: Configure encrypted token storage

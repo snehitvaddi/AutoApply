@@ -1,13 +1,13 @@
 @echo off
-:: AutoApply — Windows Installer Launcher
+:: ApplyLoop — Windows Installer Launcher
 :: Double-click this file to start setup.
 :: This .bat wrapper avoids Smart App Control blocking .ps1 files.
 ::
 echo.
-echo   AutoApply — Windows Setup
+echo   ApplyLoop — Windows Setup
 echo   =========================
 echo.
-echo   This will install Python, Node.js, OpenClaw, and configure AutoApply.
+echo   This will install Python, Node.js, OpenClaw, and configure ApplyLoop.
 echo   Press any key to continue or close this window to cancel.
 echo.
 pause >nul

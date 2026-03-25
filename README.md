@@ -1,4 +1,4 @@
-# AutoApply
+# ApplyLoop
 
 Automated job applications for AI/ML engineers. Invite-only SaaS — supports Greenhouse, Ashby, Lever, SmartRecruiters, and Workday.
 
@@ -228,7 +228,7 @@ After onboarding, users can update everything from `/dashboard/settings`:
 ## Project Structure
 
 ```
-AutoApply/
+ApplyLoop/
 ├── packages/
 │   ├── web/                    # Next.js 14 (Vercel)
 │   │   ├── src/app/

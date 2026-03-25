@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AutoApply - Database Migration Runner
+ApplyLoop - Database Migration Runner
 Connects to Supabase PostgreSQL and runs migration SQL.
 Called by setup-mac.sh and setup-windows.ps1 after .env is configured.
 """
@@ -263,7 +263,7 @@ def main():
 
     print("")
     print("  ==============================================")
-    print("  AutoApply -- Database Migration")
+    print("  ApplyLoop -- Database Migration")
     print("  ==============================================")
 
     # Read Supabase config from .env

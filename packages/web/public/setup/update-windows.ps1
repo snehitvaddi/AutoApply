@@ -1,5 +1,5 @@
 # ============================================================================
-# AutoApply — Windows Auto-Update Script
+# ApplyLoop — Windows Auto-Update Script
 # Pulls latest code, updates dependencies, and restarts worker if running.
 # Runs daily via Task Scheduler (installed by setup-windows.ps1) or manually.
 # ============================================================================
@@ -54,7 +54,7 @@ if ($Mode -eq "--check") {
 if ($Mode -ne "--quiet") {
     Write-Host ""
     Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║        AutoApply - Checking for updates...       ║" -ForegroundColor Cyan
+    Write-Host "║        ApplyLoop - Checking for updates...       ║" -ForegroundColor Cyan
     Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
 
     if (Test-Path $LastUpdateFile) {
@@ -93,11 +93,11 @@ try {
 
 Write-Log ""
 Write-Log "==================================================="
-Write-Log "AutoApply Auto-Update - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-Log "ApplyLoop Auto-Update - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Log "==================================================="
 
 if (-not (Test-Path $InstallDir)) {
-    Log-Fail "AutoApply not found at $InstallDir. Run setup first."
+    Log-Fail "ApplyLoop not found at $InstallDir. Run setup first."
     exit 1
 }
 
@@ -324,9 +324,9 @@ Write-Log "Log saved to: $LogFile"
 if ($Mode -ne "--quiet") {
     Write-Host ""
     if ($UpdatesPulled) {
-        Write-Host "  [OK] AutoApply updated successfully!" -ForegroundColor Green
+        Write-Host "  [OK] ApplyLoop updated successfully!" -ForegroundColor Green
     } else {
-        Write-Host "  [OK] AutoApply is up to date." -ForegroundColor Green
+        Write-Host "  [OK] ApplyLoop is up to date." -ForegroundColor Green
     }
     Write-Host "  Next check: in $UpdateIntervalDays days or on next login" -ForegroundColor Cyan
     Write-Host ""

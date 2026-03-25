@@ -1,4 +1,4 @@
-# Video Script — AutoApply Demo (60-90 seconds)
+# Video Script — ApplyLoop Demo (60-90 seconds)
 
 ## Recording Setup
 - OBS or QuickTime for desktop
@@ -19,7 +19,7 @@
 ## Scene 2: Telegram (0:05 - 0:15)
 
 - Show phone with Telegram open
-- Paste a Greenhouse job URL into the AutoApply bot chat
+- Paste a Greenhouse job URL into the ApplyLoop bot chat
 - Bot responds: "Got it. Applying to [Company] - [Role]..."
 - Brief pause showing the message
 

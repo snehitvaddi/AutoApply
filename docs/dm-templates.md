@@ -1,9 +1,9 @@
-# DM Templates — AutoApply
+# DM Templates — ApplyLoop
 
 ## First DM (After they comment or like)
 
 ```
-Hey [Name] -- saw you engaged with my AutoApply post.
+Hey [Name] -- saw you engaged with my ApplyLoop post.
 
 Quick question: are you actively job hunting right now,
 or just interested in the tech?

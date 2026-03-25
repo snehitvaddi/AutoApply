@@ -1,4 +1,4 @@
--- AutoApply SaaS Database Schema
+-- ApplyLoop SaaS Database Schema
 -- Migration 002: Google OAuth + Admin Approval Flow
 -- Replaces invite code + magic link auth with Google OAuth sign-in
 -- and an admin approval gate for new users.

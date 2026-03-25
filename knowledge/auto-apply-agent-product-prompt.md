@@ -1,8 +1,8 @@
-# AutoApply — Self-Learning Autonomous Job Application Agent
+# ApplyLoop — Self-Learning Autonomous Job Application Agent
 
 ## Build Prompt for an Agentic Coding AI (Claude / Codex / GPT)
 
-You are building **AutoApply** — a fully autonomous, self-learning job application system. It starts with a user profile and within 100 applications across different platforms, it will have learned every ATS pattern, every form structure, every edge case, and can apply to any job for any user instantly.
+You are building **ApplyLoop** — a fully autonomous, self-learning job application system. It starts with a user profile and within 100 applications across different platforms, it will have learned every ATS pattern, every form structure, every edge case, and can apply to any job for any user instantly.
 
 **This is NOT an "LLM reads each form field" bot.** This is a self-improving codebase where:
 - **Code does the execution** (scraping, form filling, file upload) at machine speed
@@ -103,7 +103,7 @@ Config:         YAML
 ## FILE STRUCTURE
 
 ```
-autoapply/
+applyloop/
 ├── main.py                        # Entry point — starts orchestrator
 ├── config/
 │   ├── profile.yaml               # User profile (name, email, answers, etc.)
@@ -483,7 +483,7 @@ credentials:
 
 class AISupervisor:
     """
-    The brain of AutoApply. Watches the coded applicators run and intervenes
+    The brain of ApplyLoop. Watches the coded applicators run and intervenes
     when they can't handle something. Has two capabilities:
 
     1. ANSWER — When a form field isn't in field_map.json, ask AI what to fill

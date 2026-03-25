@@ -1,5 +1,5 @@
 [Unit]
-Description=AutoApply Worker %i
+Description=ApplyLoop Worker %i
 After=network.target
 
 [Service]

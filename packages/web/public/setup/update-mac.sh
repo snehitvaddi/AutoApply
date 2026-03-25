@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# AutoApply — macOS Auto-Update Script
+# ApplyLoop — macOS Auto-Update Script
 # Pulls latest code, updates dependencies, and restarts worker if running.
 # Runs daily via launchd (installed by setup-mac.sh) or manually.
 # ============================================================================
@@ -77,7 +77,7 @@ trap 'rm -f "$LOCK_FILE"' EXIT
 if [ "$QUIET_MODE" != "--quiet" ]; then
   echo ""
   echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}${BOLD}║        AutoApply — Checking for updates...       ║${NC}"
+  echo -e "${CYAN}${BOLD}║        ApplyLoop — Checking for updates...       ║${NC}"
   echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════╝${NC}"
 
   if [ -f "$LAST_UPDATE_FILE" ]; then
@@ -99,11 +99,11 @@ fi
 
 log ""
 log "═══════════════════════════════════════════════════"
-log "${BOLD}AutoApply Auto-Update — $(date '+%Y-%m-%d %H:%M:%S')${NC}"
+log "${BOLD}ApplyLoop Auto-Update — $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 log "═══════════════════════════════════════════════════"
 
 if [ ! -d "$INSTALL_DIR" ]; then
-  log_fail "AutoApply not found at $INSTALL_DIR. Run setup first."
+  log_fail "ApplyLoop not found at $INSTALL_DIR. Run setup first."
   exit 1
 fi
 
@@ -290,9 +290,9 @@ date +%s > "$LAST_UPDATE_FILE"
 if [ "$QUIET_MODE" != "--quiet" ]; then
   echo ""
   if [ "$UPDATES_PULLED" = true ]; then
-    echo -e "${GREEN}${BOLD}  ✓ AutoApply updated successfully!${NC}"
+    echo -e "${GREEN}${BOLD}  ✓ ApplyLoop updated successfully!${NC}"
   else
-    echo -e "${GREEN}${BOLD}  ✓ AutoApply is up to date.${NC}"
+    echo -e "${GREEN}${BOLD}  ✓ ApplyLoop is up to date.${NC}"
   fi
   echo -e "  ${CYAN}Next check: in $UPDATE_INTERVAL_DAYS days or on next login${NC}"
   echo ""

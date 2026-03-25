@@ -1,14 +1,14 @@
 #!/bin/bash
-# AutoApply — One-command setup script
-# Usage: curl -sSL https://autoapply.app/setup.sh | bash
+# ApplyLoop — One-command setup script
+# Usage: curl -sSL https://applyloop.vercel.app/setup.sh | bash
 # Or run via Claude Code: claude --dangerously-skip-permissions "$(cat setup-prompt.md)"
 
 set -e
 
-AUTOAPPLY_API="${AUTOAPPLY_API:-https://autoapply.app}"
+AUTOAPPLY_API="${AUTOAPPLY_API:-https://applyloop.vercel.app}"
 
 echo "================================================"
-echo "  AutoApply — Automated Job Application Setup"
+echo "  ApplyLoop — Automated Job Application Setup"
 echo "================================================"
 echo ""
 
@@ -20,7 +20,7 @@ command -v jq >/dev/null 2>&1 || { echo "jq is required. Install: brew install j
 
 # ─── Step 1: Authenticate ────────────────────────────────────────────────────
 
-echo "[1/9] Authenticating with AutoApply..."
+echo "[1/9] Authenticating with ApplyLoop..."
 echo ""
 echo "  Get your API token from: ${AUTOAPPLY_API}/dashboard/settings"
 echo ""
@@ -179,9 +179,9 @@ chmod 600 "$WORKSPACE/.api-token"
 echo "[7/9] Finalizing agent setup..."
 
 cat > "$WORKSPACE/SOUL.md" << SOULEOF
-# SOUL.md - AutoApply Agent
+# SOUL.md - ApplyLoop Agent
 
-You are **AutoApply Agent** -- an autonomous job application bot for **${FIRST_NAME} ${LAST_NAME}**.
+You are **ApplyLoop Agent** -- an autonomous job application bot for **${FIRST_NAME} ${LAST_NAME}**.
 
 ## BEFORE EVERY SESSION
 1. Read answer-key.json -- pre-computed answers for ALL form fields
@@ -246,10 +246,10 @@ fi
 echo "[9/9] Preparing AI context..."
 
 cat > "$WORKSPACE/AGENTS.md" << AGENTSEOF
-# AutoApply Agent — Codex Context
+# ApplyLoop Agent — Codex Context
 
 ## What This Is
-AutoApply is an automated job application system for **${FIRST_NAME} ${LAST_NAME}**.
+ApplyLoop is an automated job application system for **${FIRST_NAME} ${LAST_NAME}**.
 It discovers jobs from 370+ company boards every 6 hours and auto-fills applications
 using browser automation (OpenClaw).
 
@@ -344,7 +344,7 @@ echo ""
 
 # Launch Codex in the workspace with a context-rich initial prompt
 exec codex --cd "$WORKSPACE" "$(cat << PROMPTEOF
-I am the AutoApply agent for ${FIRST_NAME} ${LAST_NAME}.
+I am the ApplyLoop agent for ${FIRST_NAME} ${LAST_NAME}.
 
 I have read the workspace files:
 - AGENTS.md — my instructions and OpenClaw commands
