@@ -12,11 +12,17 @@ const PUBLIC_ROUTES = [
   "/api/auth/status",
 ];
 
+// Routes that should be accessible without authentication (exact match)
+const PUBLIC_EXACT_ROUTES = ["/"];
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public routes
-  if (PUBLIC_ROUTES.some((r) => pathname.startsWith(r))) {
+  if (
+    PUBLIC_ROUTES.some((r) => pathname.startsWith(r)) ||
+    PUBLIC_EXACT_ROUTES.includes(pathname)
+  ) {
     return NextResponse.next();
   }
 
