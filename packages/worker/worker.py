@@ -303,6 +303,83 @@ def restart_browser_gateway() -> bool:
     return False
 
 
+INSTALL_DIR = os.environ.get("INSTALL_DIR", os.path.expanduser("~/autoapply"))
+APP_URL = os.environ.get("NEXT_PUBLIC_APP_URL", "https://applyloop.vercel.app")
+_last_update_date: str = ""  # tracks which date we last checked for updates
+
+
+def check_and_pull_updates() -> bool:
+    """Check for updates on first run of each new day. Returns True if updated."""
+    global _last_update_date
+    today = date.today().isoformat()
+
+    if _last_update_date == today:
+        return False  # already checked today
+
+    _last_update_date = today
+    logger.info(f"Daily update check ({today})...")
+
+    # 1. Check the API for new version
+    try:
+        import httpx
+        resp = httpx.get(f"{APP_URL}/api/updates/check", timeout=10)
+        if resp.status_code != 200:
+            logger.warning(f"Update check failed: HTTP {resp.status_code}")
+            return False
+        info = resp.json()
+        logger.info(f"Remote version: {info.get('version')}, migration_needed: {info.get('migration_needed')}")
+        changes = info.get("changes", [])
+        if changes:
+            logger.info(f"Changes: {', '.join(changes)}")
+    except Exception as e:
+        logger.warning(f"Update check failed: {e}")
+        return False
+
+    # 2. Git pull latest code
+    try:
+        result = subprocess.run(
+            ["git", "pull", "--ff-only", "origin", "main"],
+            cwd=INSTALL_DIR, capture_output=True, text=True, timeout=30,
+        )
+        if "Already up to date" in result.stdout:
+            logger.info("Code is up to date")
+            return False
+
+        logger.info(f"Pulled updates: {result.stdout.strip()}")
+    except Exception as e:
+        logger.warning(f"Git pull failed: {e}")
+        return False
+
+    # 3. Update pip deps if requirements.txt changed
+    try:
+        req_file = os.path.join(INSTALL_DIR, "packages", "worker", "requirements.txt")
+        if os.path.exists(req_file):
+            subprocess.run(
+                ["pip", "install", "-q", "-r", req_file],
+                capture_output=True, timeout=60,
+            )
+            logger.info("Pip dependencies updated")
+    except Exception as e:
+        logger.warning(f"Pip update failed (non-fatal): {e}")
+
+    # 4. Run migrations if needed
+    if info.get("migration_needed"):
+        try:
+            migration_script = os.path.join(INSTALL_DIR, "packages", "web", "public", "setup", "run-migration.py")
+            if os.path.exists(migration_script):
+                subprocess.run(
+                    ["python3", migration_script],
+                    cwd=INSTALL_DIR, capture_output=True, timeout=30,
+                )
+                logger.info("Migrations applied")
+        except Exception as e:
+            logger.warning(f"Migration failed (non-fatal): {e}")
+
+    # 5. Reload learnings + answer-key (they may have changed)
+    logger.info("Update complete — new code/learnings active on next cycle")
+    return True
+
+
 def main():
     logger.info(f"Worker {WORKER_ID} starting...")
     global_template = load_global_template()
@@ -311,6 +388,9 @@ def main():
     consecutive_timeouts = 0
     idle_backoff = POLL_INTERVAL  # Exponential backoff when queue is empty
     MAX_IDLE_BACKOFF = 300  # Cap at 5 minutes
+
+    # Daily update check — runs on first execution of each new day
+    check_and_pull_updates()
 
     # Start the scout → filter → enqueue background loop.
     # Uses a system-level user_id; per-user scouts run when jobs are claimed.
@@ -322,6 +402,10 @@ def main():
     logger.info(f"Scout loop started (interval={SCOUT_INTERVAL_MINUTES}m)")
 
     while running:
+        # Daily update check — on first loop of each new day, pull latest code/learnings
+        if check_and_pull_updates():
+            global_template = load_global_template()  # reload after update
+
         # Reset hourly counter
         if time.time() - hour_start > 3600:
             hourly_count = 0
