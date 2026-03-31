@@ -110,6 +110,39 @@ export default function SetupCompletePage() {
           </div>
         </div>
 
+        {/* Telegram setup */}
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-8">
+          <h3 className="font-semibold text-purple-900 mb-2">Enable Telegram Notifications (Recommended)</h3>
+          <p className="text-sm text-purple-800 mb-3">
+            Get real-time notifications with screenshots every time an application is submitted.
+          </p>
+          <ol className="text-sm text-purple-800 space-y-1 list-decimal list-inside mb-3">
+            <li>
+              Open{" "}
+              <a
+                href="https://t.me/ApplyLoopBot"
+                target="_blank"
+                rel="noopener"
+                className="underline font-medium"
+              >
+                t.me/ApplyLoopBot
+              </a>{" "}
+              in Telegram
+            </li>
+            <li>Send <span className="font-mono">/start</span> to the bot</li>
+            <li>Copy the <strong>Chat ID</strong> it replies with</li>
+            <li>Paste it in <strong>Settings &rarr; Telegram</strong> on your dashboard</li>
+          </ol>
+          <a
+            href="https://t.me/ApplyLoopBot"
+            target="_blank"
+            rel="noopener"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700"
+          >
+            Open ApplyLoopBot in Telegram
+          </a>
+        </div>
+
         {/* Run instructions */}
         <div className="bg-gray-50 rounded-lg p-4 mb-8">
           <h3 className="font-semibold mb-3">How to run</h3>
@@ -147,7 +180,7 @@ export default function SetupCompletePage() {
                 Sign up here
               </a>
             </li>
-            <li>• <strong>Supabase credentials</strong> — provided by admin after approval</li>
+            <li>• <strong>Worker token</strong> — provided by admin after approval (a single token that connects everything)</li>
             <li>• The script installs everything else automatically (Python, Node.js, Playwright, etc.)</li>
           </ul>
         </div>

@@ -175,7 +175,7 @@ The script automatically:
 - Installs Playwright browsers (Chromium)
 - Clones the ApplyLoop repo
 - Installs all Python and Node.js dependencies
-- Prompts for your Supabase credentials
+- Prompts for your worker token (provided by admin after approval)
 - Verifies everything is working
 
 > **You will need:** OpenClaw Pro subscription ($20/mo) for browser automation. [Sign up here](https://openclaw.com/pricing).
@@ -287,6 +287,16 @@ applyloop-update
 ```
 
 This fetches the latest worker code, updates dependencies, and restarts the worker if it's running.
+
+### How Updates Work
+
+1. The admin pushes new code to the GitHub `main` branch
+2. Vercel automatically deploys the updated web app (dashboard, API routes)
+3. Your local worker checks for updates once per day (first run of each new day)
+4. The worker runs `git pull --ff-only` to fetch the latest worker code, ATS patterns, and dependencies
+5. If database migrations are needed, they run automatically
+
+You don't need to do anything — updates happen in the background. If you want to force an update immediately, run `applyloop-update` in your terminal.
 
 ---
 

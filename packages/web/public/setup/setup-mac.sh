@@ -5,6 +5,14 @@
 # ============================================================================
 set -e
 
+# Parse flags
+ADVANCED_MODE=false
+for arg in "$@"; do
+  case "$arg" in
+    --advanced) ADVANCED_MODE=true ;;
+  esac
+done
+
 BOLD='\033[1m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -254,153 +262,171 @@ fi
 # ── Step 8: LLM Provider + CLI Installation ────────────────────────────────
 log_step 8 "Configuring LLM provider + installing CLI..."
 
-echo ""
-echo -e "  ${CYAN}One LLM powers everything (chat + OpenClaw backend).${NC}"
-echo -e "  ${CYAN}Pick your provider and access type — that's it.${NC}"
-echo ""
-echo "    1. Claude (Anthropic)     2. GPT (OpenAI)"
-echo "    3. Gemini (Google)        4. Local/Ollama"
-echo "    5. None (skip for now)"
-echo ""
-read -p "  Provider [1-5] (default: 1): " LLM_CHOICE
-LLM_CHOICE="${LLM_CHOICE:-1}"
-
 LLM_PROVIDER="none"; LLM_MODEL=""; LLM_ACCESS_TYPE="none"; LLM_API_KEY_NAME=""; LLM_API_KEY=""
-# Track which CLI tool to use (claude or codex)
 LLM_CLI_TOOL=""
 
-case "$LLM_CHOICE" in
-  1)
-    LLM_PROVIDER="anthropic"
-    echo ""
-    echo "    1. Subscription (Pro \$20, Max \$100-200/mo)    2. API (pay-per-token)"
-    read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
-    if [[ "$AC" == "1" ]]; then
-      LLM_ACCESS_TYPE="subscription"
-      echo "    1. Pro (\$20)  2. Max 5x (\$100)  3. Max 20x (\$200)"
-      read -p "  Tier [1-3] (default: 1): " ST
-      case "$ST" in 2) LLM_MODEL="claude-max-5x" ;; 3) LLM_MODEL="claude-max-20x" ;; *) LLM_MODEL="claude-pro" ;; esac
+if [[ "$ADVANCED_MODE" == "true" ]]; then
+  # ── Advanced mode: full provider selection (--advanced flag) ──
+  echo ""
+  echo -e "  ${CYAN}One LLM powers everything (chat + OpenClaw backend).${NC}"
+  echo -e "  ${CYAN}Pick your provider and access type — that's it.${NC}"
+  echo ""
+  echo "    1. Claude (Anthropic)     2. GPT (OpenAI)"
+  echo "    3. Gemini (Google)        4. Local/Ollama"
+  echo "    5. None (skip for now)"
+  echo ""
+  read -p "  Provider [1-5] (default: 1): " LLM_CHOICE
+  LLM_CHOICE="${LLM_CHOICE:-1}"
 
-      # Install Claude Code CLI (subscription — browser OAuth)
-      log_info "Installing Claude Code CLI..."
-      npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
-      if check_command claude; then
-        log_ok "Claude Code CLI installed"
-        log_info "Launching Claude login (browser OAuth)..."
-        claude login 2>/dev/null || log_warn "Claude login skipped — run 'claude login' later"
-        LLM_CLI_TOOL="claude"
-      fi
-    else
-      LLM_ACCESS_TYPE="api"
-      echo "    1. Sonnet 4.6 (recommended)  2. Opus 4.6  3. Haiku 4.5"
-      read -p "  Model [1-3] (default: 1): " CM; CM="${CM:-1}"
-      case "$CM" in 2) LLM_MODEL="claude-opus-4-6" ;; 3) LLM_MODEL="claude-haiku-4-5-20251001" ;; *) LLM_MODEL="claude-sonnet-4-6" ;; esac
-      LLM_API_KEY_NAME="ANTHROPIC_API_KEY"
-      read -p "  API Key (console.anthropic.com): " LLM_API_KEY
+  case "$LLM_CHOICE" in
+    1)
+      LLM_PROVIDER="anthropic"
+      echo ""
+      echo "    1. Subscription (Pro \$20, Max \$100-200/mo)    2. API (pay-per-token)"
+      read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
+      if [[ "$AC" == "1" ]]; then
+        LLM_ACCESS_TYPE="subscription"
+        echo "    1. Pro (\$20)  2. Max 5x (\$100)  3. Max 20x (\$200)"
+        read -p "  Tier [1-3] (default: 1): " ST
+        case "$ST" in 2) LLM_MODEL="claude-max-5x" ;; 3) LLM_MODEL="claude-max-20x" ;; *) LLM_MODEL="claude-pro" ;; esac
 
-      # Install Claude Code CLI (API — set key as env var)
-      log_info "Installing Claude Code CLI..."
-      npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
-      if check_command claude; then
-        log_ok "Claude Code CLI installed"
-        if [[ -n "$LLM_API_KEY" ]]; then
-          export ANTHROPIC_API_KEY="$LLM_API_KEY"
-          log_ok "ANTHROPIC_API_KEY set for Claude Code CLI"
+        log_info "Installing Claude Code CLI..."
+        npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
+        if check_command claude; then
+          log_ok "Claude Code CLI installed"
+          log_info "Launching Claude login (browser OAuth)..."
+          claude login 2>/dev/null || log_warn "Claude login skipped — run 'claude login' later"
+          LLM_CLI_TOOL="claude"
         fi
-        LLM_CLI_TOOL="claude"
-      fi
-    fi
-    ;;
-  2)
-    LLM_PROVIDER="openai"
-    echo ""
-    echo "    1. Subscription (Plus \$20, Pro \$200/mo)    2. API (pay-per-token)"
-    read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
-    if [[ "$AC" == "1" ]]; then
-      LLM_ACCESS_TYPE="subscription"
-      echo "    1. Plus (\$20)  2. Pro (\$200)  3. Business (\$30/user)"
-      read -p "  Tier [1-3] (default: 1): " ST
-      case "$ST" in 2) LLM_MODEL="chatgpt-pro" ;; 3) LLM_MODEL="chatgpt-business" ;; *) LLM_MODEL="chatgpt-plus" ;; esac
-
-      # Install Codex CLI (subscription — browser OAuth)
-      log_info "Installing OpenAI Codex CLI..."
-      npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
-      if check_command codex; then
-        log_ok "Codex CLI installed"
-        log_info "Launching Codex login (browser OAuth)..."
-        codex login 2>/dev/null || log_warn "Codex login skipped — run 'codex login' later"
-        LLM_CLI_TOOL="codex"
-      fi
-    else
-      LLM_ACCESS_TYPE="api"
-      echo "    1. GPT-4.1 (recommended)  2. GPT-4.1-mini  3. GPT-4.1-nano  4. o3"
-      read -p "  Model [1-4] (default: 1): " OM; OM="${OM:-1}"
-      case "$OM" in 2) LLM_MODEL="gpt-4.1-mini" ;; 3) LLM_MODEL="gpt-4.1-nano" ;; 4) LLM_MODEL="o3" ;; *) LLM_MODEL="gpt-4.1" ;; esac
-      LLM_API_KEY_NAME="OPENAI_API_KEY"
-      read -p "  API Key (platform.openai.com): " LLM_API_KEY
-
-      # Install Codex CLI (API — pipe key)
-      log_info "Installing OpenAI Codex CLI..."
-      npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
-      if check_command codex; then
-        log_ok "Codex CLI installed"
-        if [[ -n "$LLM_API_KEY" ]]; then
-          echo "$LLM_API_KEY" | codex login --with-api-key 2>/dev/null || log_warn "Codex API key login failed — run 'codex login' later"
-          log_ok "Codex authenticated with API key"
-        fi
-        LLM_CLI_TOOL="codex"
-      fi
-    fi
-    ;;
-  3)
-    LLM_PROVIDER="google"
-    LLM_MODEL="gemini-2.5-pro"
-    LLM_API_KEY_NAME="GOOGLE_AI_API_KEY"
-    echo ""
-    read -p "  Google AI API Key (get one at aistudio.google.com): " LLM_API_KEY
-    if [[ -n "$LLM_API_KEY" ]]; then
-      log_ok "Google AI API key saved — $LLM_MODEL"
-    else
-      log_warn "No API key entered — you can add it to .env later"
-    fi
-    # No CLI tool for Gemini
-    ;;
-  4)
-    LLM_PROVIDER="ollama"
-    echo ""
-    if check_command ollama; then
-      log_ok "Ollama detected"
-    else
-      log_info "Installing Ollama..."
-      if check_command brew; then
-        brew install ollama
       else
-        curl -fsSL https://ollama.com/install.sh | sh
+        LLM_ACCESS_TYPE="api"
+        echo "    1. Sonnet 4.6 (recommended)  2. Opus 4.6  3. Haiku 4.5"
+        read -p "  Model [1-3] (default: 1): " CM; CM="${CM:-1}"
+        case "$CM" in 2) LLM_MODEL="claude-opus-4-6" ;; 3) LLM_MODEL="claude-haiku-4-5-20251001" ;; *) LLM_MODEL="claude-sonnet-4-6" ;; esac
+        LLM_API_KEY_NAME="ANTHROPIC_API_KEY"
+        read -p "  API Key (console.anthropic.com): " LLM_API_KEY
+
+        log_info "Installing Claude Code CLI..."
+        npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
+        if check_command claude; then
+          log_ok "Claude Code CLI installed"
+          if [[ -n "$LLM_API_KEY" ]]; then
+            export ANTHROPIC_API_KEY="$LLM_API_KEY"
+            log_ok "ANTHROPIC_API_KEY set for Claude Code CLI"
+          fi
+          LLM_CLI_TOOL="claude"
+        fi
       fi
-    fi
-    echo ""
-    echo "  Select local model:"
-    echo "    1. llama3.1:8b               — Good balance (8GB RAM)"
-    echo "    2. llama3.1:70b              — High quality (64GB RAM)"
-    echo "    3. mistral:7b                — Fast, lightweight"
-    echo "    4. Custom model"
-    echo ""
-    read -p "  Enter choice [1-4] (default: 1): " LOCAL_MODEL
-    LOCAL_MODEL="${LOCAL_MODEL:-1}"
-    case "$LOCAL_MODEL" in
-      2) LLM_MODEL="llama3.1:70b" ;;
-      3) LLM_MODEL="mistral:7b" ;;
-      4) read -p "  Enter model name: " LLM_MODEL ;;
-      *) LLM_MODEL="llama3.1:8b" ;;
-    esac
-    log_info "Pulling model $LLM_MODEL (this may take a while)..."
-    ollama pull "$LLM_MODEL" 2>/dev/null || log_warn "Model pull failed — run 'ollama pull $LLM_MODEL' manually"
-    # No CLI tool for local/Ollama
-    ;;
-  5)
-    LLM_PROVIDER="none"; LLM_MODEL=""; log_ok "No LLM — configure later via settings or openclaw config"
-    ;;
-esac
+      ;;
+    2)
+      LLM_PROVIDER="openai"
+      echo ""
+      echo "    1. Subscription (Plus \$20, Pro \$200/mo)    2. API (pay-per-token)"
+      read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
+      if [[ "$AC" == "1" ]]; then
+        LLM_ACCESS_TYPE="subscription"
+        echo "    1. Plus (\$20)  2. Pro (\$200)  3. Business (\$30/user)"
+        read -p "  Tier [1-3] (default: 1): " ST
+        case "$ST" in 2) LLM_MODEL="chatgpt-pro" ;; 3) LLM_MODEL="chatgpt-business" ;; *) LLM_MODEL="chatgpt-plus" ;; esac
+
+        log_info "Installing OpenAI Codex CLI..."
+        npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
+        if check_command codex; then
+          log_ok "Codex CLI installed"
+          log_info "Launching Codex login (browser OAuth)..."
+          codex login 2>/dev/null || log_warn "Codex login skipped — run 'codex login' later"
+          LLM_CLI_TOOL="codex"
+        fi
+      else
+        LLM_ACCESS_TYPE="api"
+        echo "    1. GPT-4.1 (recommended)  2. GPT-4.1-mini  3. GPT-4.1-nano  4. o3"
+        read -p "  Model [1-4] (default: 1): " OM; OM="${OM:-1}"
+        case "$OM" in 2) LLM_MODEL="gpt-4.1-mini" ;; 3) LLM_MODEL="gpt-4.1-nano" ;; 4) LLM_MODEL="o3" ;; *) LLM_MODEL="gpt-4.1" ;; esac
+        LLM_API_KEY_NAME="OPENAI_API_KEY"
+        read -p "  API Key (platform.openai.com): " LLM_API_KEY
+
+        log_info "Installing OpenAI Codex CLI..."
+        npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
+        if check_command codex; then
+          log_ok "Codex CLI installed"
+          if [[ -n "$LLM_API_KEY" ]]; then
+            echo "$LLM_API_KEY" | codex login --with-api-key 2>/dev/null || log_warn "Codex API key login failed — run 'codex login' later"
+            log_ok "Codex authenticated with API key"
+          fi
+          LLM_CLI_TOOL="codex"
+        fi
+      fi
+      ;;
+    3)
+      LLM_PROVIDER="google"
+      LLM_MODEL="gemini-2.5-pro"
+      LLM_API_KEY_NAME="GOOGLE_AI_API_KEY"
+      echo ""
+      read -p "  Google AI API Key (get one at aistudio.google.com): " LLM_API_KEY
+      if [[ -n "$LLM_API_KEY" ]]; then
+        log_ok "Google AI API key saved — $LLM_MODEL"
+      else
+        log_warn "No API key entered — you can add it to .env later"
+      fi
+      ;;
+    4)
+      LLM_PROVIDER="ollama"
+      echo ""
+      if check_command ollama; then
+        log_ok "Ollama detected"
+      else
+        log_info "Installing Ollama..."
+        if check_command brew; then
+          brew install ollama
+        else
+          curl -fsSL https://ollama.com/install.sh | sh
+        fi
+      fi
+      echo ""
+      echo "  Select local model:"
+      echo "    1. llama3.1:8b               — Good balance (8GB RAM)"
+      echo "    2. llama3.1:70b              — High quality (64GB RAM)"
+      echo "    3. mistral:7b                — Fast, lightweight"
+      echo "    4. Custom model"
+      echo ""
+      read -p "  Enter choice [1-4] (default: 1): " LOCAL_MODEL
+      LOCAL_MODEL="${LOCAL_MODEL:-1}"
+      case "$LOCAL_MODEL" in
+        2) LLM_MODEL="llama3.1:70b" ;;
+        3) LLM_MODEL="mistral:7b" ;;
+        4) read -p "  Enter model name: " LLM_MODEL ;;
+        *) LLM_MODEL="llama3.1:8b" ;;
+      esac
+      log_info "Pulling model $LLM_MODEL (this may take a while)..."
+      ollama pull "$LLM_MODEL" 2>/dev/null || log_warn "Model pull failed — run 'ollama pull $LLM_MODEL' manually"
+      ;;
+    5)
+      LLM_PROVIDER="none"; LLM_MODEL=""; log_ok "No LLM — configure later via settings or openclaw config"
+      ;;
+  esac
+else
+  # ── Default mode: install Codex CLI (simplest path) ──
+  echo ""
+  echo -e "  ${CYAN}Installing OpenAI Codex as your AI engine (default).${NC}"
+  echo -e "  ${CYAN}For advanced LLM options, re-run with: ./setup-mac.sh --advanced${NC}"
+  echo ""
+
+  LLM_PROVIDER="openai"
+  LLM_MODEL="codex"
+  LLM_ACCESS_TYPE="subscription"
+
+  log_info "Installing OpenAI Codex CLI..."
+  npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
+
+  if check_command codex; then
+    log_ok "Codex CLI installed"
+    log_info "Launching Codex login (browser will open)..."
+    codex auth 2>/dev/null || log_warn "Codex auth skipped — run 'codex auth' later"
+    LLM_CLI_TOOL="codex"
+  else
+    log_warn "Codex CLI install failed — install manually: npm install -g @openai/codex"
+  fi
+fi
 
 [[ "$LLM_PROVIDER" != "none" ]] && log_ok "$LLM_PROVIDER / $LLM_MODEL ($LLM_ACCESS_TYPE) — used for chat + OpenClaw"
 
@@ -422,75 +448,49 @@ fi
 [[ "$LLM_PROVIDER" == "google" ]] && "$PYTHON_CMD" -m pip install --quiet google-generativeai 2>/dev/null
 
 # ── Environment configuration ──────────────────────────────────────────────
-# If an LLM CLI is available, skip interactive .env prompts (let the CLI handle it).
-# If no CLI, keep current interactive prompts.
+# Worker token fetches Supabase credentials + profile from the API.
+# Falls back to manual prompts if token fetch fails.
 
 ENV_FILE="$INSTALL_DIR/.env"
+APP_URL="https://applyloop.vercel.app"
+SUPABASE_URL=""
+SUPABASE_ANON=""
 
 if [[ -f "$ENV_FILE" ]]; then
   log_ok ".env file already exists"
   log_info "To reconfigure, edit: $ENV_FILE"
-elif [[ -n "$LLM_CLI_TOOL" ]]; then
-  # LLM CLI is available — create a minimal .env with what we know,
-  # let the CLI handle the rest (Supabase credentials, etc.)
-  log_info "LLM CLI available ($LLM_CLI_TOOL) — creating minimal .env (CLI will help complete it)"
-
-  # Generate encryption key
-  ENCRYPTION_KEY=$(openssl rand -hex 32)
-
-  cat > "$ENV_FILE" <<ENVEOF
-# ApplyLoop Environment Configuration
-# Generated by setup-mac.sh on $(date)
-# NOTE: Supabase credentials and other settings will be configured via $LLM_CLI_TOOL
-
-# Supabase (to be configured)
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-SUPABASE_URL=
-SUPABASE_SERVICE_KEY=
-
-# App
-NEXT_PUBLIC_APP_URL=https://applyloop.vercel.app
-ENCRYPTION_KEY=$ENCRYPTION_KEY
-
-# Worker
-WORKER_ID=worker-1
-POLL_INTERVAL=10
-APPLY_COOLDOWN=30
-RESUME_DIR=/tmp/autoapply/resumes
-SCREENSHOT_DIR=/tmp/autoapply/screenshots
-
-# Telegram (optional)
-TELEGRAM_BOT_TOKEN=
-
-# Stripe (optional — set these if enabling billing)
-# STRIPE_SECRET_KEY=
-# STRIPE_WEBHOOK_SECRET=
-# STRIPE_STARTER_PRICE_ID=
-# STRIPE_PRO_PRICE_ID=
-
-# Redis rate limiting (optional)
-# UPSTASH_REDIS_REST_URL=
-# UPSTASH_REDIS_REST_TOKEN=
-
-# Google OAuth for Gmail (optional — Pro tier)
-# GOOGLE_CLIENT_ID=
-# GOOGLE_CLIENT_SECRET=
-ENVEOF
-
-  log_ok ".env file created at $ENV_FILE (Supabase creds pending — CLI will help)"
 else
-  # No LLM CLI — use interactive prompts (original behavior)
   echo ""
-  echo -e "${BOLD}Enter your configuration (press Enter to skip optional fields):${NC}"
-  echo ""
+  read -p "  Your worker token (from admin): " WORKER_TOKEN
 
-  read -p "  Supabase URL (https://xxx.supabase.co): " SUPABASE_URL
-  read -p "  Supabase Anon Key: " SUPABASE_ANON
-  read -p "  Supabase Service Role Key: " SUPABASE_SERVICE
-  read -p "  App URL [https://applyloop.vercel.app]: " APP_URL
-  APP_URL="${APP_URL:-https://applyloop.vercel.app}"
+  # Fetch config from API using worker token
+  log_info "Fetching your profile from ApplyLoop..."
+  CONFIG_RESPONSE=$(curl -s -H "X-Worker-Token: $WORKER_TOKEN" "$APP_URL/api/settings/cli-config")
+
+  if echo "$CONFIG_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('data')" 2>/dev/null; then
+    SUPABASE_URL=$(echo "$CONFIG_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['supabase_url'])")
+    SUPABASE_ANON=$(echo "$CONFIG_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['supabase_anon_key'])")
+
+    # Write profile.json for worker LLM context
+    echo "$CONFIG_RESPONSE" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)['data']
+profile = {
+  'user': d.get('profile', {}),
+  'preferences': d.get('preferences', {}),
+  'resumes': d.get('resumes', []),
+  'work_experience': d.get('profile', {}).get('work_experience', []),
+  'education': d.get('profile', {}).get('education', []),
+}
+json.dump(profile, open('$INSTALL_DIR/profile.json', 'w'), indent=2)
+"
+    log_ok "Profile synced to $INSTALL_DIR/profile.json"
+  else
+    log_warn "Could not fetch profile — you can set Supabase credentials manually"
+    read -p "  Supabase URL: " SUPABASE_URL
+    read -p "  Supabase Anon Key: " SUPABASE_ANON
+  fi
+
   read -p "  Telegram Bot Token (optional): " TELEGRAM_TOKEN
   read -p "  Worker ID [worker-1]: " WORKER_ID
   WORKER_ID="${WORKER_ID:-worker-1}"
@@ -502,12 +502,15 @@ else
 # ApplyLoop Environment Configuration
 # Generated by setup-mac.sh on $(date)
 
+# Worker Token
+WORKER_TOKEN=$WORKER_TOKEN
+
 # Supabase
 NEXT_PUBLIC_SUPABASE_URL=$SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY=$SUPABASE_ANON
-SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE
+SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_URL=$SUPABASE_URL
-SUPABASE_SERVICE_KEY=$SUPABASE_SERVICE
+SUPABASE_SERVICE_KEY=
 
 # App
 NEXT_PUBLIC_APP_URL=$APP_URL

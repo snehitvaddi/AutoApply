@@ -7,6 +7,9 @@
 
 $ErrorActionPreference = "Stop"
 
+# Parse flags
+$AdvancedMode = $args -contains "--advanced"
+
 $RequiredPython = "3.11"
 $RequiredNode = "18"
 $InstallDir = "$env:USERPROFILE\autoapply"
@@ -315,125 +318,141 @@ $ErrorActionPreference = "Stop"
 # ── Step 8: LLM Provider + AI CLI Installation ─────────────────────────────
 Write-Step 8 "Configuring LLM provider and AI CLI..."
 
-Write-Host ""
-Write-Host "  One LLM powers everything (chat + OpenClaw backend)." -ForegroundColor Cyan
-Write-Host "  Pick your provider and access type — that's it." -ForegroundColor Cyan
-Write-Host ""
-Write-Host "    1. Claude (Anthropic)     2. GPT (OpenAI)"
-Write-Host "    3. Gemini (Google)        4. Local/Ollama"
-Write-Host "    5. None (skip for now)"
-Write-Host ""
-
-$LlmChoice = Read-Host "  Provider [1-5] (default: 1)"
-if (-not $LlmChoice) { $LlmChoice = "1" }
-
 $LlmProvider = "none"; $LlmModel = ""; $LlmAccessType = "none"; $LlmApiKeyName = ""; $LlmApiKey = ""
-$LlmCliCmd = $null  # Track which CLI tool was installed
+$LlmCliCmd = $null
 
-switch ($LlmChoice) {
-    "1" {
-        $LlmProvider = "anthropic"
-        Write-Host ""; Write-Host "    1. Subscription (Pro `$20, Max `$100-200/mo)    2. API (pay-per-token)"
-        $ac = Read-Host "  Access type [1-2] (default: 2)"; if (-not $ac) { $ac = "2" }
-        if ($ac -eq "1") {
-            $LlmAccessType = "subscription"
-            Write-Host "    1. Pro (`$20)  2. Max 5x (`$100)  3. Max 20x (`$200)"
-            $st = Read-Host "  Tier [1-3] (default: 1)"
-            switch ($st) { "2" { $LlmModel = "claude-max-5x" } "3" { $LlmModel = "claude-max-20x" } default { $LlmModel = "claude-pro" } }
-        } else {
-            $LlmAccessType = "api"
-            Write-Host "    1. Sonnet 4.6 (recommended)  2. Opus 4.6  3. Haiku 4.5"
-            $cm = Read-Host "  Model [1-3] (default: 1)"
-            switch ($cm) { "2" { $LlmModel = "claude-opus-4-6" } "3" { $LlmModel = "claude-haiku-4-5-20251001" } default { $LlmModel = "claude-sonnet-4-6" } }
-            $LlmApiKeyName = "ANTHROPIC_API_KEY"; $LlmApiKey = Read-Host "  API Key (console.anthropic.com)"
-        }
+if ($AdvancedMode) {
+    # ── Advanced mode: full provider selection (--advanced flag) ──
+    Write-Host ""
+    Write-Host "  One LLM powers everything (chat + OpenClaw backend)." -ForegroundColor Cyan
+    Write-Host "  Pick your provider and access type — that's it." -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "    1. Claude (Anthropic)     2. GPT (OpenAI)"
+    Write-Host "    3. Gemini (Google)        4. Local/Ollama"
+    Write-Host "    5. None (skip for now)"
+    Write-Host ""
 
-        # Install Claude Code CLI
-        Write-Info "Installing Claude Code CLI..."
-        $ErrorActionPreference = "Continue"
-        npm install -g @anthropic-ai/claude-code 2>&1 | Where-Object { $_ -notmatch "npm warn" } | Write-Host
-        $ErrorActionPreference = "Stop"
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $LlmChoice = Read-Host "  Provider [1-5] (default: 1)"
+    if (-not $LlmChoice) { $LlmChoice = "1" }
 
-        if (Test-CommandExists "claude") {
-            Write-OK "Claude Code CLI installed"
-            $LlmCliCmd = "claude"
-
-            # Authenticate
-            if ($LlmAccessType -eq "subscription") {
-                Write-Info "Launching Claude login (browser will open)..."
-                $ErrorActionPreference = "Continue"
-                claude login 2>&1 | Write-Host
-                $ErrorActionPreference = "Stop"
+    switch ($LlmChoice) {
+        "1" {
+            $LlmProvider = "anthropic"
+            Write-Host ""; Write-Host "    1. Subscription (Pro `$20, Max `$100-200/mo)    2. API (pay-per-token)"
+            $ac = Read-Host "  Access type [1-2] (default: 2)"; if (-not $ac) { $ac = "2" }
+            if ($ac -eq "1") {
+                $LlmAccessType = "subscription"
+                Write-Host "    1. Pro (`$20)  2. Max 5x (`$100)  3. Max 20x (`$200)"
+                $st = Read-Host "  Tier [1-3] (default: 1)"
+                switch ($st) { "2" { $LlmModel = "claude-max-5x" } "3" { $LlmModel = "claude-max-20x" } default { $LlmModel = "claude-pro" } }
             } else {
-                # API key auth — set env var for claude to use
-                if ($LlmApiKey) {
-                    Write-Info "Configuring Claude Code with API key..."
-                    $env:ANTHROPIC_API_KEY = $LlmApiKey
-                    Write-OK "ANTHROPIC_API_KEY set for Claude Code CLI"
-                } else {
-                    Write-Warn "No API key provided — set ANTHROPIC_API_KEY env var before using claude"
-                }
+                $LlmAccessType = "api"
+                Write-Host "    1. Sonnet 4.6 (recommended)  2. Opus 4.6  3. Haiku 4.5"
+                $cm = Read-Host "  Model [1-3] (default: 1)"
+                switch ($cm) { "2" { $LlmModel = "claude-opus-4-6" } "3" { $LlmModel = "claude-haiku-4-5-20251001" } default { $LlmModel = "claude-sonnet-4-6" } }
+                $LlmApiKeyName = "ANTHROPIC_API_KEY"; $LlmApiKey = Read-Host "  API Key (console.anthropic.com)"
             }
-        } else {
-            Write-Warn "Claude Code CLI install failed — you can install manually: npm install -g @anthropic-ai/claude-code"
-        }
-    }
-    "2" {
-        $LlmProvider = "openai"
-        Write-Host ""; Write-Host "    1. Subscription (Plus `$20, Pro `$200/mo)    2. API (pay-per-token)"
-        $ac = Read-Host "  Access type [1-2] (default: 2)"; if (-not $ac) { $ac = "2" }
-        if ($ac -eq "1") {
-            $LlmAccessType = "subscription"
-            Write-Host "    1. Plus (`$20)  2. Pro (`$200)  3. Business (`$30/user)"
-            $st = Read-Host "  Tier [1-3] (default: 1)"
-            switch ($st) { "2" { $LlmModel = "chatgpt-pro" } "3" { $LlmModel = "chatgpt-business" } default { $LlmModel = "chatgpt-plus" } }
-        } else {
-            $LlmAccessType = "api"
-            Write-Host "    1. GPT-4.1 (recommended)  2. GPT-4.1-mini  3. GPT-4.1-nano  4. o3"
-            $om = Read-Host "  Model [1-4] (default: 1)"
-            switch ($om) { "2" { $LlmModel = "gpt-4.1-mini" } "3" { $LlmModel = "gpt-4.1-nano" } "4" { $LlmModel = "o3" } default { $LlmModel = "gpt-4.1" } }
-            $LlmApiKeyName = "OPENAI_API_KEY"; $LlmApiKey = Read-Host "  API Key (platform.openai.com)"
-        }
 
-        # Install Codex CLI
-        Write-Info "Installing OpenAI Codex CLI..."
-        $ErrorActionPreference = "Continue"
-        npm install -g @openai/codex 2>&1 | Where-Object { $_ -notmatch "npm warn" } | Write-Host
-        $ErrorActionPreference = "Stop"
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+            Write-Info "Installing Claude Code CLI..."
+            $ErrorActionPreference = "Continue"
+            npm install -g @anthropic-ai/claude-code 2>&1 | Where-Object { $_ -notmatch "npm warn" } | Write-Host
+            $ErrorActionPreference = "Stop"
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
-        if (Test-CommandExists "codex") {
-            Write-OK "Codex CLI installed"
-            $LlmCliCmd = "codex"
-
-            # Authenticate
-            if ($LlmAccessType -eq "subscription") {
-                Write-Info "Launching Codex login (browser will open)..."
-                $ErrorActionPreference = "Continue"
-                codex login 2>&1 | Write-Host
-                $ErrorActionPreference = "Stop"
-            } else {
-                # API key auth
-                if ($LlmApiKey) {
-                    Write-Info "Configuring Codex with API key..."
+            if (Test-CommandExists "claude") {
+                Write-OK "Claude Code CLI installed"
+                $LlmCliCmd = "claude"
+                if ($LlmAccessType -eq "subscription") {
+                    Write-Info "Launching Claude login (browser will open)..."
                     $ErrorActionPreference = "Continue"
-                    echo $LlmApiKey | codex login --with-api-key 2>&1 | Write-Host
+                    claude login 2>&1 | Write-Host
                     $ErrorActionPreference = "Stop"
-                    Write-OK "Codex authenticated with API key"
                 } else {
-                    Write-Warn "No API key provided — set OPENAI_API_KEY env var before using codex"
+                    if ($LlmApiKey) {
+                        $env:ANTHROPIC_API_KEY = $LlmApiKey
+                        Write-OK "ANTHROPIC_API_KEY set for Claude Code CLI"
+                    }
                 }
+            } else {
+                Write-Warn "Claude Code CLI install failed — install manually: npm install -g @anthropic-ai/claude-code"
             }
-        } else {
-            Write-Warn "Codex CLI install failed — you can install manually: npm install -g @openai/codex"
         }
+        "2" {
+            $LlmProvider = "openai"
+            Write-Host ""; Write-Host "    1. Subscription (Plus `$20, Pro `$200/mo)    2. API (pay-per-token)"
+            $ac = Read-Host "  Access type [1-2] (default: 2)"; if (-not $ac) { $ac = "2" }
+            if ($ac -eq "1") {
+                $LlmAccessType = "subscription"
+                Write-Host "    1. Plus (`$20)  2. Pro (`$200)  3. Business (`$30/user)"
+                $st = Read-Host "  Tier [1-3] (default: 1)"
+                switch ($st) { "2" { $LlmModel = "chatgpt-pro" } "3" { $LlmModel = "chatgpt-business" } default { $LlmModel = "chatgpt-plus" } }
+            } else {
+                $LlmAccessType = "api"
+                Write-Host "    1. GPT-4.1 (recommended)  2. GPT-4.1-mini  3. GPT-4.1-nano  4. o3"
+                $om = Read-Host "  Model [1-4] (default: 1)"
+                switch ($om) { "2" { $LlmModel = "gpt-4.1-mini" } "3" { $LlmModel = "gpt-4.1-nano" } "4" { $LlmModel = "o3" } default { $LlmModel = "gpt-4.1" } }
+                $LlmApiKeyName = "OPENAI_API_KEY"; $LlmApiKey = Read-Host "  API Key (platform.openai.com)"
+            }
+
+            Write-Info "Installing OpenAI Codex CLI..."
+            $ErrorActionPreference = "Continue"
+            npm install -g @openai/codex 2>&1 | Where-Object { $_ -notmatch "npm warn" } | Write-Host
+            $ErrorActionPreference = "Stop"
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+            if (Test-CommandExists "codex") {
+                Write-OK "Codex CLI installed"
+                $LlmCliCmd = "codex"
+                if ($LlmAccessType -eq "subscription") {
+                    Write-Info "Launching Codex login (browser will open)..."
+                    $ErrorActionPreference = "Continue"
+                    codex login 2>&1 | Write-Host
+                    $ErrorActionPreference = "Stop"
+                } else {
+                    if ($LlmApiKey) {
+                        $ErrorActionPreference = "Continue"
+                        echo $LlmApiKey | codex login --with-api-key 2>&1 | Write-Host
+                        $ErrorActionPreference = "Stop"
+                        Write-OK "Codex authenticated with API key"
+                    }
+                }
+            } else {
+                Write-Warn "Codex CLI install failed — install manually: npm install -g @openai/codex"
+            }
+        }
+        "3" { $LlmProvider = "google"; $LlmAccessType = "api"; $LlmModel = "gemini-2.5-pro"; $LlmApiKeyName = "GOOGLE_AI_API_KEY"; $LlmApiKey = Read-Host "  Google AI Key"
+              Write-Info "No Gemini CLI available yet — setup will continue without AI assistant" }
+        "4" { $LlmProvider = "ollama"; $LlmAccessType = "local"; $LlmModel = "llama3.1:8b"
+              Write-Info "Local/Ollama selected — no CLI to install" }
+        default { Write-OK "No LLM - configure later via settings or openclaw config" }
     }
-    "3" { $LlmProvider = "google"; $LlmAccessType = "api"; $LlmModel = "gemini-2.5-pro"; $LlmApiKeyName = "GOOGLE_AI_API_KEY"; $LlmApiKey = Read-Host "  Google AI Key"
-          Write-Info "No Gemini CLI available yet — setup will continue without AI assistant" }
-    "4" { $LlmProvider = "ollama"; $LlmAccessType = "local"; $LlmModel = "llama3.1:8b"
-          Write-Info "Local/Ollama selected — no CLI to install" }
-    default { Write-OK "No LLM - configure later via settings or openclaw config" }
+} else {
+    # ── Default mode: install Codex CLI (simplest path) ──
+    Write-Host ""
+    Write-Host "  Installing OpenAI Codex as your AI engine (default)." -ForegroundColor Cyan
+    Write-Host "  For advanced LLM options, re-run with: .\setup-windows.ps1 --advanced" -ForegroundColor Cyan
+    Write-Host ""
+
+    $LlmProvider = "openai"
+    $LlmModel = "codex"
+    $LlmAccessType = "subscription"
+
+    Write-Info "Installing OpenAI Codex CLI..."
+    $ErrorActionPreference = "Continue"
+    npm install -g @openai/codex 2>&1 | Where-Object { $_ -notmatch "npm warn" } | Write-Host
+    $ErrorActionPreference = "Stop"
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+    if (Test-CommandExists "codex") {
+        Write-OK "Codex CLI installed"
+        Write-Info "Launching Codex auth (browser will open)..."
+        $ErrorActionPreference = "Continue"
+        codex auth 2>&1 | Write-Host
+        $ErrorActionPreference = "Stop"
+        $LlmCliCmd = "codex"
+    } else {
+        Write-Warn "Codex CLI install failed — install manually: npm install -g @openai/codex"
+    }
 }
 
 if ($LlmProvider -ne "none") { Write-OK "$LlmProvider / $LlmModel ($LlmAccessType) - used for chat + OpenClaw" }
@@ -458,38 +477,78 @@ if ($LlmProvider -eq "openai") { & $PythonCmd -m pip install --quiet openai 2>&1
 if ($LlmProvider -eq "google") { & $PythonCmd -m pip install --quiet google-generativeai 2>&1 | Out-Null }
 $ErrorActionPreference = "Stop"
 
-# Create .env if it doesn't exist (minimal — no interactive prompts, LLM CLI will handle the rest)
+# Create .env if it doesn't exist — use worker token to fetch credentials from API
 $EnvFile = Join-Path $InstallDir ".env"
+$AppUrl = "https://applyloop.vercel.app"
+$SupabaseUrl = ""
+$SupabaseAnon = ""
 
 if (-not (Test-Path $EnvFile)) {
+    Write-Host ""
+    $WorkerToken = Read-Host "  Your worker token (from admin)"
+
+    # Fetch config from API using worker token
+    Write-Info "Fetching your profile from ApplyLoop..."
+    try {
+        $ConfigResponse = Invoke-RestMethod -Uri "$AppUrl/api/settings/cli-config" -Headers @{ "X-Worker-Token" = $WorkerToken } -ErrorAction Stop
+
+        if ($ConfigResponse.data) {
+            $SupabaseUrl = $ConfigResponse.data.supabase_url
+            $SupabaseAnon = $ConfigResponse.data.supabase_anon_key
+
+            # Write profile.json for worker LLM context
+            $profile = @{
+                user = $ConfigResponse.data.profile
+                preferences = $ConfigResponse.data.preferences
+                resumes = $ConfigResponse.data.resumes
+                work_experience = if ($ConfigResponse.data.profile.work_experience) { $ConfigResponse.data.profile.work_experience } else { @() }
+                education = if ($ConfigResponse.data.profile.education) { $ConfigResponse.data.profile.education } else { @() }
+            }
+            $profile | ConvertTo-Json -Depth 10 | Out-File -FilePath (Join-Path $InstallDir "profile.json") -Encoding UTF8
+            Write-OK "Profile synced to $InstallDir\profile.json"
+        } else {
+            throw "No data in response"
+        }
+    } catch {
+        Write-Warn "Could not fetch profile — you can set Supabase credentials manually"
+        $SupabaseUrl = Read-Host "  Supabase URL"
+        $SupabaseAnon = Read-Host "  Supabase Anon Key"
+    }
+
+    $TelegramToken = Read-Host "  Telegram Bot Token (optional)"
+    $WorkerId = Read-Host "  Worker ID [worker-1]"
+    if (-not $WorkerId) { $WorkerId = "worker-1" }
+
     # Generate encryption key
     $EncryptionKey = -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) })
 
     $envContent = @"
 # ApplyLoop Environment Configuration
 # Generated by setup-windows.ps1 on $(Get-Date)
-# NOTE: Remaining values will be configured by the AI setup assistant.
 
-# Supabase (required — fill in via AI assistant or manually)
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
+# Worker Token
+WORKER_TOKEN=$WorkerToken
+
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=$SupabaseUrl
+NEXT_PUBLIC_SUPABASE_ANON_KEY=$SupabaseAnon
 SUPABASE_SERVICE_ROLE_KEY=
-SUPABASE_URL=
+SUPABASE_URL=$SupabaseUrl
 SUPABASE_SERVICE_KEY=
 
 # App
-NEXT_PUBLIC_APP_URL=https://applyloop.vercel.app
+NEXT_PUBLIC_APP_URL=$AppUrl
 ENCRYPTION_KEY=$EncryptionKey
 
 # Worker
-WORKER_ID=worker-1
+WORKER_ID=$WorkerId
 POLL_INTERVAL=10
 APPLY_COOLDOWN=30
 RESUME_DIR=$env:TEMP\autoapply\resumes
 SCREENSHOT_DIR=$env:TEMP\autoapply\screenshots
 
 # Telegram (optional)
-TELEGRAM_BOT_TOKEN=
+TELEGRAM_BOT_TOKEN=$TelegramToken
 
 # Stripe (optional)
 # STRIPE_SECRET_KEY=
@@ -507,7 +566,7 @@ TELEGRAM_BOT_TOKEN=
 "@
 
     $envContent | Out-File -FilePath $EnvFile -Encoding UTF8
-    Write-OK ".env file created at $EnvFile (credentials to be filled by AI assistant)"
+    Write-OK ".env file created at $EnvFile"
 } else {
     Write-OK ".env file already exists"
 }
@@ -1030,32 +1089,36 @@ if ($LlmCliCmd -eq "claude") {
     Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor White
     Write-Host ""
 
-    # Interactive .env configuration fallback (same as old step 8)
+    # Interactive fallback — offer worker token or manual Supabase entry
     if (-not $hasSbUrl) {
         Write-Host ""
-        Write-Host "Would you like to enter Supabase credentials now?" -ForegroundColor White
-        $enterCreds = Read-Host "  [y/N]"
-        if ($enterCreds -eq "y" -or $enterCreds -eq "Y") {
-            $SupabaseUrl = Read-Host "  Supabase URL (https://xxx.supabase.co)"
-            $SupabaseAnon = Read-Host "  Supabase Anon Key"
-            $SupabaseService = Read-Host "  Supabase Service Role Key"
-            $TelegramToken = Read-Host "  Telegram Bot Token (optional)"
-
-            if ($SupabaseUrl) {
-                (Get-Content $EnvFile) -replace '^NEXT_PUBLIC_SUPABASE_URL=.*', "NEXT_PUBLIC_SUPABASE_URL=$SupabaseUrl" `
-                                       -replace '^SUPABASE_URL=.*', "SUPABASE_URL=$SupabaseUrl" | Set-Content $EnvFile
+        Write-Host "Would you like to enter your worker token now?" -ForegroundColor White
+        $enterToken = Read-Host "  [y/N]"
+        if ($enterToken -eq "y" -or $enterToken -eq "Y") {
+            $FallbackToken = Read-Host "  Worker token (from admin)"
+            Write-Info "Fetching credentials from ApplyLoop..."
+            try {
+                $resp = Invoke-RestMethod -Uri "$AppUrl/api/settings/cli-config" -Headers @{ "X-Worker-Token" = $FallbackToken } -ErrorAction Stop
+                if ($resp.data) {
+                    (Get-Content $EnvFile) -replace '^WORKER_TOKEN=.*', "WORKER_TOKEN=$FallbackToken" `
+                                           -replace '^NEXT_PUBLIC_SUPABASE_URL=.*', "NEXT_PUBLIC_SUPABASE_URL=$($resp.data.supabase_url)" `
+                                           -replace '^SUPABASE_URL=.*', "SUPABASE_URL=$($resp.data.supabase_url)" `
+                                           -replace '^NEXT_PUBLIC_SUPABASE_ANON_KEY=.*', "NEXT_PUBLIC_SUPABASE_ANON_KEY=$($resp.data.supabase_anon_key)" | Set-Content $EnvFile
+                    Write-OK "Credentials fetched and saved to .env"
+                } else { throw "No data" }
+            } catch {
+                Write-Warn "Could not fetch — entering manually"
+                $SupabaseUrl = Read-Host "  Supabase URL"
+                $SupabaseAnon = Read-Host "  Supabase Anon Key"
+                if ($SupabaseUrl) {
+                    (Get-Content $EnvFile) -replace '^NEXT_PUBLIC_SUPABASE_URL=.*', "NEXT_PUBLIC_SUPABASE_URL=$SupabaseUrl" `
+                                           -replace '^SUPABASE_URL=.*', "SUPABASE_URL=$SupabaseUrl" | Set-Content $EnvFile
+                }
+                if ($SupabaseAnon) {
+                    (Get-Content $EnvFile) -replace '^NEXT_PUBLIC_SUPABASE_ANON_KEY=.*', "NEXT_PUBLIC_SUPABASE_ANON_KEY=$SupabaseAnon" | Set-Content $EnvFile
+                }
+                Write-OK "Credentials saved to .env"
             }
-            if ($SupabaseAnon) {
-                (Get-Content $EnvFile) -replace '^NEXT_PUBLIC_SUPABASE_ANON_KEY=.*', "NEXT_PUBLIC_SUPABASE_ANON_KEY=$SupabaseAnon" | Set-Content $EnvFile
-            }
-            if ($SupabaseService) {
-                (Get-Content $EnvFile) -replace '^SUPABASE_SERVICE_ROLE_KEY=.*', "SUPABASE_SERVICE_ROLE_KEY=$SupabaseService" `
-                                       -replace '^SUPABASE_SERVICE_KEY=.*', "SUPABASE_SERVICE_KEY=$SupabaseService" | Set-Content $EnvFile
-            }
-            if ($TelegramToken) {
-                (Get-Content $EnvFile) -replace '^TELEGRAM_BOT_TOKEN=.*', "TELEGRAM_BOT_TOKEN=$TelegramToken" | Set-Content $EnvFile
-            }
-            Write-OK "Credentials saved to .env"
         }
     }
 

@@ -16,7 +16,7 @@ from config import (
 from db import (
     claim_next_job, load_user_profile, update_queue_status, log_application,
     check_daily_limit, get_answer_key, download_resume, upload_screenshot,
-    get_client,
+    get_client, fetch_user_job_preferences,
 )
 from notifier import send_application_result, send_failure
 from knowledge import build_answer_key, load_global_template
@@ -27,6 +27,10 @@ from applier.smartrecruiters import SmartRecruitersApplier
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message)s')
 logger = logging.getLogger(f'worker-{WORKER_ID}')
+
+# In-memory dedup cache to avoid repeated DB queries for the same URL within a day
+_seen_urls: set = set()
+_seen_urls_date: str = ""
 
 APPLIERS = {
     'greenhouse': GreenhouseApplier,
@@ -109,32 +113,54 @@ def update_heartbeat(user_id: str, action: str, details: str = ""):
 
 # ─── Job Filter (title/company/location rules) ──────────────────────────────
 
-def passes_filter(title: str, company: str, location: str) -> bool:
+def passes_filter(title: str, company: str, location: str, user_prefs: dict | None = None) -> bool:
     """Check if a job passes all filter rules (AI/ML, level, company, location)."""
     tl = title.lower()
     cl = company.lower()
     ll = (location or "").lower()
 
-    # Must be AI/ML role
-    if not any(kw in tl for kw in AI_KEYWORDS):
-        return False
-
-    # Skip disqualifying levels
-    if any(lvl in tl for lvl in SKIP_LEVELS):
-        return False
-
-    # Skip blocked companies + staffing agencies
+    # GLOBAL SAFETY — always enforced
     if any(sc in cl for sc in BLOCKED_COMPANIES):
         return False
     if any(sc in cl for sc in BLOCKED_STAFFING):
         return False
 
-    # Skip Senior at FAANG
-    if "senior" in tl and any(f in cl for f in SKIP_COMPANIES_SENIOR):
+    # PER-USER or DEFAULT keyword filter
+    keywords = AI_KEYWORDS  # default
+    if user_prefs and user_prefs.get("target_keywords"):
+        keywords = [k.lower() for k in user_prefs["target_keywords"]]
+    elif user_prefs and user_prefs.get("target_titles"):
+        keywords = [t.lower() for t in user_prefs["target_titles"]]
+    if not any(kw in tl for kw in keywords):
         return False
 
-    # Skip non-US locations
-    if ll and any(loc in ll for loc in SKIP_LOCATIONS):
+    # PER-USER or DEFAULT level skip
+    skip_levels = SKIP_LEVELS  # default
+    if user_prefs and user_prefs.get("excluded_titles"):
+        skip_levels = [t.lower() for t in user_prefs["excluded_titles"]]
+    if any(lvl in tl for lvl in skip_levels):
+        return False
+
+    # PER-USER excluded companies (in addition to global)
+    if user_prefs and user_prefs.get("excluded_companies"):
+        if any(ec.lower() in cl for ec in user_prefs["excluded_companies"]):
+            return False
+
+    # PER-USER or DEFAULT location filter
+    if user_prefs and user_prefs.get("remote_only") and "remote" not in ll:
+        return False
+    if user_prefs and user_prefs.get("preferred_locations"):
+        # Only pass if location matches one of preferred
+        locs = [loc.lower() for loc in user_prefs["preferred_locations"]]
+        if ll and not any(loc in ll for loc in locs):
+            return False
+    else:
+        # Default: skip non-US
+        if ll and any(loc in ll for loc in SKIP_LOCATIONS):
+            return False
+
+    # Senior at FAANG (keep as global rule)
+    if "senior" in tl and any(f in cl for f in SKIP_COMPANIES_SENIOR):
         return False
 
     return True
@@ -142,7 +168,7 @@ def passes_filter(title: str, company: str, location: str) -> bool:
 
 # ─── Scout Functions ─────────────────────────────────────────────────────────
 
-def scout_ashby_boards() -> list[dict]:
+def scout_ashby_boards(user_prefs: dict | None = None) -> list[dict]:
     """Scout Ashby API for AI/ML jobs across all known boards."""
     import httpx
     jobs = []
@@ -157,7 +183,7 @@ def scout_ashby_boards() -> list[dict]:
                     loc = job.get("location", "")
                     if isinstance(loc, dict):
                         loc = loc.get("name", "")
-                    if not passes_filter(title, slug, loc):
+                    if not passes_filter(title, slug, loc, user_prefs):
                         continue
                     apply_url = job.get("applicationUrl") or f"https://jobs.ashbyhq.com/{slug}/application?jobId={job['id']}"
                     jobs.append({
@@ -171,7 +197,7 @@ def scout_ashby_boards() -> list[dict]:
     return jobs
 
 
-def scout_greenhouse_boards() -> list[dict]:
+def scout_greenhouse_boards(user_prefs: dict | None = None) -> list[dict]:
     """Scout Greenhouse API for AI/ML jobs (no-reCAPTCHA boards only)."""
     import httpx
     jobs = []
@@ -186,7 +212,7 @@ def scout_greenhouse_boards() -> list[dict]:
                     loc = job.get("location", {})
                     if isinstance(loc, dict):
                         loc = loc.get("name", "")
-                    if not passes_filter(title, slug, loc):
+                    if not passes_filter(title, slug, loc, user_prefs):
                         continue
                     job_id = job.get("id", "")
                     jobs.append({
@@ -202,9 +228,23 @@ def scout_greenhouse_boards() -> list[dict]:
 
 def enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
     """Insert discovered jobs into discovered_jobs + application_queue (deduped)."""
+    global _seen_urls, _seen_urls_date
+
+    # Clear in-memory cache on date change
+    today = date.today().isoformat()
+    if _seen_urls_date != today:
+        _seen_urls = set()
+        _seen_urls_date = today
+
     client = get_client()
     enqueued = 0
     for job in jobs:
+        url = job["apply_url"]
+
+        # Fast in-memory dedup — skip DB query if we've already seen this URL today
+        if url in _seen_urls:
+            continue
+
         # Dedup: check if already in applications table
         existing = (
             client.table("applications")
@@ -215,10 +255,12 @@ def enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
             .execute()
         )
         if (existing.count or 0) > 0:
+            _seen_urls.add(url)
             continue
 
         # Company rate limit
         if not check_company_rate(user_id, job["company"]):
+            _seen_urls.add(url)
             continue
 
         # Insert into discovered_jobs
@@ -227,7 +269,7 @@ def enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
                 "title": job["title"],
                 "company": job["company"],
                 "location": job.get("location", ""),
-                "apply_url": job["apply_url"],
+                "apply_url": url,
                 "external_id": job.get("external_id", ""),
                 "ats": job["ats"],
                 "discovered_at": datetime.now(timezone.utc).isoformat(),
@@ -235,6 +277,7 @@ def enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
 
             job_id = dj.data[0]["id"] if dj.data else None
             if not job_id:
+                _seen_urls.add(url)
                 continue
 
             # Enqueue for application
@@ -243,9 +286,10 @@ def enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
                 "job_id": job_id,
                 "status": "pending",
                 "company": job["company"],
-                "apply_url": job["apply_url"],
+                "apply_url": url,
             }).execute()
             enqueued += 1
+            _seen_urls.add(url)
         except Exception as e:
             logger.debug(f"Enqueue skip ({job['company']}): {e}")
 
@@ -257,8 +301,10 @@ def run_scout_cycle(user_id: str):
     update_heartbeat(user_id, "scouting")
     logger.info("Scout cycle: scanning Ashby + Greenhouse boards...")
 
-    ashby_jobs = scout_ashby_boards()
-    gh_jobs = scout_greenhouse_boards()
+    user_prefs = fetch_user_job_preferences(user_id) if user_id != "system" else None
+
+    ashby_jobs = scout_ashby_boards(user_prefs)
+    gh_jobs = scout_greenhouse_boards(user_prefs)
     all_jobs = ashby_jobs + gh_jobs
 
     logger.info(f"Scout raw: {len(ashby_jobs)} Ashby, {len(gh_jobs)} Greenhouse = {len(all_jobs)} total")

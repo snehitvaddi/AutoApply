@@ -62,6 +62,9 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [unauthorized, setUnauthorized] = useState(false);
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [tokenUserId, setTokenUserId] = useState<string | null>(null);
+  const [usersWithTokens, setUsersWithTokens] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadData();
@@ -121,6 +124,39 @@ export default function AdminPage() {
     if (res.ok) {
       setWorkerLogs((prev) => prev.filter((l) => l.id !== logId));
       setLogSummary((prev) => ({ ...prev, unresolved_errors: Math.max(0, prev.unresolved_errors - 1) }));
+    }
+    setActionLoading(null);
+  }
+
+  async function generateWorkerToken(userId: string) {
+    setActionLoading(`token-${userId}`);
+    const res = await fetch("/api/admin/worker-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    const data = await res.json();
+    if (data.data?.token) {
+      setGeneratedToken(data.data.token);
+      setTokenUserId(userId);
+      setUsersWithTokens((prev) => new Set([...prev, userId]));
+    }
+    setActionLoading(null);
+  }
+
+  async function revokeWorkerToken(userId: string) {
+    setActionLoading(`revoke-${userId}`);
+    const res = await fetch("/api/admin/worker-token", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    if (res.ok) {
+      setUsersWithTokens((prev) => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
     }
     setActionLoading(null);
   }
@@ -229,6 +265,7 @@ export default function AdminPage() {
               <th className="pb-2">Onboarded</th>
               <th className="pb-2">Apps</th>
               <th className="pb-2">Joined</th>
+              <th className="pb-2">Worker Token</th>
             </tr>
           </thead>
           <tbody>
@@ -240,6 +277,26 @@ export default function AdminPage() {
                 <td className="py-2">{u.onboarding_completed ? "Yes" : "No"}</td>
                 <td className="py-2">{u.application_count}</td>
                 <td className="py-2 text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                <td className="py-2">
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => generateWorkerToken(u.id)}
+                      disabled={actionLoading === `token-${u.id}`}
+                      className="px-2 py-1 bg-brand-600 text-white rounded text-xs font-medium hover:bg-brand-700 disabled:opacity-50"
+                    >
+                      {actionLoading === `token-${u.id}` ? "..." : "Generate Token"}
+                    </button>
+                    {usersWithTokens.has(u.id) && (
+                      <button
+                        onClick={() => revokeWorkerToken(u.id)}
+                        disabled={actionLoading === `revoke-${u.id}`}
+                        className="px-2 py-1 bg-red-600 text-white rounded text-xs font-medium hover:bg-red-700 disabled:opacity-50"
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -376,6 +433,40 @@ export default function AdminPage() {
             ))}
           </div>
         </section>
+      )}
+
+      {/* Token Generated Modal */}
+      {generatedToken && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-lg w-full mx-4">
+            <h3 className="font-semibold text-lg mb-2">Worker Token Generated</h3>
+            <p className="text-sm text-red-600 mb-4">
+              This token will only be shown once. Copy it now.
+            </p>
+            <div className="bg-gray-50 rounded-lg p-3 font-mono text-sm break-all mb-4">
+              {generatedToken}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(generatedToken);
+                }}
+                className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
+              >
+                Copy
+              </button>
+              <button
+                onClick={() => {
+                  setGeneratedToken(null);
+                  setTokenUserId(null);
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Invite Codes (keep for backward compatibility) */}

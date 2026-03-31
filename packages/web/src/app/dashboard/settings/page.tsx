@@ -9,7 +9,7 @@ const ROLE_PRESETS = [
   "ML Platform Engineer", "AI Infrastructure Engineer",
 ];
 
-type Tab = "ai-import" | "personal" | "work" | "preferences" | "resumes" | "telegram" | "worker" | "billing";
+type Tab = "ai-import" | "personal" | "work" | "preferences" | "resumes" | "telegram" | "email" | "worker" | "billing";
 
 const AI_PROFILE_PROMPT = `I'm updating my automated job application profile. I need you to extract my professional details in JSON format. Use everything you know about me from our past conversations, my resume, or anything I've shared before.
 
@@ -103,6 +103,10 @@ export default function SettingsPage() {
 
   // Telegram
   const [telegramChatId, setTelegramChatId] = useState("");
+  const [telegramTesting, setTelegramTesting] = useState(false);
+
+  // Gmail
+  const [gmailConnected, setGmailConnected] = useState(false);
 
   // Worker & LLM Config
   const [workerConfig, setWorkerConfig] = useState({
@@ -170,6 +174,7 @@ export default function SettingsPage() {
       setGender(p.gender || "");
       setRaceEthnicity(p.race_ethnicity || "");
       setTelegramChatId(profileData.data?.telegram_chat_id || "");
+      setGmailConnected(profileData.data?.gmail_connected || false);
 
       const prefs = prefsData.data?.preferences || {};
       setTargetTitles(prefs.target_titles || []);
@@ -270,6 +275,33 @@ export default function SettingsPage() {
       showMessage("Telegram disconnected");
     } else {
       showMessage("Failed to disconnect", "error");
+    }
+  }
+
+  async function testTelegram() {
+    setTelegramTesting(true);
+    try {
+      const res = await fetch("/api/settings/telegram/test", { method: "POST" });
+      if (res.ok) showMessage("Test notification sent! Check your Telegram.");
+      else {
+        const json = await res.json();
+        showMessage(json.message || "Failed to send test notification", "error");
+      }
+    } catch {
+      showMessage("Failed to send test notification", "error");
+    }
+    setTelegramTesting(false);
+  }
+
+  async function disconnectGmail() {
+    setSaving(true);
+    const res = await fetch("/api/settings/gmail/disconnect", { method: "DELETE" });
+    setSaving(false);
+    if (res.ok) {
+      setGmailConnected(false);
+      showMessage("Gmail disconnected");
+    } else {
+      showMessage("Failed to disconnect Gmail", "error");
     }
   }
 
@@ -429,6 +461,7 @@ export default function SettingsPage() {
     { key: "preferences", label: "Job Preferences" },
     { key: "resumes", label: "Resumes" },
     { key: "telegram", label: "Telegram" },
+    { key: "email", label: "Email" },
     { key: "worker", label: "Worker & LLM" },
     { key: "billing", label: "Billing" },
   ];
@@ -912,11 +945,28 @@ export default function SettingsPage() {
       {activeTab === "telegram" && (
         <section className="bg-white rounded-xl border p-6">
           <h2 className="font-semibold mb-4">Telegram Notifications</h2>
-          <p className="text-sm text-gray-500 mb-4">
-            Message <span className="font-mono">@ApplyLoopBot</span> with{" "}
-            <span className="font-mono">/start</span>, then enter your chat ID below to receive
-            notifications when applications are submitted.
-          </p>
+
+          <a
+            href="https://t.me/ApplyLoopBot"
+            target="_blank"
+            rel="noopener"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 mb-4"
+          >
+            Open @ApplyLoopBot in Telegram
+          </a>
+
+          <div className="bg-gray-50 border rounded-lg p-4 mb-4">
+            <p className="text-sm font-medium text-gray-700 mb-2">Setup steps:</p>
+            <ol className="text-sm text-gray-600 space-y-1 list-decimal list-inside">
+              <li>
+                Click the link above or search <span className="font-mono">@ApplyLoopBot</span> in Telegram
+              </li>
+              <li>Send <span className="font-mono">/start</span> to the bot</li>
+              <li>The bot replies with your <strong>Chat ID</strong> — copy it</li>
+              <li>Paste the Chat ID below and click <strong>Connect</strong></li>
+            </ol>
+          </div>
+
           <div className="flex gap-4">
             <input
               placeholder="Telegram Chat ID"
@@ -933,14 +983,116 @@ export default function SettingsPage() {
             </button>
           </div>
           {telegramChatId && (
-            <button
-              onClick={disconnectTelegram}
-              disabled={saving}
-              className="mt-3 text-sm text-red-600 hover:text-red-700"
-            >
-              Disconnect Telegram
-            </button>
+            <div className="mt-3 flex items-center gap-4">
+              <button
+                onClick={testTelegram}
+                disabled={telegramTesting}
+                className="px-4 py-2 border border-brand-600 text-brand-600 rounded-lg text-sm font-medium hover:bg-brand-50 disabled:opacity-50"
+              >
+                {telegramTesting ? "Sending..." : "Send Test Notification"}
+              </button>
+              <button
+                onClick={disconnectTelegram}
+                disabled={saving}
+                className="text-sm text-red-600 hover:text-red-700"
+              >
+                Disconnect Telegram
+              </button>
+            </div>
           )}
+        </section>
+      )}
+
+      {/* Email Tab */}
+      {activeTab === "email" && (
+        <section className="space-y-6">
+          <div className="bg-white rounded-xl border p-6">
+            <h2 className="font-semibold mb-4">Gmail Connection</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Connect Gmail so ApplyLoop can read email verification codes that some companies send
+              after you submit an application (e.g., Stripe, Datadog on Greenhouse).
+            </p>
+
+            {gmailConnected ? (
+              <div>
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="w-2.5 h-2.5 bg-green-500 rounded-full" />
+                  <span className="text-sm font-medium text-green-700">Gmail connected</span>
+                </div>
+                <button
+                  onClick={disconnectGmail}
+                  disabled={saving}
+                  className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+                >
+                  {saving ? "Disconnecting..." : "Disconnect Gmail"}
+                </button>
+              </div>
+            ) : (
+              <a
+                href="/api/settings/gmail/connect"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
+              >
+                Connect Gmail
+              </a>
+            )}
+          </div>
+
+          <details className="bg-white rounded-xl border">
+            <summary className="p-6 cursor-pointer font-semibold text-sm text-gray-700 hover:text-gray-900">
+              Self-Hosted: Himalaya CLI (advanced)
+            </summary>
+            <div className="px-6 pb-6">
+              <p className="text-sm text-gray-500 mb-3">
+                If you prefer a self-hosted solution instead of Gmail OAuth, you can use the Himalaya CLI
+                to read verification emails locally.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-700 mb-1">1. Install Himalaya</p>
+                  <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto">
+{`# macOS
+brew install himalaya
+
+# Linux
+curl -sSL https://raw.githubusercontent.com/pimalaya/himalaya/master/install.sh | bash`}
+                  </pre>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-700 mb-1">2. Configure Gmail App Password</p>
+                  <p className="text-xs text-gray-500 mb-1">
+                    Enable 2FA on your Google account, then generate an App Password at{" "}
+                    <a
+                      href="https://myaccount.google.com/apppasswords"
+                      target="_blank"
+                      rel="noopener"
+                      className="underline"
+                    >
+                      myaccount.google.com/apppasswords
+                    </a>
+                  </p>
+                  <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto">
+{`# ~/Library/Application Support/himalaya/config.toml (macOS)
+# ~/.config/himalaya/config.toml (Linux)
+
+[accounts.gmail]
+email = "you@gmail.com"
+backend.type = "imap"
+backend.host = "imap.gmail.com"
+backend.port = 993
+backend.login = "you@gmail.com"
+backend.passwd.type = "raw"
+backend.passwd.raw = "your-app-password"`}
+                  </pre>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-700 mb-1">3. Verify</p>
+                  <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto">
+{`himalaya envelope list`}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          </details>
         </section>
       )}
 

@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from datetime import datetime, timezone
 from supabase import create_client, Client
@@ -15,6 +16,25 @@ def get_client() -> Client:
     if _client is None:
         _client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     return _client
+
+
+_prefs_cache: dict = {}  # {user_id: (prefs_dict, fetch_timestamp)}
+PREFS_CACHE_TTL = 300  # 5 minutes
+
+
+def fetch_user_job_preferences(user_id: str) -> dict:
+    """Fetch user job preferences with a 5-minute TTL cache."""
+    now = time.time()
+    if user_id in _prefs_cache:
+        prefs, ts = _prefs_cache[user_id]
+        if now - ts < PREFS_CACHE_TTL:
+            return prefs
+
+    client = get_client()
+    result = client.table("user_job_preferences").select("*").eq("user_id", user_id).single().execute()
+    prefs = result.data or {}
+    _prefs_cache[user_id] = (prefs, now)
+    return prefs
 
 
 def claim_next_job(worker_id: str) -> dict | None:

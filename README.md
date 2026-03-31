@@ -186,6 +186,15 @@ Add to crontab:
 
 Run `applyloop-update` (or the `/update` command) to pull the latest worker code, ATS patterns, and dependencies without re-running full setup. See [Client Onboarding Guide](docs/CLIENT-ONBOARDING.md#keeping-applyloop-updated) for details.
 
+## Update Mechanism
+
+ApplyLoop uses a two-tier update system:
+
+1. **Web app (Vercel):** Push to `main` on GitHub triggers an automatic Vercel deploy. Dashboard and API changes go live immediately.
+2. **Worker (user machines):** Each worker checks `/api/updates/check` once per day on its first run. If a new version is available, the worker runs `git pull --ff-only`, updates pip dependencies, and applies any pending database migrations — all automatically.
+
+The version endpoint (`/api/updates/check`) returns the current version, whether migrations are needed, and a changelog of recent changes. Workers use this to decide whether to pull.
+
 ## User Flow
 
 ```

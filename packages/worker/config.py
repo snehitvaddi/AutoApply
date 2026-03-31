@@ -18,6 +18,8 @@ ATS_COOLDOWNS = {
 
 MAX_SYSTEM_APPS_PER_HOUR = 60
 
+# ─── GLOBAL SAFETY FILTERS (always enforced, not per-user) ─────────────────
+
 # Aggregator/spam domains — jobs from these sites are never real employers
 BLOCKED_DOMAINS = [
     "jobright.ai",
@@ -55,6 +57,8 @@ BLOCKED_STAFFING = [
 
 SCOUT_INTERVAL_MINUTES = int(os.environ.get("SCOUT_INTERVAL_MINUTES", "30"))
 MAX_COMPANY_APPS_PER_30_DAYS = 5
+
+# ─── DEFAULT FILTERS (fallback when user has no preferences) ───────────────
 
 # Skip these title levels
 SKIP_LEVELS = ["lead", "principal", "staff", "director", "manager", "vp", "intern", "co-op"]
