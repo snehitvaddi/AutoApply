@@ -100,6 +100,8 @@ Fill in your professional background:
 
 > **Note:** EEO fields are voluntary. Many applications ask these questions — if you fill them here, ApplyLoop handles them automatically.
 
+> **Multiple Work Experiences:** You can add multiple work history entries (company, title, dates, bullet points) and multiple education entries. The worker fills ALL of them into application forms — nothing is truncated or abbreviated. Support for adding these during onboarding is coming soon; for now, update them in Settings → Work & Education after onboarding.
+
 ---
 
 ## Step 6: Job Preferences
@@ -273,6 +275,57 @@ If you're an admin, you'll see an **Admin** link in the sidebar. The admin panel
 - All approved users with their stats
 - System-wide metrics (total apps, queue depth)
 - Invite code management (legacy)
+
+---
+
+## Keeping ApplyLoop Updated
+
+Run the `/update` command (or `applyloop-update` in your terminal) to pull the latest scripts, applier logic, and ATS patterns. This ensures you have the newest form-filling strategies and bug fixes without re-running the full setup.
+
+```bash
+applyloop-update
+```
+
+This fetches the latest worker code, updates dependencies, and restarts the worker if it's running.
+
+---
+
+## Optional: AgentMail (Disposable Email Inboxes)
+
+Some ATS platforms require email verification during the application process. AgentMail provides disposable inboxes so you don't need to use your personal email for every verification.
+
+**Setup:**
+1. Sign up at [agentmail.to](https://agentmail.to) (free tier: 3 inboxes, 3,000 emails/month)
+2. Get your API key from the dashboard
+3. Add `AGENTMAIL_API_KEY=your_key` to your worker environment variables
+
+When enabled, the worker can create temporary inboxes on the fly and read verification codes automatically.
+
+---
+
+## Optional: Gmail / Himalaya (Security Code Reading)
+
+Some companies (e.g., Stripe, Datadog on Greenhouse) send an email security code after you submit an application. ApplyLoop can read these codes automatically if you connect Gmail.
+
+**Option A — Gmail OAuth (recommended for SaaS users):**
+1. Go to Settings → connect Gmail
+2. Grant `gmail.readonly` access
+3. The worker reads verification emails via the Gmail API on your behalf
+
+**Option B — Himalaya CLI (for self-hosted / power users):**
+1. Install himalaya: `brew install himalaya` (macOS) or [see docs](https://github.com/pimalaya/himalaya)
+2. Configure `~/Library/Application Support/himalaya/config.toml` with your Gmail app password
+3. The worker uses `himalaya envelope list` and `himalaya message read` to fetch codes
+
+---
+
+## Multi-Resume Workflow
+
+ApplyLoop supports uploading multiple resumes, each tagged for different role types. For example:
+- **GenAI Resume** — tagged for "AI Engineer", "GenAI Engineer", "ML Engineer"
+- **Data Science Resume** — tagged for "Data Scientist", "Data Analyst"
+
+When the worker applies to a job, it automatically selects the best-matching resume based on the job title and your tags. You can manage resumes in Settings → Resumes at any time.
 
 ---
 

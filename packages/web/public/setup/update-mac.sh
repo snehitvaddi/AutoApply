@@ -109,6 +109,48 @@ fi
 
 cd "$INSTALL_DIR" || exit 1
 
+# ── Step 0: Check remote update API ───────────────────────────────────────
+
+API_URL="https://applyloop.vercel.app/api/updates/check"
+MIGRATION_NEEDED=false
+
+log_info "Checking ApplyLoop update server..."
+API_RESPONSE=$(curl -sf "$API_URL" --max-time 10 2>/dev/null || echo "")
+
+if [ -n "$API_RESPONSE" ]; then
+  REMOTE_VERSION=$(echo "$API_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','unknown'))" 2>/dev/null || echo "unknown")
+  REMOTE_COMMIT=$(echo "$API_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('latest_commit','unknown'))" 2>/dev/null || echo "unknown")
+  MIGRATION_NEEDED=$(echo "$API_RESPONSE" | python3 -c "import sys,json; print(str(json.load(sys.stdin).get('migration_needed',False)).lower())" 2>/dev/null || echo "false")
+
+  # Parse changes array
+  CHANGES=$(echo "$API_RESPONSE" | python3 -c "
+import sys,json
+data = json.load(sys.stdin)
+for c in data.get('changes', []):
+    print(f'    - {c}')
+" 2>/dev/null || echo "")
+
+  log_ok "Remote version: $REMOTE_VERSION (commit: $REMOTE_COMMIT)"
+
+  # Read local version from package.json
+  LOCAL_VERSION="unknown"
+  if [ -f "packages/web/package.json" ]; then
+    LOCAL_VERSION=$(python3 -c "import json; print(json.load(open('packages/web/package.json')).get('version','unknown'))" 2>/dev/null || echo "unknown")
+  fi
+  log_info "Local version: $LOCAL_VERSION"
+
+  if [ -n "$CHANGES" ]; then
+    log_info "What's new:"
+    echo "$CHANGES" | tee -a "$LOG_FILE"
+  fi
+
+  if [ "$MIGRATION_NEEDED" = "true" ]; then
+    log_warn "Database migration needed after this update"
+  fi
+else
+  log_warn "Could not reach update server — continuing with git pull"
+fi
+
 # ── Step 1: Pull latest code ────────────────────────────────────────────────
 
 log_info "Checking for updates..."
@@ -206,6 +248,23 @@ if [ "$UPDATES_PULLED" = true ]; then
     npm update -g openclaw 2>/dev/null
     log_ok "OpenClaw CLI updated"
   fi
+
+  # Run migration if needed
+  if [ "$MIGRATION_NEEDED" = "true" ]; then
+    log_info "Running database migration..."
+    MIGRATION_SCRIPT="$INSTALL_DIR/packages/web/public/setup/run-migration.py"
+    ENV_MIGRATION="$INSTALL_DIR/.env"
+    if [ -f "$MIGRATION_SCRIPT" ] && [ -f "$ENV_MIGRATION" ]; then
+      "$PYTHON_CMD" "$MIGRATION_SCRIPT" "$ENV_MIGRATION" 2>/dev/null
+      if [ $? -eq 0 ]; then
+        log_ok "Database migration complete"
+      else
+        log_warn "Migration failed — run manually from Supabase SQL Editor"
+      fi
+    else
+      log_warn "Migration script or .env not found — skipping"
+    fi
+  fi
 else
   log_info "No code changes — skipping dependency updates"
 fi
@@ -297,6 +356,20 @@ if [ "$QUIET_MODE" != "--quiet" ]; then
   echo -e "  ${CYAN}Next check: in $UPDATE_INTERVAL_DAYS days or on next login${NC}"
   echo ""
 fi
+
+# ── Install applyloop-update alias ─────────────────────────────────────────
+
+ALIAS_LINE="alias applyloop-update='bash $INSTALL_DIR/update.sh'"
+for RC_FILE in "$HOME/.zshrc" "$HOME/.bashrc"; do
+  if [ -f "$RC_FILE" ]; then
+    if ! grep -q "applyloop-update" "$RC_FILE" 2>/dev/null; then
+      echo "" >> "$RC_FILE"
+      echo "# ApplyLoop update command" >> "$RC_FILE"
+      echo "$ALIAS_LINE" >> "$RC_FILE"
+      log_ok "Added 'applyloop-update' alias to $(basename $RC_FILE)"
+    fi
+  fi
+done
 
 # Cleanup old logs (keep 30 days)
 find "$LOG_DIR" -name "update-*.log" -mtime +30 -delete 2>/dev/null

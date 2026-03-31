@@ -2,12 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
+function getAppBaseUrl(request: NextRequest): string {
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (configuredAppUrl && /^https?:\/\//.test(configuredAppUrl)) {
+    return configuredAppUrl.replace(/\/+$/, "");
+  }
+  return request.nextUrl.origin;
+}
+
 export async function GET(request: NextRequest) {
+  const appBaseUrl = getAppBaseUrl(request);
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
 
   if (!code) {
-    return NextResponse.redirect(new URL("/auth/login", request.url));
+    return NextResponse.redirect(new URL("/auth/login", appBaseUrl));
   }
 
   // We don't know the final redirect yet, so start with a placeholder.
@@ -35,7 +44,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error || !data.user) {
-    return NextResponse.redirect(new URL("/auth/login", request.url));
+    return NextResponse.redirect(new URL("/auth/login", appBaseUrl));
   }
 
   // Service-role client for admin operations (bypasses RLS)
@@ -104,7 +113,7 @@ export async function GET(request: NextRequest) {
   }
 
   // Build the final redirect with all cookies from the session exchange
-  const response = NextResponse.redirect(new URL(redirectPath, request.url));
+  const response = NextResponse.redirect(new URL(redirectPath, appBaseUrl));
   for (const cookie of cookieStore) {
     response.cookies.set({ name: cookie.name, value: cookie.value, ...cookie.options });
   }

@@ -11,11 +11,14 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
 
+    const appBaseUrl =
+      (process.env.NEXT_PUBLIC_APP_URL || window.location.origin).replace(/\/+$/, "");
+
     const supabase = createSupabaseBrowserClient();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${appBaseUrl}/auth/callback`,
       },
     });
 

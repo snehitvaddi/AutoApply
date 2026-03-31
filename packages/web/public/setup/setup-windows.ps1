@@ -60,7 +60,7 @@ function Install-WithWinget($packageId, $name) {
     return $true
 }
 
-$script:TotalSteps = 10
+$script:TotalSteps = 11
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -206,6 +206,63 @@ $ErrorActionPreference = "Continue"
 & $PythonCmd -m playwright install chromium 2>&1 | Where-Object { $_ -notmatch "WARNING|warn" } | Write-Host
 $ErrorActionPreference = "Stop"
 Write-OK "Playwright Chromium installed"
+
+# ── Step 5b: Optional tools (Himalaya, AgentMail) ─────────────────────────
+Write-Step 5 "Installing optional tools (Himalaya, AgentMail)..."
+
+Write-Host ""
+Write-Host "  Himalaya CLI lets the worker read Gmail (OTP codes, confirmations)." -ForegroundColor Cyan
+Write-Host "  AgentMail provides disposable email inboxes for applications." -ForegroundColor Cyan
+Write-Host ""
+
+# Himalaya CLI (Gmail reading)
+if (Test-CommandExists "himalaya") {
+    Write-OK "Himalaya CLI already installed"
+} else {
+    $installHim = Read-Host "  Install Himalaya CLI for Gmail reading? [Y/n]"
+    if (-not $installHim -or $installHim -match "^[Yy]") {
+        if (Test-CommandExists "winget") {
+            Write-Info "Installing Himalaya via winget..."
+            $ErrorActionPreference = "Continue"
+            winget install --id pimalaya.himalaya --accept-package-agreements --accept-source-agreements --silent 2>&1 | Out-Null
+            $ErrorActionPreference = "Stop"
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+            if (Test-CommandExists "himalaya") {
+                Write-OK "Himalaya installed"
+            } else {
+                Write-Warn "Himalaya install failed - install later: winget install pimalaya.himalaya"
+            }
+        } else {
+            Write-Warn "winget not available - install Himalaya manually from https://github.com/pimalaya/himalaya/releases"
+        }
+    } else {
+        Write-Info "Skipping Himalaya - install later: winget install pimalaya.himalaya"
+    }
+}
+
+# AgentMail (disposable inboxes)
+$amInstalled = $false
+try { & $PythonCmd -c "import agentmail" 2>$null; $amInstalled = $true } catch {}
+if ($amInstalled) {
+    Write-OK "AgentMail SDK already installed"
+} else {
+    $installAm = Read-Host "  Install AgentMail SDK for disposable inboxes? [Y/n]"
+    if (-not $installAm -or $installAm -match "^[Yy]") {
+        Write-Info "Installing AgentMail..."
+        $ErrorActionPreference = "Continue"
+        & $PythonCmd -m pip install --quiet agentmail 2>&1 | Out-Null
+        $ErrorActionPreference = "Stop"
+        Write-OK "AgentMail SDK installed"
+    } else {
+        Write-Info "Skipping AgentMail - install later: pip install agentmail"
+    }
+}
+
+Write-Host ""
+Write-Host "  Multi-resume support: You can upload multiple PDFs with role tags" -ForegroundColor Cyan
+Write-Host "  (e.g., 'GenAI Resume.pdf', 'DS Resume.pdf') and the worker will" -ForegroundColor Cyan
+Write-Host "  pick the best match for each job automatically." -ForegroundColor Cyan
+Write-Host ""
 
 # ── Step 6: Clone repo ──────────────────────────────────────────────────────
 Write-Step 6 "Setting up ApplyLoop..."

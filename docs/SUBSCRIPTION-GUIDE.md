@@ -10,10 +10,17 @@ You only need a Google account and a resume. Everything else runs on our infrast
 
 | What | Required? | Cost | Purpose |
 |------|-----------|------|---------|
-| **ApplyLoop Account** | Yes | Free / $15 / $29 per month | The app itself |
+| **ApplyLoop Account** | Yes | Free or paid tier (DM for pricing) | The app itself |
 | **Google Account** | Yes | Free | Sign in with Google OAuth |
 | **Resume (PDF)** | Yes | Free | Uploaded during onboarding |
 | **Telegram App** | Recommended | Free | Real-time notifications when applications are submitted |
+
+### Optional Tools
+
+| Tool | Purpose | Cost |
+|------|---------|------|
+| **AgentMail** | Disposable email inboxes for ATS email verification | Free (3 inboxes, 3K emails/mo) |
+| **Himalaya CLI** | Read Gmail from terminal for security codes (self-hosted users) | Free |
 
 ### You do NOT need:
 - OpenClaw, Claude Code, or any AI subscriptions
@@ -25,11 +32,13 @@ You only need a Google account and a resume. Everything else runs on our infrast
 
 ## Pricing Tiers
 
-| Tier | Monthly Price | Daily Application Limit | Features |
-|------|--------------|------------------------|----------|
-| **Free** | $0 | 5 per day | Manual approval of each job, Greenhouse only |
-| **Starter** | $15 | 25 per day | Auto-apply, all ATS platforms (Greenhouse, Ashby, Lever, SmartRecruiters), Telegram notifications |
-| **Pro** | $29 | 50 per day | Everything in Starter + Gmail verification code reading, priority queue |
+| Tier | Daily Application Limit | Features |
+|------|------------------------|----------|
+| **Free** | 5 per day | Manual approval of each job, Greenhouse only |
+| **Starter** | 25 per day | Auto-apply, all ATS platforms (Greenhouse, Ashby, Lever, SmartRecruiters), Telegram notifications |
+| **Pro** | 50 per day | Everything in Starter + Gmail verification code reading, priority queue |
+
+> **Pricing:** DM for current pricing — we offer flexible plans based on your needs.
 
 All tiers include:
 - Unlimited job discovery (new jobs surfaced every 6 hours)
@@ -55,6 +64,8 @@ If you want to run your own ApplyLoop instance, here's what you need:
 | **Telegram Bot** (optional) | No | Free | Create via @BotFather for notifications |
 | **OpenAI API** (optional) | No | ~$5-15/mo | Only if using OpenAI models in OpenClaw config |
 | **Upstash Redis** (optional) | No | Free tier | Rate limiting (can use in-memory fallback) |
+| **AgentMail** (optional) | No | Free tier | Disposable inboxes for ATS email verification |
+| **Himalaya CLI** (optional) | No | Free | Gmail reading from terminal for security codes |
 
 ### Monthly Cost Breakdown (Operator)
 

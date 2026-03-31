@@ -31,7 +31,7 @@ log_warn() { echo -e "  ${YELLOW}⚠${NC} $1"; }
 log_fail() { echo -e "  ${RED}✗${NC} $1"; }
 log_info() { echo -e "  ${CYAN}→${NC} $1"; }
 
-TOTAL_STEPS=10
+TOTAL_STEPS=11
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -153,6 +153,52 @@ log_step 5 "Installing Playwright browsers..."
 "$PYTHON_CMD" -m pip install --quiet playwright 2>/dev/null
 "$PYTHON_CMD" -m playwright install chromium
 log_ok "Playwright Chromium installed"
+
+# ── Step 5b: Optional tools (Himalaya, AgentMail) ─────────────────────────
+log_step 5 "Installing optional tools (Himalaya, AgentMail)..."
+
+echo ""
+echo -e "  ${CYAN}Himalaya CLI lets the worker read Gmail (OTP codes, confirmations).${NC}"
+echo -e "  ${CYAN}AgentMail provides disposable email inboxes for applications.${NC}"
+echo ""
+
+# Himalaya CLI (Gmail reading)
+if check_command himalaya; then
+  log_ok "Himalaya CLI already installed ($(himalaya --version 2>&1 | head -1))"
+else
+  read -p "  Install Himalaya CLI for Gmail reading? [Y/n]: " INSTALL_HIM
+  INSTALL_HIM="${INSTALL_HIM:-Y}"
+  if [[ "$INSTALL_HIM" =~ ^[Yy] ]]; then
+    log_info "Installing Himalaya via Homebrew..."
+    brew install himalaya 2>/dev/null || log_warn "Himalaya install failed — install later: brew install himalaya"
+    if check_command himalaya; then
+      log_ok "Himalaya installed: $(himalaya --version 2>&1 | head -1)"
+    fi
+  else
+    log_info "Skipping Himalaya — install later: brew install himalaya"
+  fi
+fi
+
+# AgentMail (disposable inboxes)
+if "$PYTHON_CMD" -c "import agentmail" 2>/dev/null; then
+  log_ok "AgentMail SDK already installed"
+else
+  read -p "  Install AgentMail SDK for disposable inboxes? [Y/n]: " INSTALL_AM
+  INSTALL_AM="${INSTALL_AM:-Y}"
+  if [[ "$INSTALL_AM" =~ ^[Yy] ]]; then
+    log_info "Installing AgentMail..."
+    "$PYTHON_CMD" -m pip install --quiet agentmail 2>/dev/null || log_warn "AgentMail install failed — install later: pip install agentmail"
+    log_ok "AgentMail SDK installed"
+  else
+    log_info "Skipping AgentMail — install later: pip install agentmail"
+  fi
+fi
+
+echo ""
+echo -e "  ${CYAN}Multi-resume support:${NC} You can upload multiple PDFs with role tags"
+echo -e "  ${CYAN}(e.g., 'GenAI Resume.pdf', 'DS Resume.pdf') and the worker will${NC}"
+echo -e "  ${CYAN}pick the best match for each job automatically.${NC}"
+echo ""
 
 # ── Step 6: Clone repo ──────────────────────────────────────────────────────
 log_step 6 "Setting up ApplyLoop..."

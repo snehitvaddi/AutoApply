@@ -5,6 +5,7 @@ import re
 import logging
 import hashlib
 
+import httpx
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
@@ -13,6 +14,8 @@ from db import get_client
 logger = logging.getLogger(__name__)
 
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
+AGENTMAIL_API_KEY = os.environ.get("AGENTMAIL_API_KEY", "")
+AGENTMAIL_BASE_URL = "https://api.agentmail.to/v0"
 
 
 def _decrypt_token(encrypted: str) -> str:
@@ -206,4 +209,82 @@ def get_latest_verification_code(
     except Exception as e:
         logger.error(f"Error reading verification email for user {user_id}: {e}")
 
+    return None
+
+
+# ─── AgentMail (Disposable Inboxes) ────────────────────────────────────────────
+
+
+def create_disposable_inbox() -> str | None:
+    """Create a disposable AgentMail inbox for receiving verification codes.
+
+    Returns the inbox email address (e.g., 'clumsynews296@agentmail.to'),
+    or None if AGENTMAIL_API_KEY is not set or creation fails.
+    """
+    if not AGENTMAIL_API_KEY:
+        logger.warning("AGENTMAIL_API_KEY not set — cannot create disposable inbox")
+        return None
+
+    try:
+        resp = httpx.post(
+            f"{AGENTMAIL_BASE_URL}/inboxes",
+            headers={"Authorization": f"Bearer {AGENTMAIL_API_KEY}"},
+            json={},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        inbox_id = data.get("inbox_id", "")
+        logger.info(f"Created AgentMail inbox: {inbox_id}")
+        return inbox_id
+    except Exception as e:
+        logger.error(f"Failed to create AgentMail inbox: {e}")
+        return None
+
+
+def check_agentmail_inbox(
+    inbox_address: str, pattern: str, timeout: int = 60
+) -> str | None:
+    """Poll AgentMail inbox for emails matching pattern and extract a verification code.
+
+    Args:
+        inbox_address: The AgentMail inbox email (e.g., 'user@agentmail.to').
+        pattern: Substring to match in subject or sender (e.g., 'greenhouse-mail.io').
+        timeout: Max seconds to poll before giving up.
+
+    Returns:
+        The extracted verification code string, or None if not found.
+    """
+    if not AGENTMAIL_API_KEY:
+        logger.warning("AGENTMAIL_API_KEY not set — cannot check AgentMail inbox")
+        return None
+
+    start = time.time()
+    poll_interval = 5
+
+    while time.time() - start < timeout:
+        try:
+            resp = httpx.get(
+                f"{AGENTMAIL_BASE_URL}/inboxes/{inbox_address}/messages",
+                headers={"Authorization": f"Bearer {AGENTMAIL_API_KEY}"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            messages = resp.json().get("messages", [])
+
+            for msg in messages:
+                sender = msg.get("from", "")
+                subject = msg.get("subject", "")
+                body = msg.get("text", "") or msg.get("body", "")
+                if pattern.lower() in sender.lower() or pattern.lower() in subject.lower():
+                    code = _extract_code(body)
+                    if code:
+                        logger.info(f"Found verification code in AgentMail inbox {inbox_address}")
+                        return code
+        except Exception as e:
+            logger.warning(f"AgentMail poll error for {inbox_address}: {e}")
+
+        time.sleep(poll_interval)
+
+    logger.warning(f"No verification code found in AgentMail inbox {inbox_address} within {timeout}s")
     return None

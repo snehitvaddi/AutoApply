@@ -112,6 +112,43 @@ foreach ($cmd in @("python3", "python", "py")) {
     }
 }
 
+# ── Step 0: Check remote update API ───────────────────────────────────────
+
+$ApiUrl = "https://applyloop.vercel.app/api/updates/check"
+$MigrationNeeded = $false
+
+Log-Info "Checking ApplyLoop update server..."
+try {
+    $apiResp = Invoke-RestMethod -Uri $ApiUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction SilentlyContinue
+    $remoteVersion = $apiResp.version
+    $remoteCommit = $apiResp.latest_commit
+    $MigrationNeeded = [bool]$apiResp.migration_needed
+
+    Log-OK "Remote version: $remoteVersion (commit: $remoteCommit)"
+
+    # Read local version
+    $localVersion = "unknown"
+    $pkgPath = Join-Path $InstallDir "packages\web\package.json"
+    if (Test-Path $pkgPath) {
+        $pkgJson = Get-Content $pkgPath -Raw | ConvertFrom-Json
+        $localVersion = $pkgJson.version
+    }
+    Log-Info "Local version: $localVersion"
+
+    if ($apiResp.changes) {
+        Log-Info "What's new:"
+        foreach ($change in $apiResp.changes) {
+            Write-Log "    - $change"
+        }
+    }
+
+    if ($MigrationNeeded) {
+        Log-Warn "Database migration needed after this update"
+    }
+} catch {
+    Log-Warn "Could not reach update server - continuing with git pull"
+}
+
 # ── Step 1: Pull latest code ────────────────────────────────────────────────
 
 Log-Info "Checking for updates..."
@@ -210,6 +247,22 @@ if ($UpdatesPulled) {
         Log-Info "Updating OpenClaw CLI..."
         npm update -g openclaw 2>&1 | Out-Null
         Log-OK "OpenClaw CLI updated"
+    }
+
+    # Run migration if needed
+    if ($MigrationNeeded) {
+        Log-Info "Running database migration..."
+        $migScript = Join-Path $InstallDir "packages\web\public\setup\run-migration.py"
+        if ($PythonCmd -and (Test-Path $migScript) -and (Test-Path $EnvFile)) {
+            & $PythonCmd $migScript $EnvFile 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Log-OK "Database migration complete"
+            } else {
+                Log-Warn "Migration failed - run manually from Supabase SQL Editor"
+            }
+        } else {
+            Log-Warn "Migration script or .env not found - skipping"
+        }
     }
 
     # Ollama model update
@@ -330,6 +383,21 @@ if ($Mode -ne "--quiet") {
     }
     Write-Host "  Next check: in $UpdateIntervalDays days or on next login" -ForegroundColor Cyan
     Write-Host ""
+}
+
+# ── Install applyloop-update function in PowerShell profile ────────────────
+
+$profilePath = $PROFILE.CurrentUserCurrentHost
+if ($profilePath) {
+    $profileDir = Split-Path $profilePath -Parent
+    if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
+    if (-not (Test-Path $profilePath)) { New-Item -ItemType File -Path $profilePath -Force | Out-Null }
+
+    $funcLine = "function applyloop-update { powershell -ExecutionPolicy Bypass -File `"$($InstallDir)\update.ps1`" }"
+    if (-not (Select-String -Path $profilePath -Pattern "applyloop-update" -Quiet -ErrorAction SilentlyContinue)) {
+        Add-Content -Path $profilePath -Value "`n# ApplyLoop update command`n$funcLine"
+        Log-OK "Added 'applyloop-update' command to PowerShell profile"
+    }
 }
 
 # Cleanup old logs (keep 30 days)

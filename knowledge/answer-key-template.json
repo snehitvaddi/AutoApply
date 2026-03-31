@@ -185,5 +185,67 @@
     "search_term": "{city}",
     "select_option": "{city}, {state}, United States",
     "fallback": "{city}, {state}"
-  }
+  },
+
+  "work_experience": [
+    {
+      "_note": "Array of work experiences, most recent first. The LLM maps these to repeated form sections. Placeholders replaced at runtime from user_profiles.work_experience JSONB.",
+      "title": "{experience[0].title}",
+      "company": "{experience[0].company}",
+      "location": "{experience[0].location}",
+      "start_date": "{experience[0].start}",
+      "end_date": "{experience[0].end}",
+      "current": "{experience[0].current}",
+      "achievements": "{experience[0].achievements}"
+    },
+    {
+      "title": "{experience[1].title}",
+      "company": "{experience[1].company}",
+      "location": "{experience[1].location}",
+      "start_date": "{experience[1].start}",
+      "end_date": "{experience[1].end}",
+      "current": "{experience[1].current}",
+      "achievements": "{experience[1].achievements}"
+    },
+    {
+      "title": "{experience[2].title}",
+      "company": "{experience[2].company}",
+      "location": "{experience[2].location}",
+      "start_date": "{experience[2].start}",
+      "end_date": "{experience[2].end}",
+      "current": "{experience[2].current}",
+      "achievements": "{experience[2].achievements}"
+    },
+    {
+      "title": "{experience[3].title}",
+      "company": "{experience[3].company}",
+      "location": "{experience[3].location}",
+      "start_date": "{experience[3].start}",
+      "end_date": "{experience[3].end}",
+      "current": "{experience[3].current}",
+      "achievements": "{experience[3].achievements}"
+    }
+  ],
+
+  "education": [
+    {
+      "_note": "Array of education entries. Placeholders replaced at runtime from user_profiles.education JSONB.",
+      "school": "{education[0].school}",
+      "degree": "{education[0].degree}",
+      "field": "{education[0].field}",
+      "location": "{education[0].location}",
+      "start_date": "{education[0].start}",
+      "end_date": "{education[0].end}",
+      "gpa": "{education[0].gpa}"
+    },
+    {
+      "school": "{education[1].school}",
+      "degree": "{education[1].degree}",
+      "field": "{education[1].field}",
+      "location": "{education[1].location}",
+      "start_date": "{education[1].start}",
+      "end_date": "{education[1].end}",
+      "gpa": "{education[1].gpa}"
+    }
+  ]
 }

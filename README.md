@@ -9,13 +9,16 @@ Automated job applications for AI/ML engineers. Invite-only SaaS — supports Gr
 
 ## Architecture
 
+ApplyLoop uses a hybrid LLM approach: the web app handles onboarding and profile management, while the Python worker uses OpenClaw's browser automation with LLM-assisted field mapping for intelligent form filling.
+
 ```
 Vercel              Supabase               Hetzner VPS
 ┌──────────┐       ┌──────────────┐       ┌─────────────────┐
 │ Next.js  │──────>│ PostgreSQL   │<──────│ Python Workers  │
 │ Web App  │       │ Auth (OAuth) │       │ Job Scanner     │
 │ API      │       │ Storage      │       │ Form Filler     │
-└──────────┘       └──────────────┘       │ Telegram Bot    │
+└──────────┘       └──────────────┘       │ Gmail Reader    │
+                                          │ Telegram Bot    │
                                           └─────────────────┘
 ```
 
@@ -56,9 +59,15 @@ psql "postgresql://postgres:{password}@db.{ref}.supabase.co:5432/postgres" \
 
 psql "postgresql://postgres:{password}@db.{ref}.supabase.co:5432/postgres" \
   -f supabase/migrations/002_oauth_approval.sql
+
+psql "postgresql://postgres:{password}@db.{ref}.supabase.co:5432/postgres" \
+  -f supabase/migrations/003_worker_config_and_logs.sql
+
+psql "postgresql://postgres:{password}@db.{ref}.supabase.co:5432/postgres" \
+  -f supabase/migrations/004_ai_cli_mode.sql
 ```
 
-This creates 12 tables, RLS policies, queue functions, and indexes.
+This creates 12+ tables, RLS policies, queue functions, worker config, application logs, and indexes.
 
 ### Step 4: Create Storage Buckets
 
@@ -154,9 +163,9 @@ python worker.py
 
 For production, use systemd:
 ```bash
-sudo cp systemd/autoapply-worker@.service /etc/systemd/system/
-sudo systemctl enable autoapply-worker@1
-sudo systemctl start autoapply-worker@1
+sudo cp systemd/applyloop-worker@.service /etc/systemd/system/
+sudo systemctl enable applyloop-worker@1
+sudo systemctl start applyloop-worker@1
 ```
 
 ### Step 10: Set Up Job Scanner (Optional)
@@ -172,6 +181,10 @@ Add to crontab:
 ```
 0 */6 * * * cd /path/to/AutoApply/packages/worker && python -m scanner.run
 ```
+
+## Updating
+
+Run `applyloop-update` (or the `/update` command) to pull the latest worker code, ATS patterns, and dependencies without re-running full setup. See [Client Onboarding Guide](docs/CLIENT-ONBOARDING.md#keeping-applyloop-updated) for details.
 
 ## User Flow
 
@@ -236,7 +249,7 @@ ApplyLoop/
 │   │   │   ├── onboarding/     # 5-step wizard
 │   │   │   ├── dashboard/      # Overview, jobs, applications, settings
 │   │   │   ├── admin/          # User management
-│   │   │   └── api/            # 24 API routes
+│   │   │   └── api/            # API routes (admin, auth, health, jobs, onboarding, settings, stripe)
 │   │   └── src/lib/            # Auth, Supabase, Stripe, rate limiting
 │   │
 │   └── worker/                 # Python (VPS)
@@ -255,16 +268,18 @@ ApplyLoop/
 │   └── answer-key-template.json
 │
 └── supabase/
-    └── migrations/             # Database schema (12 tables)
+    └── migrations/             # Database schema (001-004: schema, oauth, worker config, AI/CLI mode)
 ```
 
 ## Pricing Tiers
 
-| Tier | Price | Daily Limit |
-|------|-------|-------------|
-| Free | $0 | 5 applications/day |
-| Starter | $15/mo | 25 applications/day |
-| Pro | $29/mo | 50 applications/day |
+| Tier | Daily Limit |
+|------|-------------|
+| Free | 5 applications/day |
+| Starter | 25 applications/day |
+| Pro | 50 applications/day |
+
+> DM for current pricing — flexible plans available.
 
 ## Troubleshooting
 
