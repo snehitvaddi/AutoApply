@@ -40,10 +40,10 @@ COMPANY_PAUSES: dict[str, date] = {
 
 # Defense/clearance companies — never apply (visa incompatible)
 BLOCKED_COMPANIES = [
-    "anduril", "palantir", "lockheed martin", "raytheon",
-    "northrop grumman", "general dynamics", "l3harris",
-    "booz allen", "leidos", "saic",
-    "bae systems", "langchain", "meta", "whoop",
+    "anduril", "anthropic", "bae systems", "booz allen", "cisco",
+    "general dynamics", "l3harris", "langchain", "leidos",
+    "lockheed martin", "meta", "northrop grumman", "palantir",
+    "raytheon", "saic", "whoop",
 ]
 
 # Staffing agencies — never apply (not direct employers)
@@ -86,31 +86,44 @@ SKIP_LOCATIONS = [
 # ─── Ashby board slugs (all discovered) ─────────────────────────────────────
 
 ASHBY_SLUGS = [
-    "brellium", "sola", "norm-ai", "poolside", "primeintellect", "reducto",
-    "perplexity", "cohere", "modal", "baseten", "anyscale", "notion",
-    "writer", "llamaindex", "skydio", "insitro", "harvey", "plaid",
-    "cognition", "semgrep", "braintrust", "astronomer", "hackerone",
-    "cursor", "ramp", "resend", "deepgram", "openai", "airwallex",
-    "regard", "confluent", "benchling", "drata", "whatnot", "snowflake",
-    "vanta", "e2b", "graphite", "character", "rogo", "suno", "causal",
-    "windmill", "socure", "posthog", "trm-labs", "nomic", "hinge-health",
-    "decagon", "dandy", "factory", "sardine",
+    "airwallex", "anyscale", "astronomer", "baseten", "benchling",
+    "braintrust", "brellium", "character", "cognition", "cohere",
+    "confluent", "cursor", "dandy", "decagon", "deepgram",
+    "drata", "e2b", "factory", "graphite", "hackerone",
+    "harvey", "hinge-health", "insitro", "llamaindex", "modal",
+    "nomic", "norm-ai", "notion", "openai", "perplexity",
+    "plaid", "poolside", "posthog", "primeintellect", "ramp",
+    "reducto", "regard", "resend", "rogo", "sardine",
+    "semgrep", "skydio", "snowflake", "socure", "sola",
+    "suno", "trm-labs", "vanta", "whatnot", "windmill",
+    "writer",
+    # langchain is in BLOCKED_COMPANIES — excluded from scouting
 ]
 
 # ─── Greenhouse reCAPTCHA map ────────────────────────────────────────────────
 
 # These companies have NO reCAPTCHA — safe to auto-submit
 GREENHOUSE_NO_RECAPTCHA = [
-    "coinbase", "figma", "datadog", "torcrobotics",
-    "springhealth", "headspace", "flexport", "nuro", "waymo", "aurora",
-    "affirm", "chime", "upstart", "verkada", "samsara",
-    "snap", "instacart", "doordash", "shopify", "calendly",
+    "affirm", "airtable", "asana", "aurora", "benchling",
+    "calendly", "canva", "chime", "cloudflare", "coinbase",
+    "crowdstrike", "databricks", "datadog", "deel", "doordash",
+    "drata", "elastic", "figma", "fireworksai", "flexport",
+    "gusto", "hashicorp", "headspace", "instacart", "lattice",
+    "mongodb", "notion", "nuro", "okta", "openai",
+    "ramp", "replicate", "rippling", "runway", "samsara",
+    "sentinelone", "shopify", "snap", "springhealth", "stability",
+    "tempus", "together", "torcrobotics", "twilio", "upstart",
+    "vanta", "verkada", "waymo", "wiz", "ginkgo",
 ]
 
 # These companies HAVE reCAPTCHA — can fill form but submit may be blocked
 GREENHOUSE_RECAPTCHA = [
-    "stripe", "robinhood", "pinterest", "discord", "reddit",
-    "togetherai", "gongio", "abnormalsecurity", "xometry",
-    "faire", "duolingo", "oura", "amplitude", "braze",
-    "grammarly", "twitch", "toast", "peloton",
+    "abnormalsecurity", "amplitude", "braze", "discord",
+    "duolingo", "faire", "gongio", "grammarly",
+    "oura", "peloton", "pinterest", "reddit",
+    "robinhood", "stripe", "toast", "togetherai",
+    "twitch", "xometry",
 ]
+
+# Combined list — used by scanner to discover ALL jobs
+GREENHOUSE_ALL_BOARDS = GREENHOUSE_NO_RECAPTCHA + GREENHOUSE_RECAPTCHA

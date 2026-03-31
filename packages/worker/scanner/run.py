@@ -11,11 +11,13 @@ Cron (every 6 hours):
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timezone
 
-from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import SUPABASE_URL, SUPABASE_SERVICE_KEY, ASHBY_SLUGS, GREENHOUSE_NO_RECAPTCHA, GREENHOUSE_RECAPTCHA
 from db import get_supabase_client
 from scanner.greenhouse import scan_greenhouse_boards
 from scanner.ashby import scan_ashby_boards
@@ -27,36 +29,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("scanner")
 
-# ── Board lists ──────────────────────────────────────────────────────────────
-# These are the public ATS board tokens/slugs we scan.
-# Greenhouse: 271+ boards, Ashby: 102+ boards, Lever: ~7 active companies.
+# ── Board lists (imported from config.py) ───────────────────────────────────
 
-GREENHOUSE_BOARDS = [
-    "stripe", "airbnb", "coinbase", "anthropic", "openai", "waymo",
-    "lyft", "squarespace", "roblox", "veracyte", "axon", "launchdarkly",
-    "opendoor", "figma", "notion", "plaid", "databricks", "scale",
-    "anyscale", "cohere", "huggingface", "midjourney", "stability",
-    "runway", "jasper", "inflection", "adept", "replit", "deepmind",
-    "coreweave", "collibra", "tenstorrent", "scopely", "sofi",
-    "chainguard", "tecton", "modal", "weaviate", "pinecone", "qdrant",
-    "chromadb", "langchain", "llamaindex", "together", "cerebras",
-    "sambanova", "groq", "xai", "mistral", "perplexityai",
-    # Add more tokens as discovered
-]
-
-ASHBY_BOARDS = [
-    "notion", "ramp", "characterai", "harvey", "posthoginc",
-    "cursor", "vercel", "supabase", "resend", "linear",
-    "livekit", "dbt-labs", "materialize", "planetscale",
-    "neon", "turso", "upstash", "convex", "inngest",
-    "temporal", "prefect", "dagster", "modal", "replicate",
-    "weights-and-biases", "arize", "helicone", "braintrust",
-    # Add more slugs as discovered
-]
-
-LEVER_COMPANIES = [
-    "voleon", "nominal", "levelai", "fieldai", "nimblerx", "weride",
-]
+GREENHOUSE_BOARDS = GREENHOUSE_NO_RECAPTCHA + GREENHOUSE_RECAPTCHA
+ASHBY_BOARDS = ASHBY_SLUGS
+LEVER_COMPANIES = ["voleon", "nominal", "levelai", "fieldai", "nimblerx", "weride"]
 
 
 def upsert_discovered_jobs(jobs: list[dict], dry_run: bool = False) -> int:

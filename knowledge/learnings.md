@@ -907,3 +907,22 @@ Gusto job `7557049` reached submit-no-confirmation cap:
 **iCIMS:** Mentioned in product roadmap as target ATS. No applier, no scanner, no learnings. Many enterprise companies (Amazon, Target, UnitedHealth) use iCIMS. URL pattern: `*.icims.com/jobs/*/job` or `careers-*.icims.com`. Status: Not yet supported.
 
 **Taleo (Oracle):** Legacy ATS still used by some large enterprises. URL pattern: `*.taleo.net`. Known for extremely complex multi-page forms. Status: Not yet supported, low priority (most companies migrating away).
+
+### Cross-Platform CAPTCHA Blocker Pattern (March 2026)
+
+- Ashby + Greenhouse automation often reaches pre-submit but gets blocked by CAPTCHA (`captcha_blocked`) before final submit.
+- Keep retry cap to **2 attempts** per blocker in the same run; after second block, skip and move on to next job.
+- Some Greenhouse links under `job-boards.greenhouse.io/{company}/jobs/{id}` or `boards.greenhouse.io/{company}/jobs/{id}` can return `NOT_FOUND` in `apply_v2`; treat as dead posting and do not keep retrying beyond 2 attempts.
+- This applies across ALL ATS platforms — never burn more than 2 attempts on a single blocker.
+
+---
+
+### Scouting Sources (March 2026)
+
+ApplyLoop scans 6 job sources every 30 minutes:
+1. **Ashby API** — 53+ company boards. 100% submit rate. Simplest ATS.
+2. **Greenhouse API** — 68+ company boards (20 no-reCAPTCHA, 18 with reCAPTCHA). Scout all, skip reCAPTCHA at apply time.
+3. **LinkedIn** — Public search via scrapling (no auth). Queries user's target_titles.
+4. **Indeed** — Via python-jobspy. Large volume, 24h freshness filter.
+5. **Himalayas** — Remote-focused API. Free, no auth.
+6. **JSearch/Google Jobs** — Via RapidAPI (optional, needs RAPIDAPI_KEY). Fresh postings with salary.

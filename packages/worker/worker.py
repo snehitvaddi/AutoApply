@@ -20,6 +20,10 @@ from db import (
 )
 from notifier import send_application_result, send_failure
 from knowledge import build_answer_key, load_global_template
+from scanner.linkedin import scan_linkedin
+from scanner.indeed import scan_indeed
+from scanner.himalayas import scan_himalayas
+from scanner.jsearch import scan_jsearch
 from applier.greenhouse import GreenhouseApplier
 from applier.lever import LeverApplier
 from applier.ashby import AshbyApplier
@@ -198,11 +202,11 @@ def scout_ashby_boards(user_prefs: dict | None = None) -> list[dict]:
 
 
 def scout_greenhouse_boards(user_prefs: dict | None = None) -> list[dict]:
-    """Scout Greenhouse API for AI/ML jobs (no-reCAPTCHA boards only)."""
+    """Scout Greenhouse API for AI/ML jobs (all boards — reCAPTCHA check happens at apply time)."""
     import httpx
     jobs = []
     with httpx.Client(timeout=10, follow_redirects=True) as client:
-        for slug in GREENHOUSE_NO_RECAPTCHA:
+        for slug in GREENHOUSE_NO_RECAPTCHA + GREENHOUSE_RECAPTCHA:
             try:
                 resp = client.get(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs")
                 if resp.status_code != 200:
@@ -299,15 +303,51 @@ def enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
 def run_scout_cycle(user_id: str):
     """Run one scout → filter → enqueue cycle for a user."""
     update_heartbeat(user_id, "scouting")
-    logger.info("Scout cycle: scanning Ashby + Greenhouse boards...")
+    logger.info("Scout cycle: scanning Ashby + Greenhouse + LinkedIn + Indeed + Himalayas + JSearch...")
 
     user_prefs = fetch_user_job_preferences(user_id) if user_id != "system" else None
 
     ashby_jobs = scout_ashby_boards(user_prefs)
     gh_jobs = scout_greenhouse_boards(user_prefs)
-    all_jobs = ashby_jobs + gh_jobs
 
-    logger.info(f"Scout raw: {len(ashby_jobs)} Ashby, {len(gh_jobs)} Greenhouse = {len(all_jobs)} total")
+    # Build search queries from user preferences or defaults
+    search_queries = (user_prefs or {}).get("target_titles") or ["AI Engineer", "ML Engineer", "Data Scientist"]
+
+    linkedin_jobs = []
+    indeed_jobs = []
+    himalayas_jobs = []
+    jsearch_jobs = []
+
+    try:
+        linkedin_jobs = scan_linkedin(search_queries)
+    except Exception as e:
+        logger.warning(f"LinkedIn scout failed: {e}")
+
+    try:
+        indeed_jobs = scan_indeed(search_queries)
+    except Exception as e:
+        logger.warning(f"Indeed scout failed: {e}")
+
+    try:
+        himalayas_jobs = scan_himalayas(search_queries)
+    except Exception as e:
+        logger.warning(f"Himalayas scout failed: {e}")
+
+    try:
+        jsearch_jobs = scan_jsearch(search_queries)
+    except Exception as e:
+        logger.warning(f"JSearch scout failed: {e}")
+
+    # Filter jobs from sources that don't pre-filter
+    filtered_extra = [j for j in linkedin_jobs + indeed_jobs + himalayas_jobs + jsearch_jobs
+                      if passes_filter(j["title"], j["company"], j["location"], user_prefs)]
+
+    all_jobs = ashby_jobs + gh_jobs + filtered_extra
+
+    logger.info(f"Scout: {len(ashby_jobs)} Ashby, {len(gh_jobs)} Greenhouse, "
+                f"{len(linkedin_jobs)} LinkedIn, {len(indeed_jobs)} Indeed, "
+                f"{len(himalayas_jobs)} Himalayas, {len(jsearch_jobs)} JSearch "
+                f"= {len(all_jobs)} total (after filter)")
 
     if not all_jobs:
         update_heartbeat(user_id, "idle", "No new jobs found")
