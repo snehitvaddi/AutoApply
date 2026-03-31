@@ -6,11 +6,13 @@ import subprocess
 import threading
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlparse
+import re
 from config import (
     WORKER_ID, POLL_INTERVAL, APPLY_COOLDOWN, ATS_COOLDOWNS,
     MAX_SYSTEM_APPS_PER_HOUR, BLOCKED_DOMAINS, COMPANY_PAUSES, BLOCKED_COMPANIES,
     BLOCKED_STAFFING, SCOUT_INTERVAL_MINUTES, MAX_COMPANY_APPS_PER_30_DAYS,
-    SKIP_LEVELS, SKIP_COMPANIES_SENIOR, AI_KEYWORDS, SKIP_LOCATIONS,
+    SKIP_LEVELS, SKIP_COMPANIES_SENIOR, AI_KEYWORDS, AI_KEYWORDS_SHORT,
+    SKIP_LOCATIONS, SKIP_ROLE_KEYWORDS,
     ASHBY_SLUGS, GREENHOUSE_NO_RECAPTCHA, GREENHOUSE_RECAPTCHA,
 )
 from db import (
@@ -129,13 +131,23 @@ def passes_filter(title: str, company: str, location: str, user_prefs: dict | No
     if any(sc in cl for sc in BLOCKED_STAFFING):
         return False
 
-    # PER-USER or DEFAULT keyword filter
+    # Skip irrelevant role types (sales, legal, marketing, recruiter, etc.)
+    if any(rk in tl for rk in SKIP_ROLE_KEYWORDS):
+        return False
+
+    # PER-USER or DEFAULT keyword filter (with word-boundary for short keywords)
     keywords = AI_KEYWORDS  # default
     if user_prefs and user_prefs.get("target_keywords"):
         keywords = [k.lower() for k in user_prefs["target_keywords"]]
     elif user_prefs and user_prefs.get("target_titles"):
         keywords = [t.lower() for t in user_prefs["target_titles"]]
-    if not any(kw in tl for kw in keywords):
+
+    def _kw_matches(kw: str, text: str) -> bool:
+        if kw in AI_KEYWORDS_SHORT:
+            return bool(re.search(rf'\b{re.escape(kw)}\b', text))
+        return kw in text
+
+    if not any(_kw_matches(kw, tl) for kw in keywords):
         return False
 
     # PER-USER or DEFAULT level skip
@@ -170,6 +182,43 @@ def passes_filter(title: str, company: str, location: str, user_prefs: dict | No
     return True
 
 
+# ─── Freshness Filter ────────────────────────────────────────────────────────
+
+def _is_fresh_24h(date_value) -> bool:
+    """Check if a date is within the last 24 hours. Handles multiple formats."""
+    if not date_value:
+        return True  # no date = assume fresh (let other filters handle it)
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=24)
+
+    try:
+        if isinstance(date_value, (int, float)):
+            # Unix epoch (seconds or milliseconds)
+            ts = date_value if date_value < 1e12 else date_value / 1000
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            return dt >= cutoff
+
+        s = str(date_value).strip()
+        # ISO 8601 (2026-03-30T12:00:00Z or 2026-03-30T12:00:00.000Z)
+        if "T" in s:
+            s = s.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt >= cutoff
+
+        # YYYY-MM-DD
+        if len(s) == 10 and s[4] == "-":
+            dt = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            return dt >= cutoff
+
+    except Exception:
+        pass
+
+    return True  # can't parse = assume fresh
+
+
 # ─── Scout Functions ─────────────────────────────────────────────────────────
 
 def scout_ashby_boards(user_prefs: dict | None = None) -> list[dict]:
@@ -183,6 +232,9 @@ def scout_ashby_boards(user_prefs: dict | None = None) -> list[dict]:
                 if resp.status_code != 200:
                     continue
                 for job in resp.json().get("jobs", []):
+                    # Freshness: only jobs published in last 24h
+                    if not _is_fresh_24h(job.get("publishedAt")):
+                        continue
                     title = job.get("title", "")
                     loc = job.get("location", "")
                     if isinstance(loc, dict):
@@ -212,6 +264,9 @@ def scout_greenhouse_boards(user_prefs: dict | None = None) -> list[dict]:
                 if resp.status_code != 200:
                     continue
                 for job in resp.json().get("jobs", []):
+                    # Freshness: only jobs updated in last 24h
+                    if not _is_fresh_24h(job.get("updated_at")):
+                        continue
                     title = job.get("title", "")
                     loc = job.get("location", {})
                     if isinstance(loc, dict):

@@ -63,6 +63,21 @@ MAX_COMPANY_APPS_PER_30_DAYS = 5
 # Skip these title levels
 SKIP_LEVELS = ["lead", "principal", "staff", "director", "manager", "vp", "intern", "co-op"]
 
+# Skip irrelevant role types (sales, legal, marketing, etc.)
+SKIP_ROLE_KEYWORDS = [
+    "sales", "account executive", "account manager", "business development",
+    "legal", "counsel", "attorney", "paralegal",
+    "marketing", "content", "copywriter", "social media",
+    "recruiter", "talent acquisition", "people ops",
+    "designer", "graphic design", "ux design",
+    "security engineer", "iam", "identity", "soc analyst",
+    "datacenter", "facilities", "office manager",
+    "customer success", "support engineer", "technical support",
+]
+
+# Short AI keywords that need word-boundary matching (to avoid "Retailer" matching "ai")
+AI_KEYWORDS_SHORT = {"ai", "ml", "nlp", "llm", "genai"}
+
 # Skip Senior roles at FAANG/big tech (Senior at startups is OK)
 SKIP_COMPANIES_SENIOR = [
     "google", "meta", "amazon", "apple", "microsoft",
