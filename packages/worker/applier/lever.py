@@ -20,7 +20,7 @@ from applier.base import BaseApplier, ApplyResult
 from applier.greenhouse import (
     browser, snapshot, fill_fields, click_ref, select_option,
     upload_file, take_screenshot, wait_load, navigate_url,
-    parse_snapshot, match_text_field, match_dropdown,
+    parse_snapshot, match_text_field, match_dropdown, evaluate_js,
 )
 from config import SCREENSHOT_DIR
 
@@ -123,6 +123,11 @@ class LeverApplier(BaseApplier):
 
             logger.info(f"Submitting via ref {submit_ref}")
             click_ref(submit_ref)
+            time.sleep(2)
+
+            # Lever submit fix: the button click alone sometimes doesn't fire.
+            # Use JS requestSubmit() as backup to ensure the form actually posts.
+            evaluate_js("() => { const f = document.querySelector('form'); if (f) f.requestSubmit(); }")
             time.sleep(3)
 
             img = take_screenshot()

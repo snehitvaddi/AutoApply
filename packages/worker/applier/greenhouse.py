@@ -32,7 +32,7 @@ import subprocess
 from typing import Optional
 
 from applier.base import BaseApplier, ApplyResult
-from config import SCREENSHOT_DIR
+from config import SCREENSHOT_DIR, GREENHOUSE_RECAPTCHA
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,12 @@ def call_llm(prompt: str) -> Optional[dict]:
 # ─── Mapping Executor ────────────────────────────────────────────────────────
 
 def execute_mapping(mapping: dict, resume_path: str) -> dict:
-    """Execute a fill mapping from the LLM. Returns {filled, clicked, errors}."""
+    """Execute a fill mapping from the LLM. Returns {filled, clicked, errors}.
+
+    DROPDOWN_ORDER rule: Fill text fields and click buttons BEFORE handling
+    dropdowns. Greenhouse forms can lose focus or reset values if dropdowns
+    are opened before text fields are filled.
+    """
     results = {"filled": 0, "clicked": 0, "errors": []}
 
     # Step 1: Upload resume
@@ -267,7 +272,7 @@ def execute_mapping(mapping: dict, resume_path: str) -> dict:
         upload_file(resume_path, upload_ref)
         time.sleep(2)
 
-    # Step 2: Fill text fields
+    # Step 2: Fill text fields FIRST (before dropdowns — DROPDOWN_ORDER rule)
     for f in mapping.get("fills", []):
         r = fill_fields(json.dumps([{"ref": f["ref"], "type": "textbox", "value": f["value"]}]))
         if "Error" in r:
@@ -277,8 +282,29 @@ def execute_mapping(mapping: dict, resume_path: str) -> dict:
         results["filled"] += 1
         time.sleep(0.2)
 
-    # Step 3: Handle dropdowns
+    # Step 3: Click radios and checkboxes BEFORE dropdowns
+    for r in mapping.get("radios", []):
+        click_ref(r["ref"])
+        results["clicked"] += 1
+        time.sleep(0.2)
+
+    for c in mapping.get("checkboxes", []):
+        click_ref(c["ref"])
+        results["clicked"] += 1
+        time.sleep(0.2)
+
+    # Step 4: Handle dropdowns LAST (DROPDOWN_ORDER rule)
     for d in mapping.get("dropdowns", []):
+        # Toggle flyout handling: some Greenhouse dropdowns have a "Toggle flyout"
+        # button that must be clicked before the dropdown options appear.
+        snap_before = snapshot()
+        flyout_match = re.search(
+            r'button "Toggle flyout".*?\[ref=(\w+)\]', snap_before
+        )
+        if flyout_match:
+            click_ref(flyout_match.group(1))
+            time.sleep(0.5)
+
         click_ref(d["ref"])
         time.sleep(0.5)
         type_into(d["ref"], d["search_text"])
@@ -294,15 +320,6 @@ def execute_mapping(mapping: dict, resume_path: str) -> dict:
             if first_option:
                 click_ref(first_option.group(1))
         time.sleep(0.5)
-
-    # Step 4: Click radios and checkboxes
-    for r in mapping.get("radios", []):
-        click_ref(r["ref"])
-        time.sleep(0.2)
-
-    for c in mapping.get("checkboxes", []):
-        click_ref(c["ref"])
-        time.sleep(0.2)
 
     return results
 
@@ -337,11 +354,24 @@ class GreenhouseApplier(BaseApplier):
         return url
 
     def apply(self, apply_url: str) -> ApplyResult:
+        # RULE: ONE job at a time. Complete or abandon this application fully
+        # (fill all fields, submit, verify success) before opening the next one.
+        # Never leave partial applications or open tabs.
         os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
         try:
-            # 1. Navigate to embed URL
+            # 0. reCAPTCHA detection: warn/flag if company is in RECAPTCHA list
             embed_url = self.to_embed_url(apply_url)
+            # Extract company slug from embed URL (?for=<slug>)
+            slug_match = re.search(r'[?&]for=([^&]+)', embed_url)
+            company_slug = slug_match.group(1) if slug_match else ""
+            if company_slug and company_slug.lower() in [c.lower() for c in GREENHOUSE_RECAPTCHA]:
+                logger.warning(
+                    f"reCAPTCHA company detected: {company_slug} — "
+                    "form will be filled but submit may be blocked"
+                )
+
+            # 1. Navigate to embed URL
             logger.info(f"Opening {embed_url} (original: {apply_url})")
             navigate_url(embed_url)
             wait_load(5000)

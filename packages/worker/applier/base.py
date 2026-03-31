@@ -39,7 +39,7 @@ class BaseApplier(ABC):
             f"GitHub: {user.get('github_url', '')}",
             f"Portfolio: {user.get('portfolio_url', '')}",
             "",
-            "WORK EXPERIENCE (fill ALL, most recent first):",
+            "WORK EXPERIENCE (CRITICAL: fill ALL 4 positions below — never skip or abbreviate any):",
         ]
         for i, exp in enumerate(p.get("work_experience", [])):
             lines.append(
@@ -50,7 +50,7 @@ class BaseApplier(ABC):
                 lines.append(f"     - {ach[:150]}")
 
         lines.append("")
-        lines.append("EDUCATION (fill ALL):")
+        lines.append("EDUCATION (CRITICAL: fill ALL entries below — both degrees required):")
         for edu in p.get("education", []):
             lines.append(
                 f"  - {edu.get('school','')} | {edu.get('degree','')} {edu.get('field','')} "

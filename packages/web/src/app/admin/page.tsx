@@ -32,6 +32,15 @@ interface WorkerLog {
   users?: { email: string; full_name: string | null } | null;
 }
 
+interface Heartbeat {
+  user_id: string;
+  email: string;
+  last_action: string;
+  details: string;
+  updated_at: string;
+  stale: boolean;
+}
+
 interface InviteCode {
   id: string;
   code: string;
@@ -45,6 +54,7 @@ export default function AdminPage() {
   const router = useRouter();
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [invites, setInvites] = useState<InviteCode[]>([]);
+  const [heartbeats, setHeartbeats] = useState<Heartbeat[]>([]);
   const [stats, setStats] = useState<Record<string, number>>({});
   const [workerLogs, setWorkerLogs] = useState<WorkerLog[]>([]);
   const [logSummary, setLogSummary] = useState({ unresolved_errors: 0, total_today: 0 });
@@ -58,25 +68,27 @@ export default function AdminPage() {
   }, []);
 
   async function loadData() {
-    const [usersRes, invRes, statsRes, logsRes] = await Promise.all([
+    const [usersRes, invRes, statsRes, logsRes, hbRes] = await Promise.all([
       fetch("/api/admin/users"),
       fetch("/api/admin/invites"),
       fetch("/api/admin/stats"),
       fetch("/api/admin/worker-logs?resolved=false&limit=50"),
+      fetch("/api/admin/heartbeat"),
     ]);
     if (usersRes.status === 403 || invRes.status === 403 || statsRes.status === 403) {
       setUnauthorized(true);
       setLoading(false);
       return;
     }
-    const [userData, invData, statsData, logsData] = await Promise.all([
-      usersRes.json(), invRes.json(), statsRes.json(), logsRes.json(),
+    const [userData, invData, statsData, logsData, hbData] = await Promise.all([
+      usersRes.json(), invRes.json(), statsRes.json(), logsRes.json(), hbRes.json(),
     ]);
     setUsers(userData.data?.users || []);
     setInvites(invData.data?.invites || []);
     setStats(statsData.data || {});
     setWorkerLogs(logsData.data?.logs || []);
     setLogSummary(logsData.data?.summary || { unresolved_errors: 0, total_today: 0 });
+    setHeartbeats(hbData.data?.heartbeats || []);
     setLoading(false);
   }
 
@@ -251,6 +263,57 @@ export default function AdminPage() {
               </div>
             ))}
           </div>
+        </section>
+      )}
+
+      {/* Worker Heartbeats */}
+      {heartbeats.length > 0 && (
+        <section className="bg-white rounded-xl border p-6 mb-6">
+          <h2 className="font-semibold mb-4">Worker Heartbeats ({heartbeats.length})</h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500 border-b">
+                <th className="pb-2">Status</th>
+                <th className="pb-2">User</th>
+                <th className="pb-2">Last Action</th>
+                <th className="pb-2">Details</th>
+                <th className="pb-2">Last Seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {heartbeats.map((hb) => {
+                const minutesAgo = (Date.now() - new Date(hb.updated_at).getTime()) / 60_000;
+                const dotColor =
+                  minutesAgo <= 35
+                    ? "bg-green-500"
+                    : minutesAgo <= 60
+                    ? "bg-yellow-400"
+                    : "bg-red-500";
+                const label =
+                  minutesAgo <= 35 ? "Fresh" : minutesAgo <= 60 ? "Stale" : "Dead";
+                const timeLabel =
+                  minutesAgo < 1
+                    ? "just now"
+                    : minutesAgo < 60
+                    ? `${Math.round(minutesAgo)}m ago`
+                    : `${Math.round(minutesAgo / 60)}h ago`;
+                return (
+                  <tr key={hb.user_id} className="border-b last:border-0">
+                    <td className="py-2">
+                      <span className="flex items-center gap-2">
+                        <span className={`inline-block w-2.5 h-2.5 rounded-full ${dotColor}`} />
+                        <span className="text-xs text-gray-500">{label}</span>
+                      </span>
+                    </td>
+                    <td className="py-2">{hb.email}</td>
+                    <td className="py-2 capitalize">{hb.last_action}</td>
+                    <td className="py-2 text-gray-500 truncate max-w-[200px]">{hb.details}</td>
+                    <td className="py-2 text-gray-500">{timeLabel}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </section>
       )}
 

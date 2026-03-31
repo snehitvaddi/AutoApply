@@ -851,6 +851,51 @@ Gusto job `7557049` reached submit-no-confirmation cap:
 - Distinct from reCAPTCHA — form accepted submit but gave no feedback
 - Treat as `failed` if no confirmation within 5 seconds post-submit
 
+### Ashby — Reliability (March 2026)
+
+- 100% submit rate in testing. Simplest ATS. Always works.
+- No reCAPTCHA, no multi-step wizards, no security code verification.
+- 50+ company slugs confirmed active: Character.AI, Harvey, Ramp, PostHog, Notion, Anyscale, Replit, Runway, Weights & Biases, Cohere, Vercel, Linear, Clerk, Supabase, Neon, Modal, Mem, Sourcegraph, Ashby itself, and many more.
+- Recommended as first-priority ATS for auto-apply due to reliability.
+
+### Greenhouse reCAPTCHA Map (March 2026)
+
+- **NO reCAPTCHA (safe to auto-apply):** Coinbase, Figma, Datadog, Torc, Spring Health, Headspace, Flexport, Nuro, Waymo, Aurora, Affirm, Chime, Upstart, Verkada, Samsara, Snap, Instacart, DoorDash, Shopify, Calendly
+- **HAS reCAPTCHA (skip or manual):** Stripe, Robinhood, Pinterest, Discord, Reddit, Together AI, Gong, Abnormal, Xometry, Faire, Duolingo, Oura, Amplitude, Braze, Grammarly, Twitch, Toast, Peloton
+- Always check the reCAPTCHA map before queuing Greenhouse jobs. Auto-apply only to safe companies.
+- reCAPTCHA is invisible Enterprise — no checkbox, just blocks submit silently.
+
+### Lever Submit Fix (March 2026)
+
+- Button click alone does NOT submit on Lever forms.
+- MUST use: `evaluate_js("document.querySelector('form').requestSubmit()")`
+- Regular `click_ref(submit_ref)` will appear to work but the form never actually POSTs.
+- Always verify confirmation text after Lever submit — if missing, retry with JS requestSubmit.
+
+### Workday Form Patterns (March 2026)
+
+- Multi-step wizard with "Next" buttons between sections.
+- "How Did You Hear About Us" needs promptOption click pattern — not a standard dropdown.
+- Date fields use spinbutton elements that are automation-resistant.
+  - Fix: Use JS to set value directly: `evaluate_js("document.querySelector('[data-automation-id=\"dateSectionDay-input\"]').value = '15'")`
+  - Must also dispatch `input` and `change` events after setting value.
+- Resume upload on Workday requires clicking "Select Files" button first, then using `browser upload`.
+
+### Dropdown Order Rule (March 2026)
+
+- **CRITICAL:** Fill text fields + click radio buttons/checkboxes BEFORE interacting with dropdowns.
+- After a dropdown interaction, DOM element references (refs) can shift due to React re-renders.
+- If you fill text fields after dropdown interactions, you may be targeting stale refs → wrong fields get filled.
+- Order: (1) Upload resume, (2) Fill all text fields, (3) Click radios/checkboxes, (4) Handle dropdowns last, (5) Submit.
+
+### Toggle Flyout Pattern (March 2026)
+
+- Some Greenhouse dropdowns have a "Toggle flyout" button that must be clicked to reveal options.
+- These appear as `button "Toggle flyout" [ref=eXX]` in snapshots.
+- Click the toggle button first, wait 0.5s, then snapshot to see the revealed options.
+- After selecting an option, the flyout auto-closes.
+- Common on: gender, race/ethnicity, veteran status, disability status dropdowns.
+
 ### Additional Companies by ATS Platform (March 2026)
 
 **Ashby:** Character.AI, Harvey, Ramp, PostHog, Notion
