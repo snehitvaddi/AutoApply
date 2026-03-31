@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     .order("updated_at", { ascending: false });
 
   if (error) {
-    return apiError("internal", error.message);
+    return apiError("internal_server_error", error.message);
   }
 
   const now = Date.now();
