@@ -15,10 +15,14 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const {
     target_titles,
+    target_keywords,
+    excluded_titles,
     excluded_companies,
+    preferred_locations,
     min_salary,
     remote_only,
     auto_apply,
+    max_daily,
   } = body;
 
   const { data, error } = await supabase
@@ -27,10 +31,14 @@ export async function POST(request: NextRequest) {
       {
         user_id: auth.userId,
         target_titles: target_titles || [],
+        target_keywords: target_keywords || [],
+        excluded_titles: excluded_titles || [],
         excluded_companies: excluded_companies || [],
+        preferred_locations: preferred_locations || [],
         min_salary: min_salary || null,
         remote_only: remote_only ?? false,
         auto_apply: auto_apply ?? false,
+        max_daily: max_daily ?? 50,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" }

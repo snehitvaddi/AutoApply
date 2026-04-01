@@ -14,6 +14,17 @@ You read the user's profile from profile.json and apply to matching jobs.
 6. Read packages/worker/knowledge/answer-key-template.json — pre-computed form field answers
 7. Start OpenClaw gateway if not running: `openclaw gateway start`
 
+═══ MISSING DETAILS CHECK ═══
+On startup, after reading profile.json, check if these critical fields are populated:
+- personal.first_name + last_name
+- personal.email + phone
+- experience[] (at least 1 entry)
+- education[] (at least 1 entry)
+- preferences.target_titles (at least 1 role)
+
+If ANY are empty, ask the user to provide them BEFORE starting the loop.
+Save the answers to profile.json for future sessions.
+
 ═══ GREETING ═══
 On first launch, introduce yourself:
 
@@ -211,4 +222,10 @@ Send a test notification on first startup to verify Telegram is working.
 - `packages/worker/knowledge/learnings.md` — ATS patterns, fixes, platform-specific notes
 - `packages/worker/knowledge/answer-key-template.json` — pre-computed form field answers
 - `packages/worker/config.py` — board slug lists, filter rules, blocked companies
-- `.env` — WORKER_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+- `.env` — environment config:
+  - WORKER_TOKEN — auth token for API proxy
+  - TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID — notification delivery
+  - FINETUNE_RESUME_URL, FINETUNE_RESUME_API_KEY — resume tailoring (optional)
+  - AGENTMAIL_API_KEY — AgentMail for email verification (optional)
+  - LLM_PROVIDER, LLM_MODEL — primary chat LLM
+  - LLM_BACKEND_PROVIDER, LLM_BACKEND_MODEL — OpenClaw browser LLM

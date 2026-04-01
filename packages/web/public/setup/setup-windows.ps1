@@ -426,14 +426,20 @@ if ($amKey) {
     Write-OK "AgentMail API key saved to .env"
 }
 
-# Finetune Resume URL
+# Finetune Resume URL + API Key
 $ftUrl = Read-Host "  Finetune Resume API URL (or Enter to skip)"
 if ($ftUrl) {
     $EnvFile = Join-Path $InstallDir ".env"
     if (Test-Path $EnvFile) {
         Add-Content -Path $EnvFile -Value "FINETUNE_RESUME_URL=$ftUrl"
     }
-    Write-OK "Finetune Resume URL saved to .env"
+    $ftKey = Read-Host "  Finetune Resume API Key (or Enter to skip)"
+    if ($ftKey) {
+        if (Test-Path $EnvFile) {
+            Add-Content -Path $EnvFile -Value "FINETUNE_RESUME_API_KEY=$ftKey"
+        }
+    }
+    Write-OK "Finetune Resume config saved to .env"
 }
 
 Write-Host ""
@@ -733,13 +739,47 @@ if (-not (Test-Path $EnvFile)) {
                     $TelegramChatId = $ConfigResponse.data.telegram_chat_id
                 }
 
-                # Write profile.json for worker LLM context
+                # Write profile.json for worker LLM context — include ALL fields from cli-config
+                $p = $ConfigResponse.data.profile
                 $profile = @{
-                    user = $ConfigResponse.data.profile
+                    user = $ConfigResponse.data.user
+                    personal = @{
+                        first_name = if ($p.first_name) { $p.first_name } else { "" }
+                        last_name = if ($p.last_name) { $p.last_name } else { "" }
+                        email = if ($ConfigResponse.data.user.email) { $ConfigResponse.data.user.email } else { "" }
+                        phone = if ($p.phone) { $p.phone } else { "" }
+                        linkedin_url = if ($p.linkedin_url) { $p.linkedin_url } else { "" }
+                        github_url = if ($p.github_url) { $p.github_url } else { "" }
+                        portfolio_url = if ($p.portfolio_url) { $p.portfolio_url } else { "" }
+                    }
+                    work = @{
+                        current_company = if ($p.current_company) { $p.current_company } else { "" }
+                        current_title = if ($p.current_title) { $p.current_title } else { "" }
+                        years_experience = if ($p.years_experience) { $p.years_experience } else { "" }
+                    }
+                    legal = @{
+                        work_authorization = if ($p.work_authorization) { $p.work_authorization } else { "" }
+                        requires_sponsorship = if ($p.requires_sponsorship) { $p.requires_sponsorship } else { $false }
+                    }
+                    eeo = @{
+                        gender = if ($p.gender) { $p.gender } else { "" }
+                        race_ethnicity = if ($p.race_ethnicity) { $p.race_ethnicity } else { "" }
+                        veteran_status = if ($p.veteran_status) { $p.veteran_status } else { "" }
+                        disability_status = if ($p.disability_status) { $p.disability_status } else { "" }
+                    }
+                    experience = if ($p.work_experience) { $p.work_experience } else { @() }
+                    education = if ($p.education) { $p.education } else { @() }
+                    education_summary = @{
+                        education_level = if ($p.education_level) { $p.education_level } else { "" }
+                        school_name = if ($p.school_name) { $p.school_name } else { "" }
+                        degree = if ($p.degree) { $p.degree } else { "" }
+                        graduation_year = if ($p.graduation_year) { $p.graduation_year } else { "" }
+                    }
+                    skills = if ($p.skills) { $p.skills } else { @() }
+                    standard_answers = if ($p.answer_key_json) { $p.answer_key_json } else { @{} }
+                    cover_letter_template = if ($p.cover_letter_template) { $p.cover_letter_template } else { "" }
                     preferences = $ConfigResponse.data.preferences
                     resumes = $ConfigResponse.data.resumes
-                    work_experience = if ($ConfigResponse.data.profile.work_experience) { $ConfigResponse.data.profile.work_experience } else { @() }
-                    education = if ($ConfigResponse.data.profile.education) { $ConfigResponse.data.profile.education } else { @() }
                 }
                 $profile | ConvertTo-Json -Depth 10 | Out-File -FilePath (Join-Path $InstallDir "profile.json") -Encoding UTF8
                 Write-OK "Profile synced"
@@ -766,6 +806,7 @@ WORKER_TOKEN=$WorkerToken
 NEXT_PUBLIC_SUPABASE_URL=$SupabaseUrl
 NEXT_PUBLIC_SUPABASE_ANON_KEY=$SupabaseAnon
 SUPABASE_URL=$SupabaseUrl
+# SUPABASE_SERVICE_KEY is not needed — worker uses API proxy via WORKER_TOKEN
 SUPABASE_SERVICE_KEY=$SupabaseAnon
 
 # App
@@ -1074,7 +1115,18 @@ if (-not $hasTelegram) { $todoNum++; $todoLines += "$todoNum. (optional) Configu
 
 # -- Build AGENTS.md content --
 $agentsMd = @"
-# ApplyLoop Setup Status — AGENTS.md
+# ApplyLoop — Agent Context
+
+## What is ApplyLoop?
+ApplyLoop is an automated job application engine. It consists of:
+- A **web dashboard** (Next.js) for configuration and monitoring
+- A **Python worker** that runs locally, scanning for jobs and submitting applications
+- An **OpenClaw CLI** for controlling the worker and managing settings
+- **Playwright** for browser automation (form filling, resume uploads)
+
+The worker polls Supabase for pending job applications, uses Playwright to fill out
+application forms, and reports results back to the dashboard.
+
 # Generated by setup-windows.ps1 on $(Get-Date)
 # This file provides context for the AI setup assistant.
 

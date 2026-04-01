@@ -322,11 +322,15 @@ if [[ -n "$AM_KEY" ]]; then
   log_ok "AgentMail API key saved to .env"
 fi
 
-# Finetune Resume URL
+# Finetune Resume URL + API Key
 read -p "  Finetune Resume API URL (or Enter to skip): " FT_URL
 if [[ -n "$FT_URL" ]]; then
   echo "FINETUNE_RESUME_URL=$FT_URL" >> "$ENV_FILE"
-  log_ok "Finetune Resume URL saved to .env"
+  read -p "  Finetune Resume API Key (or Enter to skip): " FT_KEY
+  if [[ -n "$FT_KEY" ]]; then
+    echo "FINETUNE_RESUME_API_KEY=$FT_KEY" >> "$ENV_FILE"
+  fi
+  log_ok "Finetune Resume config saved to .env"
 fi
 
 echo ""
@@ -618,16 +622,50 @@ else
       TELEGRAM_TOKEN=$(echo "$CONFIG_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(d.get('telegram_bot_token',''))" 2>/dev/null || echo "")
       TELEGRAM_CHAT_ID=$(echo "$CONFIG_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print(d.get('telegram_chat_id',''))" 2>/dev/null || echo "")
 
-      # Write profile.json for worker LLM context
+      # Write profile.json for worker LLM context — include ALL fields from cli-config
       echo "$CONFIG_RESPONSE" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)['data']
+p = d.get('profile', {})
 profile = {
-  'user': d.get('profile', {}),
+  'user': d.get('user', {}),
+  'personal': {
+    'first_name': p.get('first_name', ''),
+    'last_name': p.get('last_name', ''),
+    'email': d.get('user', {}).get('email', ''),
+    'phone': p.get('phone', ''),
+    'linkedin_url': p.get('linkedin_url', ''),
+    'github_url': p.get('github_url', ''),
+    'portfolio_url': p.get('portfolio_url', ''),
+  },
+  'work': {
+    'current_company': p.get('current_company', ''),
+    'current_title': p.get('current_title', ''),
+    'years_experience': p.get('years_experience', ''),
+  },
+  'legal': {
+    'work_authorization': p.get('work_authorization', ''),
+    'requires_sponsorship': p.get('requires_sponsorship', False),
+  },
+  'eeo': {
+    'gender': p.get('gender', ''),
+    'race_ethnicity': p.get('race_ethnicity', ''),
+    'veteran_status': p.get('veteran_status', ''),
+    'disability_status': p.get('disability_status', ''),
+  },
+  'experience': p.get('work_experience', []),
+  'education': p.get('education', []),
+  'education_summary': {
+    'education_level': p.get('education_level', ''),
+    'school_name': p.get('school_name', ''),
+    'degree': p.get('degree', ''),
+    'graduation_year': p.get('graduation_year', ''),
+  },
+  'skills': p.get('skills', []),
+  'standard_answers': p.get('answer_key_json', {}),
+  'cover_letter_template': p.get('cover_letter_template', ''),
   'preferences': d.get('preferences', {}),
   'resumes': d.get('resumes', []),
-  'work_experience': d.get('profile', {}).get('work_experience', []),
-  'education': d.get('profile', {}).get('education', []),
 }
 json.dump(profile, open('$INSTALL_DIR/profile.json', 'w'), indent=2)
 "
@@ -1301,6 +1339,7 @@ When the user opens this chat, immediately say:
 - Greenhouse (68 companies: Coinbase, Figma, Datadog, Waymo, DoorDash...)
 - Indeed (massive volume across all companies)
 - Himalayas (remote-focused roles)
+- Google Jobs (fresh postings with salary data)
 - LinkedIn (public search)
 
 **Smart Filtering** — I only show you relevant roles:
