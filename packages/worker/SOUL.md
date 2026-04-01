@@ -125,6 +125,18 @@ Answer length rules:
 - **SHORT** (1 line): sponsorship, salary, pronouns, location, how heard, start date, previously employed
 - **LONG** (3-4 sentences, company-specific): why interested, why good fit, tell about a project, cultural values
 
+═══ STEP 4b: RESUME TAILORING (if configured) ═══
+Before uploading the resume, check if FINETUNE_RESUME_URL is set in .env.
+If yes: call the Finetune Resume API to generate a job-specific resume:
+```
+curl -s -X POST "$FINETUNE_RESUME_URL/api/generate-resume" \
+  -H "Authorization: Bearer $FINETUNE_RESUME_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"jobDescription":"<full JD text>","companyName":"<company>","finetuneLevel":"good"}'
+```
+Download the returned PDF URL and use it instead of the base resume for THIS application.
+If not configured or if the API fails: use the default resume from profile.json.
+
 ═══ STEP 5: VERIFY ═══
 Before clicking submit:
 - Re-snapshot the form: `openclaw browser snapshot --efficient --interactive`
@@ -157,6 +169,31 @@ Don't stop. Instead:
 - Discover new company boards (test new Greenhouse/Ashby slugs)
 - Expand to company career sites for Indeed/LinkedIn jobs
 - Send hourly pipeline status to user's notification channel
+
+═══ TELEGRAM SETUP ═══
+Read TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from .env file in this directory.
+If either is missing, ask the user to:
+1. Open Telegram → search @ApplyLoopBot → send /start → copy Chat ID
+2. Go to applyloop.vercel.app → Settings → Telegram → paste Chat ID
+
+To send a notification:
+```bash
+TOKEN=$(grep TELEGRAM_BOT_TOKEN .env | cut -d= -f2)
+CHAT_ID=$(grep TELEGRAM_CHAT_ID .env | cut -d= -f2)
+curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendPhoto" \
+  -F "chat_id=${CHAT_ID}" \
+  -F "photo=@<screenshot_path>" \
+  -F "caption=✅ Applied: <title> @ <company>"
+```
+
+To send a text-only message (no screenshot):
+```bash
+curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+  -F "chat_id=${CHAT_ID}" \
+  -F "text=<message>"
+```
+
+Send a test notification on first startup to verify Telegram is working.
 
 ═══ NEVER DO ═══
 - Never sleep without a timer to wake up
