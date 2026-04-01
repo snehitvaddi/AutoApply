@@ -200,17 +200,73 @@ if (Test-CommandExists "openclaw") {
     }
 }
 
-# OpenClaw onboarding + gateway setup
+# OpenClaw configuration — skip interactive onboard, write config directly
 if (Test-CommandExists "openclaw") {
-    # Check if already configured
-    $ocConfigPath = Join-Path $env:USERPROFILE ".openclaw\openclaw.json"
+    $ocDir = Join-Path $env:USERPROFILE ".openclaw"
+    $ocConfigPath = Join-Path $ocDir "openclaw.json"
+
     if (-not (Test-Path $ocConfigPath)) {
-        Write-Info "Setting up OpenClaw (browser will open for authentication)..."
+        Write-Info "Configuring OpenClaw (no interactive wizard needed)..."
+
+        # Create directories
+        New-Item -ItemType Directory -Path $ocDir -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $ocDir "workspace") -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $ocDir "agents\main\sessions") -Force | Out-Null
+
+        # Generate gateway auth token
+        $gwToken = -join ((1..24) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) })
+
+        # Write minimal config — Codex OAuth, local gateway, browser ready
+        $ocConfig = @"
+{
+  "meta": {"lastTouchedVersion": "2026.3.31"},
+  "wizard": {"lastRunAt": "$(Get-Date -Format o)", "lastRunMode": "local"},
+  "browser": {"defaultProfile": "openclaw"},
+  "auth": {
+    "profiles": {
+      "openai-codex:default": {"provider": "openai-codex", "mode": "oauth"}
+    }
+  },
+  "models": {
+    "providers": {
+      "openai": {
+        "baseUrl": "https://api.openai.com/v1",
+        "api": "openai-completions",
+        "models": [
+          {"id": "gpt-4o", "name": "GPT-4o", "reasoning": false, "input": ["text", "image"], "contextWindow": 128000, "maxTokens": 16384}
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {"primary": "openai-codex/gpt-5.3-codex"},
+      "workspace": "$($ocDir -replace '\\', '/')\/workspace",
+      "maxConcurrent": 4
+    },
+    "list": [{"id": "main", "identity": {"name": "ApplyLoop", "emoji": "\ud83d\udcbc"}}]
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "auth": {"mode": "token", "token": "$gwToken"}
+  },
+  "commands": {"native": "auto", "nativeSkills": "auto"}
+}
+"@
+
+        $ocConfig | Out-File -FilePath $ocConfigPath -Encoding UTF8
+        Write-OK "OpenClaw configured (config written directly — no wizard needed)"
+
+        # Now authenticate with OpenAI Codex OAuth (this is the ONE interactive step)
+        Write-Info "Authenticating OpenClaw with OpenAI (browser will open)..."
         $ErrorActionPreference = "Continue"
         try {
-            Start-Process -FilePath "openclaw.cmd" -ArgumentList "onboard" -NoNewWindow -Wait -ErrorAction SilentlyContinue 2>$null
+            Start-Process -FilePath "openclaw.cmd" -ArgumentList "auth", "login", "openai-codex" -NoNewWindow -Wait -ErrorAction SilentlyContinue 2>$null
+            Write-OK "OpenClaw authenticated with OpenAI"
         } catch {
-            Write-Warn "OpenClaw onboard failed. After setup, run: openclaw onboard"
+            Write-Warn "OpenClaw auth failed. After setup, run: openclaw auth login openai-codex"
         }
         $ErrorActionPreference = "Stop"
     } else {

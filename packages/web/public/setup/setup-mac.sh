@@ -154,17 +154,67 @@ else
   log_ok "OpenClaw installed: $(openclaw --version 2>&1 || echo 'installed')"
 fi
 
-# OpenClaw onboarding + gateway setup
+# OpenClaw configuration — skip interactive onboard, write config directly
 if check_command openclaw; then
-  OC_CONFIG="$HOME/.openclaw/openclaw.json"
+  OC_DIR="$HOME/.openclaw"
+  OC_CONFIG="$OC_DIR/openclaw.json"
+
   if [[ ! -f "$OC_CONFIG" ]]; then
-    log_info "Setting up OpenClaw (browser will open for authentication)..."
-    openclaw onboard 2>/dev/null || log_warn "OpenClaw onboard failed. After setup, run: openclaw onboard"
+    log_info "Configuring OpenClaw (no interactive wizard needed)..."
+
+    mkdir -p "$OC_DIR/workspace" "$OC_DIR/agents/main/sessions"
+
+    GW_TOKEN=$(openssl rand -hex 24)
+
+    cat > "$OC_CONFIG" <<OCEOF
+{
+  "meta": {"lastTouchedVersion": "2026.3.31"},
+  "wizard": {"lastRunAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)", "lastRunMode": "local"},
+  "browser": {"defaultProfile": "openclaw"},
+  "auth": {
+    "profiles": {
+      "openai-codex:default": {"provider": "openai-codex", "mode": "oauth"}
+    }
+  },
+  "models": {
+    "providers": {
+      "openai": {
+        "baseUrl": "https://api.openai.com/v1",
+        "api": "openai-completions",
+        "models": [
+          {"id": "gpt-4o", "name": "GPT-4o", "reasoning": false, "input": ["text", "image"], "contextWindow": 128000, "maxTokens": 16384}
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {"primary": "openai-codex/gpt-5.3-codex"},
+      "workspace": "$OC_DIR/workspace",
+      "maxConcurrent": 4
+    },
+    "list": [{"id": "main", "identity": {"name": "ApplyLoop", "emoji": "\ud83d\udcbc"}}]
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "auth": {"mode": "token", "token": "$GW_TOKEN"}
+  },
+  "commands": {"native": "auto", "nativeSkills": "auto"}
+}
+OCEOF
+
+    log_ok "OpenClaw configured (config written directly)"
+
+    # Authenticate with OpenAI Codex OAuth (the ONE interactive step)
+    log_info "Authenticating OpenClaw with OpenAI (browser will open)..."
+    openclaw auth login openai-codex 2>/dev/null && log_ok "OpenClaw authenticated" || log_warn "Auth failed. Run: openclaw auth login openai-codex"
   else
     log_ok "OpenClaw already configured"
   fi
 
-  # Start the gateway (browser automation service)
+  # Start the gateway
   log_info "Starting OpenClaw gateway..."
   openclaw gateway start 2>/dev/null && log_ok "OpenClaw gateway started" || log_warn "Gateway start failed. Run: openclaw gateway start"
 fi
