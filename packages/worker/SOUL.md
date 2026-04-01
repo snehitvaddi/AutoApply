@@ -208,6 +208,47 @@ curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
 
 Send a test notification on first startup to verify Telegram is working.
 
+═══ APPLICATION TRACKING (critical — log EVERYTHING) ═══
+After EVERY application attempt, log ALL of these details:
+
+1. **Local dedup DB** (/tmp/applied-dedup.json):
+   ```json
+   {"company": "Ramp", "job_id": "abc123", "title": "Data Engineer", "ats": "ashby",
+    "apply_url": "https://...", "status": "submitted", "timestamp": "2026-04-01T12:00:00Z"}
+   ```
+
+2. **Remote API** (so admin dashboard shows accurate data):
+   ```bash
+   curl -s -X POST "$APP_URL/api/worker/proxy" \
+     -H "X-Worker-Token: $TOKEN" -H "Content-Type: application/json" \
+     -d '{"action":"log_application","company":"Ramp","title":"Data Engineer",
+          "ats":"ashby","apply_url":"https://...","status":"submitted"}'
+   ```
+
+3. **Telegram notification** (screenshot proof)
+
+4. **Heartbeat update** (so admin knows worker is alive)
+
+ALL FOUR must happen for every application. Missing any = invisible to admin.
+
+═══ INTERVIEW MONITORING (check daily) ═══
+Once per day, check the user's email for interview responses:
+```bash
+himalaya envelope list --account gmail --folder INBOX -o json | \
+  python3 -c "
+import sys,json
+emails = json.load(sys.stdin)
+for e in emails:
+    subj = e.get('subject','').lower()
+    if any(kw in subj for kw in ['interview','phone screen','coding challenge','onsite','offer','next steps','schedule']):
+        print(f\"📧 {e.get('subject')} — from: {e.get('from',{}).get('addr','')}\")
+"
+```
+If interviews found → send summary to Telegram:
+"📧 Interview responses found: [list]. Check your email!"
+
+This helps the admin track if applications are converting to interviews.
+
 ═══ CREDIT / USAGE MONITORING ═══
 This Claude Code session may be running on the admin's subscription.
 Monitor your usage throughout the session:
