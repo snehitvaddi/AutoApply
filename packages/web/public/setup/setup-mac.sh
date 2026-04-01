@@ -531,6 +531,7 @@ WORKER_TOKEN=$WORKER_TOKEN
 NEXT_PUBLIC_SUPABASE_URL=$SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY=$SUPABASE_ANON
 SUPABASE_URL=$SUPABASE_URL
+# SUPABASE_SERVICE_KEY is not needed — worker uses API proxy via WORKER_TOKEN
 SUPABASE_SERVICE_KEY=$SUPABASE_ANON
 
 # App
@@ -547,14 +548,6 @@ SCREENSHOT_DIR=/tmp/autoapply/screenshots
 # Telegram (auto-configured from admin)
 TELEGRAM_BOT_TOKEN=$TELEGRAM_TOKEN
 TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID
-
-# Redis rate limiting (optional)
-# UPSTASH_REDIS_REST_URL=
-# UPSTASH_REDIS_REST_TOKEN=
-
-# Google OAuth for Gmail (optional — Pro tier)
-# GOOGLE_CLIENT_ID=
-# GOOGLE_CLIENT_SECRET=
 ENVEOF
 
   log_ok ".env file created at $ENV_FILE"
@@ -564,8 +557,10 @@ fi
 mkdir -p /tmp/autoapply/resumes /tmp/autoapply/screenshots
 log_ok "Worker directories created"
 
-# Run database migration
-log_info "Running database migration..."
+# Skip database migration for regular users — admin handles migrations
+# Migrations require the Supabase database password which only the admin has
+log_info "Skipping database migration (handled by admin)..."
+SKIP_MIGRATION=true
 MIGRATION_SCRIPT=""
 if [[ -f "$INSTALL_DIR/packages/web/public/setup/run-migration.py" ]]; then
   MIGRATION_SCRIPT="$INSTALL_DIR/packages/web/public/setup/run-migration.py"
@@ -575,13 +570,15 @@ else
   curl -fsSL "https://applyloop.vercel.app/setup/run-migration.py" -o "$MIGRATION_SCRIPT" 2>/dev/null
 fi
 
-if [[ -f "$MIGRATION_SCRIPT" ]]; then
+if [[ "$SKIP_MIGRATION" != "true" ]] && [[ -f "$MIGRATION_SCRIPT" ]]; then
   "$PYTHON_CMD" "$MIGRATION_SCRIPT" "$ENV_FILE"
   if [[ $? -eq 0 ]]; then
     log_ok "Database migration complete"
   else
     log_warn "Migration skipped — run manually from Supabase SQL Editor"
   fi
+else
+  log_ok "Database is managed by admin — no migration needed on your end"
 fi
 
 # ── Auto-Update Setup ──────────────────────────────────────────────────────
@@ -722,7 +719,7 @@ add_config() {
 
 add_config "NEXT_PUBLIC_SUPABASE_URL" "Supabase URL          (required)"
 add_config "NEXT_PUBLIC_SUPABASE_ANON_KEY" "Supabase Anon Key     (required)"
-add_config "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service Key  (required)"
+add_config "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service Key  (not needed - API proxy)"
 add_config "ENCRYPTION_KEY" "Encryption Key        (required)"
 add_config "WORKER_ID" "Worker ID             (required)"
 add_config "TELEGRAM_BOT_TOKEN" "Telegram Bot Token    (optional)"
@@ -794,11 +791,12 @@ elif [[ -f "$ENV_FILE" ]]; then
     add_todo "(required) Add Anthropic API key to .env (console.anthropic.com)"
   fi
   if [[ "$LLM_PROVIDER" == "openai" || "$LLM_BACKEND_PROVIDER" == "openai" ]] && ! grep -q "^OPENAI_API_KEY=.\+" "$ENV_FILE" 2>/dev/null; then
-    add_todo "(required) Add OpenAI API key to .env (platform.openai.com)"
+    add_todo "(optional) OpenAI API key not needed if using Codex subscription"
   fi
 fi
 
 add_todo "(required) Log in at https://applyloop.vercel.app and complete onboarding"
+add_todo "(not needed) Database migration handled by admin — skip this"
 add_todo "(required) Start the worker: cd packages/worker && $PYTHON_CMD worker.py"
 
 if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^STRIPE_SECRET_KEY=.\+" "$ENV_FILE" 2>/dev/null; then
@@ -807,6 +805,10 @@ fi
 
 if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^GOOGLE_CLIENT_ID=.\+" "$ENV_FILE" 2>/dev/null; then
   add_todo "(optional) Set up Google OAuth for Gmail connect"
+fi
+
+if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^TELEGRAM_BOT_TOKEN=.\+" "$ENV_FILE" 2>/dev/null; then
+  add_todo "(optional) Configure Telegram bot for notifications (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)"
 fi
 
 # ── Write AGENTS.md ────────────────────────────────────────────────────────
@@ -827,6 +829,17 @@ The worker polls Supabase for pending job applications, uses Playwright to fill 
 application forms, and reports results back to the dashboard.
 
 AGENTSHEADER
+
+  echo "## System Info"
+  echo ""
+  echo "- **Install Directory:** $INSTALL_DIR"
+  echo "- **Python Command:** $PYTHON_CMD"
+  echo "- **OS:** macOS $(sw_vers -productVersion 2>/dev/null || echo 'unknown')"
+  echo "- **LLM Provider:** $LLM_PROVIDER ($LLM_ACCESS_TYPE)"
+  echo "- **LLM Model:** $LLM_MODEL"
+  echo "- **LLM CLI:** ${LLM_CLI_TOOL:-none}"
+  echo "- **.env Path:** $ENV_FILE"
+  echo ""
 
   echo "## Setup Status"
   echo ""
@@ -873,55 +886,53 @@ AGENTSHEADER
 ## OpenClaw Commands Reference
 
 \`\`\`bash
-openclaw start              # Start the worker
-openclaw stop               # Stop the worker
-openclaw status             # Show worker status
-openclaw logs               # View worker logs
-openclaw config set <k> <v> # Set a config value
-openclaw config get <k>     # Get a config value
-openclaw scan               # Run a single scan cycle
-openclaw apply <job-id>     # Apply to a specific job
+openclaw config set ai.provider <provider>   # Set LLM provider
+openclaw config set ai.model <model>         # Set LLM model
+openclaw config set ai.apiKey <key>          # Set API key
+openclaw config get                          # Show current config
+openclaw status                              # Show license/status
+openclaw start                               # Start worker via OpenClaw
 \`\`\`
 
-## Settings API Endpoints
+## API Endpoints (Settings)
 
-All endpoints require authentication. Use the Supabase anon key from .env:
+| Endpoint | Purpose |
+|----------|---------|
+| \`GET /api/settings\`       | Get current user settings |
+| \`PUT /api/settings\`       | Update user settings |
+| \`GET /api/usage\`          | Get usage metrics |
+| \`GET /api/auth/me\`        | Current user info |
+| \`POST /api/extract-job-metadata\` | Parse job description |
 
-\`\`\`bash
-# Auth header (replace with actual values from .env)
-AUTH="Authorization: Bearer \$(grep NEXT_PUBLIC_SUPABASE_ANON_KEY $ENV_FILE | cut -d= -f2-)"
-BASE="\$(grep NEXT_PUBLIC_APP_URL $ENV_FILE | cut -d= -f2-)"
-
-# User settings
-curl -H "\$AUTH" "\$BASE/api/settings"
-curl -X PATCH -H "\$AUTH" -H "Content-Type: application/json" -d '{"key":"value"}' "\$BASE/api/settings"
-
-# Worker status
-curl -H "\$AUTH" "\$BASE/api/worker/status"
-
-# Job queue
-curl -H "\$AUTH" "\$BASE/api/jobs"
-curl -H "\$AUTH" "\$BASE/api/jobs?status=pending"
-\`\`\`
-
-## Key Paths
-
-- **Install directory:** $INSTALL_DIR
-- **Environment file:** $ENV_FILE
-- **Python command:** $(which $PYTHON_CMD 2>/dev/null || echo $PYTHON_CMD)
-- **Worker code:** $INSTALL_DIR/packages/worker/worker.py
-- **Web app:** $INSTALL_DIR/packages/web/
-- **Resumes dir:** /tmp/autoapply/resumes
-- **Screenshots dir:** /tmp/autoapply/screenshots
-
-## How to Edit .env
+## How to Update .env
 
 \`\`\`bash
 # Open in default editor
 \${EDITOR:-nano} $ENV_FILE
 
-# Or set a specific variable
+# Or set a specific variable via shell:
 echo 'NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co' >> $ENV_FILE
+\`\`\`
+
+## Database Migration
+
+\`\`\`bash
+cd $INSTALL_DIR
+$PYTHON_CMD packages/web/public/setup/run-migration.py $ENV_FILE
+\`\`\`
+
+## Starting the Worker
+
+\`\`\`bash
+cd $INSTALL_DIR/packages/worker
+$PYTHON_CMD worker.py
+\`\`\`
+
+## Starting the Web App (Development)
+
+\`\`\`bash
+cd $INSTALL_DIR/packages/web
+npm run dev
 \`\`\`
 AGENTSCMDS
 
@@ -995,7 +1006,7 @@ env_check() {
 status_line "test -f $ENV_FILE" ".env file" "$ENV_FILE"
 env_check "NEXT_PUBLIC_SUPABASE_URL" "Supabase URL          (required)"
 env_check "NEXT_PUBLIC_SUPABASE_ANON_KEY" "Supabase Anon Key     (required)"
-env_check "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service Key  (required)"
+env_check "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service Key  (not needed)"
 env_check "ENCRYPTION_KEY" "Encryption Key        (required)"
 env_check "WORKER_ID" "Worker ID             (required)"
 env_check "TELEGRAM_BOT_TOKEN" "Telegram Bot Token    (optional)"
@@ -1081,11 +1092,12 @@ elif [[ -f "$ENV_FILE" ]]; then
     print_todo "(required) Add Anthropic API key to .env (console.anthropic.com)"
   fi
   if [[ "$LLM_PROVIDER" == "openai" || "$LLM_BACKEND_PROVIDER" == "openai" ]] && ! grep -q "^OPENAI_API_KEY=.\+" "$ENV_FILE" 2>/dev/null; then
-    print_todo "(required) Add OpenAI API key to .env (platform.openai.com)"
+    print_todo "(optional) OpenAI API key not needed if using Codex subscription"
   fi
 fi
 
 print_todo "(required) Log in at https://applyloop.vercel.app and complete onboarding"
+print_todo "(not needed) Database migration handled by admin — skip this"
 print_todo "(required) Start the worker: cd packages/worker && $PYTHON_CMD worker.py"
 
 if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^STRIPE_SECRET_KEY=.\+" "$ENV_FILE" 2>/dev/null; then
@@ -1094,6 +1106,10 @@ fi
 
 if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^GOOGLE_CLIENT_ID=.\+" "$ENV_FILE" 2>/dev/null; then
   print_todo "(optional) Set up Google OAuth for Gmail connect"
+fi
+
+if ! [[ -f "$ENV_FILE" ]] || ! grep -q "^TELEGRAM_BOT_TOKEN=.\+" "$ENV_FILE" 2>/dev/null; then
+  print_todo "(optional) Configure Telegram bot for notifications (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)"
 fi
 
 if [[ $TODO_COUNT -eq 0 ]]; then
@@ -1122,16 +1138,109 @@ fi
 # ── Step 10: Launch LLM CLI (or fall back to manual) ──────────────────────
 log_step 10 "Launching setup assistant..."
 
-# Build a context prompt — point to SOUL.md
-build_cli_prompt() {
-  local prompt="Read SOUL.md in this directory. It contains your complete instructions.\n"
-  prompt+="You are ApplyLoop for $(whoami). Follow SOUL.md exactly.\n"
-  prompt+="Do NOT run worker.py — YOU are the worker. Call openclaw browser commands directly.\n"
-  prompt+="Profile is in profile.json. Learnings are in packages/worker/knowledge/learnings.md.\n\n"
-  prompt+="Start by greeting the user with your capabilities, then begin the scout→filter→apply loop.\n"
-  prompt+="If the repo code is missing, clone it: git clone https://github.com/snehitvaddi/AutoApply.git $INSTALL_DIR/repo && cp -r $INSTALL_DIR/repo/* $INSTALL_DIR/\n"
-  echo -e "$prompt"
-}
+# Build the context prompt — just point to SOUL.md
+USER_NAME="$(whoami)"
+CLI_PROMPT="Read SOUL.md in this directory. It contains your complete instructions.
+You are ApplyLoop for $USER_NAME. Follow SOUL.md exactly.
+Start by greeting the user, then begin the scout→filter→apply loop.
+Do NOT run worker.py — YOU are the worker. Call openclaw browser commands directly.
+Profile is in profile.json. Learnings are in packages/worker/knowledge/learnings.md.
+
+## INTRODUCE YOURSELF FIRST
+When the user opens this chat, immediately say:
+
+\"Hi $USER_NAME! I'm your ApplyLoop assistant. Here's what I can do for you:
+
+**Job Scouting** — I search 6 job boards every 30 minutes:
+- Ashby (51 companies: Perplexity, Cohere, Notion, Cursor, Ramp...)
+- Greenhouse (68 companies: Coinbase, Figma, Datadog, Waymo, DoorDash...)
+- Indeed (massive volume across all companies)
+- Himalayas (remote-focused roles)
+- LinkedIn (public search)
+
+**Smart Filtering** — I only show you relevant roles:
+- AI/ML/Data roles matching your preferences
+- US locations, posted in last 24 hours
+- Skip senior roles at big tech, skip management/VP/intern
+- Max 5 applications per company per month
+
+**Auto-Apply** — I fill out applications for you:
+- Open each job form, read every field
+- Fill in your full profile (work history, education, skills)
+- Upload your resume automatically
+- Submit and take a screenshot as proof
+- Send you a Telegram notification for each submission
+
+**Commands you can use:**
+- **start** — begin scouting and auto-applying
+- **scout** — scan job boards right now
+- **status** — show your profile and what's configured
+- **apply to [URL]** — apply to a specific job
+- **stop** — pause the worker
+- **update** — pull latest improvements
+
+Would you like me to start scouting for jobs now?\"
+
+## SETUP CHECK (do this silently before introducing yourself)
+1. Check if packages/worker/worker.py exists. If not:
+   git clone https://github.com/snehitvaddi/AutoApply.git $INSTALL_DIR/repo
+   cp -r $INSTALL_DIR/repo/* $INSTALL_DIR/
+2. Check .env has WORKER_TOKEN set
+3. Check profile.json has user data (if empty, fetch via: curl -s -H \"X-Worker-Token: TOKEN\" https://applyloop.vercel.app/api/settings/cli-config)
+4. Fix any issues silently, then greet the user
+
+## WHEN USER SAYS \"start\" or \"scout\"
+Run: cd $INSTALL_DIR/packages/worker && $PYTHON_CMD worker.py
+
+## WHEN USER SAYS \"status\"
+Read profile.json and .env, show:
+- Name, email, target roles
+- How many resumes uploaded
+- Telegram connected? (check TELEGRAM_CHAT_ID in .env)
+- Worker token set?
+- Last scout results if available
+
+## WHEN USER SAYS \"apply to [URL]\"
+Run the applier directly on that URL using the worker's apply logic.
+
+## APPLYING RULES (critical)
+- ONE job at a time — fill every field, verify success before next
+- Fill ALL work experiences and ALL education — never truncate
+- Short answers for basic fields (sponsorship, salary, location)
+- Long 3-4 sentence answers ONLY for \"Why interested?\" type questions
+- Upload resume via JS/CLI, never file explorer
+- Screenshot after submission → Telegram notification
+
+## REMAINING SETUP (guide user if needed)
+- **Telegram**: message @ApplyLoopBot on Telegram → send /start → copy Chat ID → paste in Settings > Telegram on applyloop.vercel.app
+- **Gmail (optional)**: go to applyloop.vercel.app → Settings → Email → Connect Gmail (for reading verification codes)
+- **Himalaya (optional)**: for power users — go to myaccount.google.com/apppasswords → create app password → configure himalaya
+- **AgentMail (optional)**: sign up at agentmail.to → get API key → add AGENTMAIL_API_KEY to .env
+
+## TECHNICAL DETAILS (don't show to user unless asked)
+- .env: $ENV_FILE
+- Install dir: $INSTALL_DIR
+- Python: $PYTHON_CMD
+- Profile: $INSTALL_DIR/profile.json
+- Worker uses API proxy via WORKER_TOKEN (no Supabase service key needed)
+- Codex subscription covers LLM (no OpenAI API key needed)
+- Database migrations handled by admin (not user)
+
+## AUTO-START BEHAVIOR
+When you launch, do this IMMEDIATELY without waiting for user input:
+1. Silently check if packages/worker/worker.py exists — if not, clone the repo
+2. Silently check .env has WORKER_TOKEN — if not, ask for it once
+3. Greet the user with your capabilities (the intro message above)
+4. Then say: \"Starting the scout→apply loop now...\"
+5. Run: cd $INSTALL_DIR/packages/worker && $PYTHON_CMD worker.py
+6. The worker runs an INFINITE LOOP: scout every 30 min → filter → apply → telegram notify → repeat
+7. While the worker runs, relay its output to the user in plain language:
+   - \"Scanning 51 Ashby boards...\"
+   - \"Found 12 matching jobs\"
+   - \"Applying to [Company] - [Role]...\"
+   - \"✅ Applied to [Company]! Screenshot sent to Telegram.\"
+8. If the user types anything while the worker is running, pause to respond, then resume
+9. NEVER stop the loop unless the user says \"stop\""
 
 # Determine which CLI is available based on LLM_PROVIDER
 CLI_CMD=""
@@ -1142,11 +1251,10 @@ elif [[ "$LLM_PROVIDER" == "openai" ]] && check_command codex; then
 fi
 
 if [[ -n "$CLI_CMD" ]]; then
-  CLI_PROMPT="$(build_cli_prompt)"
   echo ""
-  echo -e "${BOLD}Launching $CLI_CMD to help complete remaining setup...${NC}"
-  echo -e "${CYAN}The AI assistant has full context of your setup status.${NC}"
-  echo -e "${CYAN}It can help configure Supabase credentials, run migrations, and more.${NC}"
+  echo -e "${BOLD}Launching $CLI_CMD to complete setup...${NC}"
+  echo -e "${CYAN}$CLI_CMD will help you finish configuring ApplyLoop.${NC}"
+  echo -e "${CYAN}You can paste credentials, ask questions, or type 'exit' to quit.${NC}"
   echo ""
 
   # Export API key so the CLI can use it
@@ -1159,23 +1267,66 @@ if [[ -n "$CLI_CMD" ]]; then
   # exec replaces the shell — this is the final action
   exec "$CLI_CMD" --cd "$INSTALL_DIR" "$CLI_PROMPT"
 else
-  # No CLI available — show manual next steps (original behavior)
+  # No CLI available — show manual next steps
+  log_warn "No AI CLI available — showing setup status manually."
+  echo ""
+
+  # Interactive fallback — offer worker token or manual Supabase entry
+  HAS_SB_URL=false
+  [[ -f "$ENV_FILE" ]] && grep -q "^NEXT_PUBLIC_SUPABASE_URL=.\+" "$ENV_FILE" 2>/dev/null && HAS_SB_URL=true
+
+  if [[ "$HAS_SB_URL" != "true" ]]; then
+    echo ""
+    echo -e "${BOLD}Would you like to enter your worker token now?${NC}"
+    read -p "  [y/N]: " ENTER_TOKEN
+    if [[ "$ENTER_TOKEN" =~ ^[Yy] ]]; then
+      read -p "  Worker token (from admin): " FALLBACK_TOKEN
+      log_info "Fetching credentials from ApplyLoop..."
+      RESP=$(curl -s -H "X-Worker-Token: $FALLBACK_TOKEN" "$APP_URL/api/settings/cli-config" 2>/dev/null)
+      if echo "$RESP" | "$PYTHON_CMD" -c "import sys,json; d=json.load(sys.stdin); assert d.get('data')" 2>/dev/null; then
+        SB_URL_VAL=$(echo "$RESP" | "$PYTHON_CMD" -c "import sys,json; print(json.load(sys.stdin)['data'].get('supabase_url',''))" 2>/dev/null)
+        SB_ANON_VAL=$(echo "$RESP" | "$PYTHON_CMD" -c "import sys,json; print(json.load(sys.stdin)['data'].get('supabase_anon_key',''))" 2>/dev/null)
+        if [[ -n "$SB_URL_VAL" ]]; then
+          sed -i '' "s|^WORKER_TOKEN=.*|WORKER_TOKEN=$FALLBACK_TOKEN|" "$ENV_FILE"
+          sed -i '' "s|^NEXT_PUBLIC_SUPABASE_URL=.*|NEXT_PUBLIC_SUPABASE_URL=$SB_URL_VAL|" "$ENV_FILE"
+          sed -i '' "s|^SUPABASE_URL=.*|SUPABASE_URL=$SB_URL_VAL|" "$ENV_FILE"
+        fi
+        if [[ -n "$SB_ANON_VAL" ]]; then
+          sed -i '' "s|^NEXT_PUBLIC_SUPABASE_ANON_KEY=.*|NEXT_PUBLIC_SUPABASE_ANON_KEY=$SB_ANON_VAL|" "$ENV_FILE"
+        fi
+        log_ok "Credentials fetched and saved to .env"
+      else
+        log_warn "Could not fetch — entering manually"
+        read -p "  Supabase URL: " MANUAL_SB_URL
+        read -p "  Supabase Anon Key: " MANUAL_SB_ANON
+        if [[ -n "$MANUAL_SB_URL" ]]; then
+          sed -i '' "s|^NEXT_PUBLIC_SUPABASE_URL=.*|NEXT_PUBLIC_SUPABASE_URL=$MANUAL_SB_URL|" "$ENV_FILE"
+          sed -i '' "s|^SUPABASE_URL=.*|SUPABASE_URL=$MANUAL_SB_URL|" "$ENV_FILE"
+        fi
+        if [[ -n "$MANUAL_SB_ANON" ]]; then
+          sed -i '' "s|^NEXT_PUBLIC_SUPABASE_ANON_KEY=.*|NEXT_PUBLIC_SUPABASE_ANON_KEY=$MANUAL_SB_ANON|" "$ENV_FILE"
+        fi
+        log_ok "Credentials saved to .env"
+      fi
+    fi
+  fi
+
   echo ""
   echo -e "${BOLD}Next steps:${NC}"
   echo ""
-  echo "  1. Start the worker:"
+  echo "  1. Edit .env with remaining credentials:"
+  echo -e "     ${CYAN}\${EDITOR:-nano} $ENV_FILE${NC}"
+  echo ""
+  echo "  2. Start the worker:"
   echo -e "     ${CYAN}cd $INSTALL_DIR/packages/worker${NC}"
   echo -e "     ${CYAN}source ../../.env && $PYTHON_CMD worker.py${NC}"
-  echo ""
-  echo "  2. Run the job scanner:"
-  echo -e "     ${CYAN}cd $INSTALL_DIR/packages/worker${NC}"
-  echo -e "     ${CYAN}source ../../.env && $PYTHON_CMD -m scanner.run${NC}"
   echo ""
   echo "  3. Start the web app (development):"
   echo -e "     ${CYAN}cd $INSTALL_DIR/packages/web${NC}"
   echo -e "     ${CYAN}npm run dev${NC}"
   echo ""
+  echo -e "  ${YELLOW}Full context saved to: $AGENTS_FILE${NC}"
+  echo -e "  ${CYAN}Run this status check anytime: bash ~/autoapply/status.sh${NC}"
   echo -e "  ${YELLOW}Need help? See docs/CLIENT-ONBOARDING.md${NC}"
-  echo -e "  ${YELLOW}Setup status saved to: $AGENTS_FILE${NC}"
   echo ""
 fi
