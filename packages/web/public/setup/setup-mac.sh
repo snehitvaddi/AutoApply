@@ -154,6 +154,21 @@ else
   log_ok "OpenClaw installed: $(openclaw --version 2>&1 || echo 'installed')"
 fi
 
+# OpenClaw onboarding + gateway setup
+if check_command openclaw; then
+  OC_CONFIG="$HOME/.openclaw/openclaw.json"
+  if [[ ! -f "$OC_CONFIG" ]]; then
+    log_info "Setting up OpenClaw (browser will open for authentication)..."
+    openclaw onboard 2>/dev/null || log_warn "OpenClaw onboard failed. After setup, run: openclaw onboard"
+  else
+    log_ok "OpenClaw already configured"
+  fi
+
+  # Start the gateway (browser automation service)
+  log_info "Starting OpenClaw gateway..."
+  openclaw gateway start 2>/dev/null && log_ok "OpenClaw gateway started" || log_warn "Gateway start failed. Run: openclaw gateway start"
+fi
+
 
 # ── Step 5: Playwright ──────────────────────────────────────────────────────
 log_step 5 "Installing Playwright browsers..."
@@ -1091,43 +1106,30 @@ echo ""
 echo -e "  Run this status check anytime: ${CYAN}bash ~/autoapply/status.sh${NC}"
 echo ""
 
+# ── Copy SOUL.md to install directory ──────────────────────────────────────
+SOUL_SOURCE="$INSTALL_DIR/packages/worker/SOUL.md"
+if [[ ! -f "$SOUL_SOURCE" ]]; then
+  SOUL_SOURCE="$INSTALL_DIR/repo/packages/worker/SOUL.md"
+fi
+if [[ -f "$SOUL_SOURCE" ]]; then
+  cp "$SOUL_SOURCE" "$INSTALL_DIR/SOUL.md"
+  log_ok "SOUL.md copied to $INSTALL_DIR"
+else
+  curl -s "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/worker/SOUL.md" -o "$INSTALL_DIR/SOUL.md" 2>/dev/null
+  [[ -f "$INSTALL_DIR/SOUL.md" ]] && log_ok "SOUL.md downloaded" || log_warn "Could not get SOUL.md"
+fi
+
 # ── Step 10: Launch LLM CLI (or fall back to manual) ──────────────────────
 log_step 10 "Launching setup assistant..."
 
-# Build a context prompt with setup status for the CLI
+# Build a context prompt — point to SOUL.md
 build_cli_prompt() {
-  local prompt="I am the ApplyLoop setup assistant. Here is the current setup status:\n\n"
-
-  prompt+="INSTALLED COMPONENTS:\n"
-  for line in "${STATUS_COMPONENTS[@]}"; do
-    prompt+="  $line\n"
-  done
-
-  prompt+="\nCONFIGURATION:\n"
-  for line in "${STATUS_CONFIG[@]}"; do
-    prompt+="  $line\n"
-  done
-
-  prompt+="\nSERVICES:\n"
-  for line in "${STATUS_SERVICES[@]}"; do
-    prompt+="  $line\n"
-  done
-
-  prompt+="\nREMAINING TODO:\n"
-  if [[ ${#STATUS_TODOS[@]} -eq 0 ]]; then
-    prompt+="  Nothing — setup is complete!\n"
-  else
-    local i=0
-    for todo in "${STATUS_TODOS[@]}"; do
-      ((i++))
-      prompt+="  $i. $todo\n"
-    done
-  fi
-
-  prompt+="\nThe AGENTS.md file at $AGENTS_FILE has full details."
-  prompt+=" The .env file is at $ENV_FILE."
-  prompt+=" I'm ready to help complete any remaining setup tasks."
-
+  local prompt="Read SOUL.md in this directory. It contains your complete instructions.\n"
+  prompt+="You are ApplyLoop for $(whoami). Follow SOUL.md exactly.\n"
+  prompt+="Do NOT run worker.py — YOU are the worker. Call openclaw browser commands directly.\n"
+  prompt+="Profile is in profile.json. Learnings are in packages/worker/knowledge/learnings.md.\n\n"
+  prompt+="Start by greeting the user with your capabilities, then begin the scout→filter→apply loop.\n"
+  prompt+="If the repo code is missing, clone it: git clone https://github.com/snehitvaddi/AutoApply.git $INSTALL_DIR/repo && cp -r $INSTALL_DIR/repo/* $INSTALL_DIR/\n"
   echo -e "$prompt"
 }
 
