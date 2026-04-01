@@ -1398,6 +1398,9 @@ if ($LlmCliCmd -eq "claude") {
     Write-Host "  claude.cmd --dangerously-skip-permissions --cd $InstallDir `"Read AGENTS.md. Start scouting and applying.`"" -ForegroundColor Cyan
     Write-Host "" -ForegroundColor Green
     Write-Host "  Copy the command above and paste in a NEW terminal window." -ForegroundColor Green
+    Write-Host "" -ForegroundColor Green
+    Write-Host "  Tip: The more you interact, the smarter it gets." -ForegroundColor Yellow
+    Write-Host "  Correct it early = autopilot later." -ForegroundColor Yellow
     Write-Host "  =============================================" -ForegroundColor Green
     Write-Host ""
 

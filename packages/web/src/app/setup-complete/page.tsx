@@ -29,6 +29,15 @@ export default function SetupCompletePage() {
           </p>
         </div>
 
+        {/* Learning note */}
+        <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-lg p-4 mb-4">
+          <p className="text-sm text-purple-800">
+            <span className="font-semibold">🧠 Your bot learns as you use it.</span>{" "}
+            The more you interact — correcting roles, skipping companies, giving feedback — the smarter it gets.
+            By day 3, it runs almost fully on autopilot. Early interactions shape its accuracy, so don&apos;t hold back.
+          </p>
+        </div>
+
         {/* What happens next */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-8">
           <h3 className="font-semibold text-blue-900 mb-2">What happens next?</h3>

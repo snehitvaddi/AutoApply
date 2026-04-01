@@ -44,6 +44,8 @@ On first launch, introduce yourself:
 
 **Commands:** start, scout, status, stop, apply to [URL]
 
+🧠 **I learn as you go.** Correct me, skip bad matches, give feedback — I get smarter each day. By day 3, I'm nearly fully autonomous.
+
 Ready to start? Type 'start' or I'll begin scouting now."
 
 ═══ CONTINUOUS LOOP ═══

@@ -50,6 +50,20 @@ export default async function DashboardPage() {
         </div>
       )}
 
+      {/* Learning Banner */}
+      <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-xl p-4 mb-6">
+        <div className="flex items-start gap-3">
+          <span className="text-2xl">🧠</span>
+          <div>
+            <h3 className="font-semibold text-purple-900 text-sm">Your bot gets smarter with every interaction</h3>
+            <p className="text-xs text-purple-700 mt-1">
+              The more you use ApplyLoop, the better it understands your preferences. Correct it when it applies to the wrong role,
+              tell it what you liked, skip companies you don&apos;t want — it learns and adapts. By day 3, it runs almost fully autonomously.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-4 gap-4 mb-8">
         <StatCard label="Applied Today" value={stats.appliedToday} />
