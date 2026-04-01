@@ -200,6 +200,35 @@ if (Test-CommandExists "openclaw") {
     }
 }
 
+# OpenClaw onboarding + gateway setup
+if (Test-CommandExists "openclaw") {
+    # Check if already configured
+    $ocConfigPath = Join-Path $env:USERPROFILE ".openclaw\openclaw.json"
+    if (-not (Test-Path $ocConfigPath)) {
+        Write-Info "Setting up OpenClaw (browser will open for authentication)..."
+        $ErrorActionPreference = "Continue"
+        try {
+            Start-Process -FilePath "openclaw.cmd" -ArgumentList "onboard" -NoNewWindow -Wait -ErrorAction SilentlyContinue 2>$null
+        } catch {
+            Write-Warn "OpenClaw onboard failed. After setup, run: openclaw onboard"
+        }
+        $ErrorActionPreference = "Stop"
+    } else {
+        Write-OK "OpenClaw already configured"
+    }
+
+    # Start the gateway (browser automation service)
+    Write-Info "Starting OpenClaw gateway..."
+    $ErrorActionPreference = "Continue"
+    try {
+        Start-Process -FilePath "openclaw.cmd" -ArgumentList "gateway", "start" -NoNewWindow -Wait -ErrorAction SilentlyContinue 2>$null
+        Write-OK "OpenClaw gateway started"
+    } catch {
+        Write-Warn "Gateway start failed. After setup, run: openclaw gateway start"
+    }
+    $ErrorActionPreference = "Stop"
+}
+
 
 # ── Step 5: Playwright ──────────────────────────────────────────────────────
 Write-Step 5 "Installing Playwright browsers..."
