@@ -103,6 +103,7 @@ export default function AdminPage() {
       body: JSON.stringify({ user_id: userId, action }),
     });
     if (res.ok) {
+      const data = await res.json();
       setUsers((prev) =>
         prev.map((u) =>
           u.id === userId
@@ -110,6 +111,12 @@ export default function AdminPage() {
             : u
         )
       );
+      // On approval: show auto-generated worker token
+      if (action === "approve" && data.data?.worker_token) {
+        setGeneratedToken(data.data.worker_token);
+        setTokenUserId(userId);
+        setUsersWithTokens((prev) => new Set([...prev, userId]));
+      }
     }
     setActionLoading(null);
   }
