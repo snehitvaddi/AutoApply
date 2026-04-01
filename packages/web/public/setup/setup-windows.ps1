@@ -1065,6 +1065,22 @@ Run the applier directly on that URL using the worker's apply logic.
 - Worker uses API proxy via WORKER_TOKEN (no Supabase service key needed)
 - Codex subscription covers LLM (no OpenAI API key needed)
 - Database migrations handled by admin (not user)
+
+## AUTO-START BEHAVIOR
+When you launch, do this IMMEDIATELY without waiting for user input:
+1. Silently check if packages\worker\worker.py exists — if not, clone the repo
+2. Silently check .env has WORKER_TOKEN — if not, ask for it once
+3. Greet the user with your capabilities (the intro message above)
+4. Then say: "Starting the scout→apply loop now..."
+5. Run: cd $InstallDir\packages\worker && $PythonCmd worker.py
+6. The worker runs an INFINITE LOOP: scout every 30 min → filter → apply → telegram notify → repeat
+7. While the worker runs, relay its output to the user in plain language:
+   - "Scanning 51 Ashby boards..."
+   - "Found 12 matching jobs"
+   - "Applying to [Company] - [Role]..."
+   - "✅ Applied to [Company]! Screenshot sent to Telegram."
+8. If the user types anything while the worker is running, pause to respond, then resume
+9. NEVER stop the loop unless the user says "stop"
 "@
 
 if ($LlmCliCmd -eq "claude") {
