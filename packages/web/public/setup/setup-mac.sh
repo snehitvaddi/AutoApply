@@ -1009,10 +1009,19 @@ SOUL_PATH="$INSTALL_DIR/packages/worker/SOUL.md"
 if [[ -f "$SOUL_PATH" ]]; then
   echo -e "\n\n---\n" >> "$AGENTS_FILE"
   cat "$SOUL_PATH" >> "$AGENTS_FILE"
-  log_ok "AGENTS.md generated with SOUL instructions (Codex auto-reads this)"
-else
-  log_ok "AGENTS.md written to $AGENTS_FILE"
 fi
+
+# Append ARCHITECTURE.md (3-layer architecture doc)
+ARCH_PATH="$INSTALL_DIR/packages/worker/ARCHITECTURE.md"
+[[ ! -f "$ARCH_PATH" ]] && ARCH_PATH="$INSTALL_DIR/repo/packages/worker/ARCHITECTURE.md"
+[[ ! -f "$ARCH_PATH" ]] && curl -s "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/worker/ARCHITECTURE.md" -o "$INSTALL_DIR/ARCHITECTURE.md" 2>/dev/null && ARCH_PATH="$INSTALL_DIR/ARCHITECTURE.md"
+
+if [[ -f "$ARCH_PATH" ]]; then
+  echo -e "\n\n---\n" >> "$AGENTS_FILE"
+  cat "$ARCH_PATH" >> "$AGENTS_FILE"
+fi
+
+log_ok "AGENTS.md generated with SOUL + ARCHITECTURE (Claude Code auto-reads this)"
 
 # ── Print console status dashboard ─────────────────────────────────────────
 

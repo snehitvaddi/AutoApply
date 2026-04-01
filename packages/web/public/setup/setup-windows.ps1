@@ -1091,10 +1091,20 @@ if (-not (Test-Path $SoulPath)) {
 if (Test-Path $SoulPath) {
     Add-Content -Path $AgentsMdPath -Value "`n`n---`n"
     Get-Content $SoulPath | Add-Content -Path $AgentsMdPath
-    Write-OK "AGENTS.md generated with SOUL instructions (Codex auto-reads this)"
-} else {
-    Write-OK "AGENTS.md generated at $AgentsMdPath"
 }
+
+# Append ARCHITECTURE.md (3-layer architecture doc)
+$ArchPath = Join-Path $InstallDir "packages\worker\ARCHITECTURE.md"
+if (-not (Test-Path $ArchPath)) { $ArchPath = Join-Path $InstallDir "repo\packages\worker\ARCHITECTURE.md" }
+if (-not (Test-Path $ArchPath)) {
+    try { Invoke-WebRequest -Uri "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/worker/ARCHITECTURE.md" -OutFile (Join-Path $InstallDir "ARCHITECTURE.md") -UseBasicParsing 2>$null; $ArchPath = Join-Path $InstallDir "ARCHITECTURE.md" } catch {}
+}
+if (Test-Path $ArchPath) {
+    Add-Content -Path $AgentsMdPath -Value "`n`n---`n"
+    Get-Content $ArchPath | Add-Content -Path $AgentsMdPath
+}
+
+Write-OK "AGENTS.md generated with SOUL + ARCHITECTURE (Claude Code auto-reads this)"
 
 Write-Host ""
 
