@@ -18,7 +18,8 @@ from config import (
 from db import (
     claim_next_job, load_user_profile, update_queue_status, log_application,
     check_daily_limit, get_answer_key, download_resume, upload_screenshot,
-    get_client, fetch_user_job_preferences,
+    fetch_user_job_preferences, enqueue_discovered_jobs, update_heartbeat as db_heartbeat,
+    check_company_rate as db_check_company_rate,
 )
 from notifier import send_application_result, send_failure
 from knowledge import build_answer_key, load_global_template
@@ -82,39 +83,18 @@ def is_blocked_company(company: str) -> bool:
     return any(blocked in company_lower for blocked in BLOCKED_COMPANIES)
 
 
-# ─── Company Rate Limiting (Supabase-backed) ────────────────────────────────
+# ─── Company Rate Limiting (via API proxy) ─────────────────────────────────
 
 def check_company_rate(user_id: str, company: str) -> bool:
-    """Return True if user has applied fewer than MAX_COMPANY_APPS_PER_30_DAYS to this company."""
-    client = get_client()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    result = (
-        client.table("applications")
-        .select("id", count="exact")
-        .eq("user_id", user_id)
-        .ilike("company", f"%{company}%")
-        .gte("applied_at", cutoff)
-        .execute()
-    )
-    count = result.count or 0
-    return count < MAX_COMPANY_APPS_PER_30_DAYS
+    """Return True if user can still apply to this company (< 5 in 30 days)."""
+    return db_check_company_rate(user_id, company)
 
 
-# ─── Heartbeat ───────────────────────────────────────────────────────────────
+# ─── Heartbeat (via API proxy) ──────────────────────────────────────────────
 
 def update_heartbeat(user_id: str, action: str, details: str = ""):
-    """Upsert heartbeat for this user so the admin dashboard can monitor liveness."""
-    client = get_client()
-    try:
-        client.table("worker_heartbeats").upsert({
-            
-            "user_id": user_id,
-            "last_action": action,
-            "details": details,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }, on_conflict="user_id").execute()
-    except Exception as e:
-        logger.warning(f"Heartbeat upsert failed: {e}")
+    """Update worker heartbeat via API."""
+    db_heartbeat(user_id, action, details)
 
 
 # ─── Job Filter (title/company/location rules) ──────────────────────────────
@@ -285,74 +265,28 @@ def scout_greenhouse_boards(user_prefs: dict | None = None) -> list[dict]:
     return jobs
 
 
-def enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
-    """Insert discovered jobs into discovered_jobs + application_queue (deduped)."""
+def _enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
+    """Insert discovered jobs via API proxy. Local URL cache for fast dedup."""
     global _seen_urls, _seen_urls_date
 
-    # Clear in-memory cache on date change
     today = date.today().isoformat()
     if _seen_urls_date != today:
         _seen_urls = set()
         _seen_urls_date = today
 
-    client = get_client()
-    enqueued = 0
+    # Filter out locally-cached URLs first
+    new_jobs = []
     for job in jobs:
-        url = job["apply_url"]
-
-        # Fast in-memory dedup — skip DB query if we've already seen this URL today
-        if url in _seen_urls:
-            continue
-
-        # Dedup: check if already in applications table
-        existing = (
-            client.table("applications")
-            .select("id", count="exact")
-            .eq("user_id", user_id)
-            .eq("company", job["company"])
-            .eq("title", job["title"])
-            .execute()
-        )
-        if (existing.count or 0) > 0:
+        url = job.get("apply_url", "")
+        if url and url not in _seen_urls:
+            new_jobs.append(job)
             _seen_urls.add(url)
-            continue
 
-        # Company rate limit
-        if not check_company_rate(user_id, job["company"]):
-            _seen_urls.add(url)
-            continue
+    if not new_jobs:
+        return 0
 
-        # Insert into discovered_jobs
-        try:
-            dj = client.table("discovered_jobs").upsert({
-                "title": job["title"],
-                "company": job["company"],
-                "location": job.get("location", ""),
-                "apply_url": url,
-                "external_id": job.get("external_id", ""),
-                "ats": job["ats"],
-                "discovered_at": datetime.now(timezone.utc).isoformat(),
-            }, on_conflict="apply_url").execute()
-
-            job_id = dj.data[0]["id"] if dj.data else None
-            if not job_id:
-                _seen_urls.add(url)
-                continue
-
-            # Enqueue for application
-            client.table("application_queue").insert({
-                "user_id": user_id,
-                "job_id": job_id,
-                "status": "pending",
-                "company": job["company"],
-                "apply_url": url,
-            }).execute()
-            enqueued += 1
-            _seen_urls.add(url)
-        except Exception as e:
-            logger.debug(f"Enqueue skip ({job['company']}): {e}")
-
-    return enqueued
+    # Send to API proxy for server-side dedup + enqueue
+    return enqueue_discovered_jobs(user_id, new_jobs)
 
 
 def run_scout_cycle(user_id: str):
@@ -408,7 +342,7 @@ def run_scout_cycle(user_id: str):
         update_heartbeat(user_id, "idle", "No new jobs found")
         return 0
 
-    enqueued = enqueue_discovered_jobs(user_id, all_jobs)
+    enqueued = _enqueue_discovered_jobs(user_id, all_jobs)
     logger.info(f"Scout complete: {enqueued} new jobs enqueued (from {len(all_jobs)} raw)")
     update_heartbeat(user_id, "scouted", f"{enqueued} enqueued")
     return enqueued

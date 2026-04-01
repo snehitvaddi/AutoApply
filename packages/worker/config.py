@@ -1,8 +1,11 @@
 import os
 from datetime import date
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+# Supabase keys are no longer needed by the worker — all DB access goes through
+# the API proxy at /api/worker/proxy using the worker token.
+# These are kept for backward compatibility but default to empty.
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 WORKER_ID = os.environ.get("WORKER_ID", f"worker-{os.getpid()}")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
 APPLY_COOLDOWN = int(os.environ.get("APPLY_COOLDOWN", "30"))
