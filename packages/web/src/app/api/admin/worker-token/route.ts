@@ -31,12 +31,11 @@ export async function POST(request: NextRequest) {
     return apiError("validation_error", "user_id is required");
   }
 
-  // Revoke any existing token for this user
+  // Delete any existing tokens for this user (revoked or not)
   await supabase
     .from("worker_tokens")
-    .update({ revoked_at: new Date().toISOString() })
-    .eq("user_id", user_id)
-    .is("revoked_at", null);
+    .delete()
+    .eq("user_id", user_id);
 
   const token = generateToken();
   const token_hash = hashToken(token);
