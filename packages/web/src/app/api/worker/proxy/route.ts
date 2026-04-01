@@ -193,8 +193,10 @@ export async function POST(request: NextRequest) {
                 discovered_at: new Date().toISOString(),
               },
               { onConflict: "apply_url" }
-            );
-          const jobId = dj.data?.[0]?.id;
+            )
+            .select("id")
+            .single();
+          const jobId = (dj.data as Record<string, unknown> | null)?.id;
           if (!jobId) continue;
 
           // Queue
