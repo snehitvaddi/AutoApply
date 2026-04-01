@@ -486,9 +486,14 @@ if ($AdvancedMode) {
 
     if (Test-CommandExists "codex") {
         Write-OK "Codex CLI installed"
-        Write-Info "Launching Codex auth (browser will open)..."
+        Write-Info "Authenticating Codex (browser will open)..."
         $ErrorActionPreference = "Continue"
-        codex auth 2>&1 | Write-Host
+        try {
+            # Start codex auth in a new interactive window to avoid "stdout is not a terminal"
+            Start-Process -FilePath "codex" -ArgumentList "auth" -NoNewWindow -Wait -ErrorAction SilentlyContinue 2>$null
+        } catch {
+            Write-Warn "Codex auth couldn't run here. After setup, run: codex auth"
+        }
         $ErrorActionPreference = "Stop"
         $LlmCliCmd = "codex"
     } else {
@@ -679,8 +684,10 @@ if (Test-Path $UpdateScript) {
     Write-Warn "Could not set up auto-updates - update script not found"
 }
 
-# Run database migration
-Write-Info "Running database migration..."
+# Skip database migration for regular users — admin handles migrations
+# Migrations require the Supabase database password which only the admin has
+Write-Info "Skipping database migration (handled by admin)..."
+$SkipMigration = $true
 $MigrationScript = $null
 
 if (Test-Path (Join-Path $InstallDir "packages\web\public\setup\run-migration.py")) {
@@ -692,7 +699,7 @@ if (Test-Path (Join-Path $InstallDir "packages\web\public\setup\run-migration.py
     } catch { }
 }
 
-if ($MigrationScript -and (Test-Path $MigrationScript)) {
+if (-not $SkipMigration -and $MigrationScript -and (Test-Path $MigrationScript)) {
     $ErrorActionPreference = "Continue"
     & $PythonCmd $MigrationScript $EnvFile 2>&1 | Write-Host
     if ($LASTEXITCODE -eq 0) {
@@ -701,6 +708,8 @@ if ($MigrationScript -and (Test-Path $MigrationScript)) {
         Write-Warn "Migration skipped - will be handled by AI assistant or run manually"
     }
     $ErrorActionPreference = "Stop"
+} else {
+    Write-OK "Database is managed by admin — no migration needed on your end"
 }
 
 Write-Host ""
