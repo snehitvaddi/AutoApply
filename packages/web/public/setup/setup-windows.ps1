@@ -980,10 +980,32 @@ Write-Host ""
 # ── Step 10: Launch LLM CLI with context ─────────────────────────────────────
 Write-Step 10 "Launching AI setup assistant..."
 
-# Build the context prompt for the LLM CLI
+# Copy SOUL.md to install directory (the agent's brain)
+$SoulSource = Join-Path $InstallDir "repo\packages\worker\SOUL.md"
+if (-not (Test-Path $SoulSource)) {
+    $SoulSource = Join-Path $InstallDir "packages\worker\SOUL.md"
+}
+if (Test-Path $SoulSource) {
+    Copy-Item $SoulSource (Join-Path $InstallDir "SOUL.md") -Force
+    Write-OK "SOUL.md copied to $InstallDir"
+} else {
+    # Download from repo if not cloned
+    try {
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/worker/SOUL.md" -OutFile (Join-Path $InstallDir "SOUL.md") -UseBasicParsing 2>$null
+        Write-OK "SOUL.md downloaded"
+    } catch {
+        Write-Warn "Could not get SOUL.md — Codex will work but without full instructions"
+    }
+}
+
+# Build the context prompt — just point to SOUL.md
 $UserName = $env:USERNAME
 $ContextPrompt = @"
-You are ApplyLoop — $UserName's personal AI job application assistant.
+Read SOUL.md in this directory. It contains your complete instructions.
+You are ApplyLoop for $UserName. Follow SOUL.md exactly.
+Start by greeting the user, then begin the scout→filter→apply loop.
+Do NOT run worker.py — YOU are the worker. Call openclaw browser commands directly.
+Profile is in profile.json. Learnings are in packages\worker\knowledge\learnings.md.
 
 ## INTRODUCE YOURSELF FIRST
 When the user opens this chat, immediately say:
