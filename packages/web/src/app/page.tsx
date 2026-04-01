@@ -6,8 +6,8 @@ import { useEffect, useRef } from "react";
 const STATS = [
   { value: "900+", label: "Applications submitted" },
   { value: "85%", label: "ATS pass rate" },
-  { value: "50/day", label: "On autopilot" },
-  { value: "5", label: "ATS platforms" },
+  { value: "30-60/day", label: "On autopilot" },
+  { value: "6", label: "Job sources" },
 ];
 
 const STEPS = [
@@ -55,20 +55,21 @@ const STEPS = [
 ];
 
 const FEATURES = [
+  { title: "Learns As You Use It", desc: "Correct it once, it remembers forever. By day 3, it runs nearly fully autonomous — tailored to your style." },
+  { title: "Smart Resume Matching", desc: "Picks the right resume per job. AI Engineer? GenAI resume. Data Analyst? DS resume. Auto-tailored per application." },
   { title: "Gmail OTP Verification", desc: "Reads security codes from your email automatically. Handles Greenhouse 8-character codes no other bot can." },
-  { title: "Smart Resume Matching", desc: "Picks the right resume per job based on keyword matching. AI Engineer? ML resume. Data role? Analytics resume." },
-  { title: "Auto Cover Letters", desc: "Every cover letter references the company, role, and your specific experience. Never generic." },
-  { title: "reCAPTCHA Handling", desc: "Detects and handles reCAPTCHA, security codes, multi-page wizards, and consent forms." },
-  { title: "Telegram Integration", desc: "Send a job link. Get a screenshot proof 90 seconds later. Full control from your phone." },
-  { title: "Runs Locally", desc: "Your data never leaves your machine. Not a cloud service. Not a Chrome extension. A full autonomous agent." },
+  { title: "6 Job Sources", desc: "Greenhouse, Ashby, Indeed, Himalayas, Google Jobs, LinkedIn. 500+ company boards scanned every 30 minutes." },
+  { title: "Telegram Proof", desc: "Screenshot of every submission sent to your phone. Full visibility, zero guesswork." },
+  { title: "End-to-End Setup", desc: "DM us. We set up everything on a call: profile, resume, preferences, integrations. You just watch it run." },
 ];
 
 const ATS_PLATFORMS = [
-  { name: "Greenhouse", count: "271 companies" },
-  { name: "Ashby", count: "102 companies" },
-  { name: "Lever", count: "Active" },
-  { name: "SmartRecruiters", count: "Growing" },
-  { name: "Workday", count: "Coming soon" },
+  { name: "Greenhouse", count: "346+ companies" },
+  { name: "Ashby", count: "168+ companies" },
+  { name: "Indeed", count: "All companies" },
+  { name: "Himalayas", count: "Remote focused" },
+  { name: "Google Jobs", count: "Fresh postings" },
+  { name: "LinkedIn", count: "Public search" },
 ];
 
 const ACTIVITY_FEED = [
@@ -87,16 +88,16 @@ const PRICING = [
     name: "Monthly",
     desc: "Full access. Cancel anytime.",
     features: [
-      "Unlimited applications",
-      "All 5 ATS platforms",
-      "LLM-powered automation included",
+      "30-60 applications/day (varies by role availability)",
+      "6 job sources, 500+ company boards",
+      "AI learns your preferences — autopilot by day 3",
       "Resume tailoring per job",
       "Gmail OTP + security codes",
-      "Telegram alerts + screenshot proof",
-      "Full setup + onboarding",
+      "Telegram screenshot proof",
+      "End-to-end setup by us",
       "Priority support",
     ],
-    cta: "DM for Pricing",
+    cta: "DM for Setup",
     dark: true,
   },
   {
@@ -104,14 +105,14 @@ const PRICING = [
     desc: "Own it forever. One-time payment.",
     features: [
       "Everything in Monthly",
-      "Full infrastructure setup by us",
-      "Profile + resume configured",
-      "Gmail + Telegram wired",
+      "Full infrastructure setup on a call",
+      "Profile + resume + preferences configured",
+      "Gmail + Telegram + all integrations wired",
       "Test application together live",
-      "Lifetime updates",
+      "Lifetime updates — bot gets smarter",
       "Community access",
     ],
-    cta: "DM for Pricing",
+    cta: "DM for Setup",
     dark: false,
   },
 ];
@@ -219,27 +220,31 @@ export default function LandingPage() {
           </h1>
 
           <p className="fade-in fade-in-delay-2 mt-6 text-lg text-gray-400 max-w-xl mx-auto leading-relaxed">
-            Fine-tunes your resume per job. Works on every ATS. Handles OTPs, CAPTCHAs, and multi-page forms. Sends you screenshot proof via Telegram.
+            30-60 applications/day on autopilot. Learns your style — fully autonomous by day 3. We set up everything for you.
           </p>
 
-          {/* ATS Platform Logos */}
-          <div className="fade-in fade-in-delay-2 mt-6 flex items-center justify-center gap-5 flex-wrap">
-            {["Greenhouse", "Ashby", "Lever", "SmartRecruiters", "Workday"].map((ats) => (
-              <span key={ats} className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-gray-100 rounded-full text-[11px] font-medium text-gray-400 shadow-sm">
+          {/* Job Sources */}
+          <div className="fade-in fade-in-delay-2 mt-6 flex items-center justify-center gap-4 flex-wrap">
+            {["Greenhouse", "Ashby", "Indeed", "Himalayas", "Google Jobs", "LinkedIn"].map((src) => (
+              <span key={src} className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-gray-100 rounded-full text-[11px] font-medium text-gray-400 shadow-sm">
                 <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full" />
-                {ats}
+                {src}
               </span>
             ))}
           </div>
 
           <div className="fade-in fade-in-delay-3 mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link href="/auth/login" className="px-7 py-3 bg-gray-900 text-white font-semibold rounded-lg text-sm hover:bg-black transition-colors">
-              Get Started Free
+              Get Started
             </Link>
-            <a href="#how-it-works" className="px-7 py-3 text-gray-500 font-medium rounded-lg text-sm hover:text-gray-900 transition-colors">
-              See how it works &darr;
+            <a href="#pricing" className="px-7 py-3 bg-purple-600 text-white font-semibold rounded-lg text-sm hover:bg-purple-700 transition-colors">
+              DM for End-to-End Setup
             </a>
           </div>
+
+          <p className="fade-in fade-in-delay-3 mt-3 text-xs text-gray-400">
+            We handle the full setup on a call — profile, resume, integrations, first test run.
+          </p>
         </div>
 
         {/* Live Activity + Stats */}
