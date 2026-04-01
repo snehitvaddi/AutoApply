@@ -234,14 +234,26 @@ if (Test-CommandExists "himalaya") {
             if (Test-CommandExists "himalaya") { $himInstalled = $true; Write-OK "Himalaya installed via cargo" }
         }
         if (-not $himInstalled) {
-            # Direct download from GitHub releases
+            # Direct download from GitHub releases (it's a .zip, not .exe)
             Write-Info "Downloading Himalaya from GitHub..."
             $ErrorActionPreference = "Continue"
             try {
-                $himUrl = "https://github.com/pimalaya/himalaya/releases/latest/download/himalaya-x86_64-windows.exe"
+                $himZipUrl = "https://github.com/pimalaya/himalaya/releases/latest/download/himalaya.x86_64-windows.zip"
+                $himZip = Join-Path $env:TEMP "himalaya-windows.zip"
+                $himExtract = Join-Path $env:TEMP "himalaya-extract"
                 $himDest = "$env:LOCALAPPDATA\Microsoft\WindowsApps\himalaya.exe"
-                Invoke-WebRequest -Uri $himUrl -OutFile $himDest -UseBasicParsing 2>$null
-                if (Test-Path $himDest) { $himInstalled = $true; Write-OK "Himalaya downloaded to $himDest" }
+                Invoke-WebRequest -Uri $himZipUrl -OutFile $himZip -UseBasicParsing 2>$null
+                if (Test-Path $himZip) {
+                    Expand-Archive -Path $himZip -DestinationPath $himExtract -Force 2>$null
+                    $himExe = Get-ChildItem -Path $himExtract -Filter "himalaya.exe" -Recurse | Select-Object -First 1
+                    if ($himExe) {
+                        Copy-Item $himExe.FullName $himDest -Force
+                        $himInstalled = $true
+                        Write-OK "Himalaya installed to $himDest"
+                    }
+                    Remove-Item $himZip -Force -ErrorAction SilentlyContinue
+                    Remove-Item $himExtract -Recurse -Force -ErrorAction SilentlyContinue
+                }
             } catch {}
             $ErrorActionPreference = "Stop"
         }
