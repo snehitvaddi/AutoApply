@@ -785,7 +785,7 @@ $statusLines += ""
 $statusLines += Get-StatusLine (Test-Path $EnvFile) ".env file" "$EnvFile"
 $statusLines += Get-EnvStatusLine "NEXT_PUBLIC_SUPABASE_URL" "Supabase URL       (required)"
 $statusLines += Get-EnvStatusLine "NEXT_PUBLIC_SUPABASE_ANON_KEY" "Supabase Anon Key  (required)"
-$statusLines += Get-EnvStatusLine "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service   (required)"
+$statusLines += Get-EnvStatusLine "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service   (not needed - API proxy)"
 $statusLines += Get-EnvStatusLine "ENCRYPTION_KEY" "Encryption Key     (required)"
 $statusLines += Get-EnvStatusLine "WORKER_ID" "Worker ID          (required)"
 $statusLines += Get-EnvStatusLine "TELEGRAM_BOT_TOKEN" "Telegram Bot Token (optional)"
@@ -860,7 +860,7 @@ if (-not (Test-CommandExists "openclaw")) {
 }
 
 if (-not (Test-Path $workerPath)) {
-    $todoNum++; $todoLines += "$todoNum. **(required)** Clone the ApplyLoop repo (private - ask admin for access)"
+    $todoNum++; $todoLines += "$todoNum. **(required)** Clone the ApplyLoop repo: ``git clone https://github.com/snehitvaddi/AutoApply.git $InstallDir\repo && xcopy $InstallDir\repo\* $InstallDir\ /E /Y /I``"
 }
 
 if ($LlmProvider -eq "none" -and $LlmBackendProvider -eq "none") {
@@ -870,12 +870,12 @@ if ($LlmProvider -eq "none" -and $LlmBackendProvider -eq "none") {
         $todoNum++; $todoLines += "$todoNum. **(required)** Add Anthropic API key to .env (console.anthropic.com)"
     }
     if (($LlmProvider -eq "openai" -or $LlmBackendProvider -eq "openai") -and -not (Select-String -Path $EnvFile -Pattern "^OPENAI_API_KEY=.+" -ErrorAction SilentlyContinue)) {
-        $todoNum++; $todoLines += "$todoNum. **(required)** Add OpenAI API key to .env (platform.openai.com)"
+        $todoNum++; $todoLines += "$todoNum. (optional) OpenAI API key not needed if using Codex subscription"
     }
 }
 
 $todoNum++; $todoLines += "$todoNum. **(required)** Log in at https://applyloop.vercel.app and complete onboarding"
-$todoNum++; $todoLines += "$todoNum. **(required)** Run database migration if not done: ``$PythonCmd run-migration.py $EnvFile``"
+$todoNum++; $todoLines += "$todoNum. (not needed) Database migration handled by admin — skip this"
 $todoNum++; $todoLines += "$todoNum. **(required)** Start the worker: ``cd packages\worker && $PythonCmd worker.py``"
 
 $hasStripe = $false
@@ -995,16 +995,22 @@ The .env file is at: $EnvFile
 The install directory is: $InstallDir
 The Python command is: $PythonCmd
 
-The user may paste Supabase credentials, Telegram chat IDs, API keys, or other configuration values. Help them complete the setup by:
-1. Editing the .env file to fill in missing values as they provide them.
-2. Running the database migration when Supabase credentials are set: $PythonCmd packages\web\public\setup\run-migration.py $EnvFile
-3. Verifying that services are reachable after configuration.
-4. Explaining what each setting does if asked.
-5. Starting the worker once everything is configured.
+IMPORTANT CONTEXT FOR AI ASSISTANT:
+- Supabase service role key is NOT needed. The worker uses the API proxy via WORKER_TOKEN.
+- OpenAI API key is NOT needed if using Codex subscription (which is the default).
+- Database migration is NOT needed — admin handles it server-side.
+- The repo is PUBLIC at https://github.com/snehitvaddi/AutoApply.git
 
-Read the AGENTS.md file at $AgentsMdPath for full details on commands, endpoints, and how to update settings.
+Help the user by:
+1. If repo code is missing: clone it with git clone https://github.com/snehitvaddi/AutoApply.git then copy files into $InstallDir
+2. Verify .env has WORKER_TOKEN set (the only required credential from admin)
+3. Start the worker: cd packages\worker && $PythonCmd worker.py
+4. If asked about Telegram: they need to message @ApplyLoopBot on Telegram with /start, copy chat ID, paste into Settings > Telegram on the website
+5. Explaining what each setting does if asked.
 
-Be concise and helpful. Guide the user through the remaining TODO items one at a time.
+Read the AGENTS.md file at $AgentsMdPath for full details.
+
+Be concise and helpful. The main goal is: clone repo + start worker. Everything else is already configured.
 "@
 
 if ($LlmCliCmd -eq "claude") {
@@ -1086,7 +1092,7 @@ if ($LlmCliCmd -eq "claude") {
     Write-Status (Test-Path $EnvFile) ".env file" "$EnvFile"
     Write-EnvStatus "NEXT_PUBLIC_SUPABASE_URL" "Supabase URL       (required)"
     Write-EnvStatus "NEXT_PUBLIC_SUPABASE_ANON_KEY" "Supabase Anon Key  (required)"
-    Write-EnvStatus "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service   (required)"
+    Write-EnvStatus "SUPABASE_SERVICE_ROLE_KEY" "Supabase Service   (not needed - API proxy)"
     Write-EnvStatus "ENCRYPTION_KEY" "Encryption Key     (required)"
     Write-EnvStatus "WORKER_ID" "Worker ID          (required)"
     Write-EnvStatus "TELEGRAM_BOT_TOKEN" "Telegram Bot Token (optional)"
