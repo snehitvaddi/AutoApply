@@ -506,47 +506,58 @@ if ($LlmProvider -eq "openai") { & $PythonCmd -m pip install --quiet openai 2>&1
 if ($LlmProvider -eq "google") { & $PythonCmd -m pip install --quiet google-generativeai 2>&1 | Out-Null }
 $ErrorActionPreference = "Stop"
 
-# Create .env if it doesn't exist — use worker token to fetch credentials from API
+# Create .env — ONE input: worker token. Everything else is automatic.
 $EnvFile = Join-Path $InstallDir ".env"
 $AppUrl = "https://applyloop.vercel.app"
-$SupabaseUrl = ""
-$SupabaseAnon = ""
+
+# Hardcoded Supabase connection (admin's shared instance — RLS enforces per-user access)
+$SupabaseUrl = "https://vegcqubtypdqldudhqv.supabase.co"
+$SupabaseAnon = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlZ2NxdWJ0eXB2ZHFsZHV4aHF2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3NTkyOTYsImV4cCI6MjA4OTMzNTI5Nn0.MJ24A6INzw2dOkv-TZUchM5WGPI2ZG-WxpEy-GROjfw"
 
 if (-not (Test-Path $EnvFile)) {
     Write-Host ""
-    $WorkerToken = Read-Host "  Your worker token (from admin)"
+    Write-Host "  Enter your worker token (provided by admin after approval)." -ForegroundColor Cyan
+    $WorkerToken = Read-Host "  Worker token"
 
-    # Fetch config from API using worker token
-    Write-Info "Fetching your profile from ApplyLoop..."
-    try {
-        $ConfigResponse = Invoke-RestMethod -Uri "$AppUrl/api/settings/cli-config" -Headers @{ "X-Worker-Token" = $WorkerToken } -ErrorAction Stop
-
-        if ($ConfigResponse.data) {
-            $SupabaseUrl = $ConfigResponse.data.supabase_url
-            $SupabaseAnon = $ConfigResponse.data.supabase_anon_key
-
-            # Write profile.json for worker LLM context
-            $profile = @{
-                user = $ConfigResponse.data.profile
-                preferences = $ConfigResponse.data.preferences
-                resumes = $ConfigResponse.data.resumes
-                work_experience = if ($ConfigResponse.data.profile.work_experience) { $ConfigResponse.data.profile.work_experience } else { @() }
-                education = if ($ConfigResponse.data.profile.education) { $ConfigResponse.data.profile.education } else { @() }
-            }
-            $profile | ConvertTo-Json -Depth 10 | Out-File -FilePath (Join-Path $InstallDir "profile.json") -Encoding UTF8
-            Write-OK "Profile synced to $InstallDir\profile.json"
-        } else {
-            throw "No data in response"
-        }
-    } catch {
-        Write-Warn "Could not fetch profile — you can set Supabase credentials manually"
-        $SupabaseUrl = Read-Host "  Supabase URL"
-        $SupabaseAnon = Read-Host "  Supabase Anon Key"
+    if (-not $WorkerToken) {
+        Write-Warn "No worker token provided. You can add it to .env later."
     }
 
-    $TelegramToken = Read-Host "  Telegram Bot Token (optional)"
-    $WorkerId = Read-Host "  Worker ID [worker-1]"
-    if (-not $WorkerId) { $WorkerId = "worker-1" }
+    # Fetch profile + telegram config from API using worker token
+    $TelegramToken = ""
+    $TelegramChatId = ""
+    if ($WorkerToken) {
+        Write-Info "Fetching your profile from ApplyLoop..."
+        try {
+            $ConfigResponse = Invoke-RestMethod -Uri "$AppUrl/api/settings/cli-config" -Headers @{ "X-Worker-Token" = $WorkerToken } -ErrorAction Stop
+
+            if ($ConfigResponse.data) {
+                # Telegram bot token is global (admin's bot) — fetched from API
+                if ($ConfigResponse.data.telegram_bot_token) {
+                    $TelegramToken = $ConfigResponse.data.telegram_bot_token
+                }
+                if ($ConfigResponse.data.telegram_chat_id) {
+                    $TelegramChatId = $ConfigResponse.data.telegram_chat_id
+                }
+
+                # Write profile.json for worker LLM context
+                $profile = @{
+                    user = $ConfigResponse.data.profile
+                    preferences = $ConfigResponse.data.preferences
+                    resumes = $ConfigResponse.data.resumes
+                    work_experience = if ($ConfigResponse.data.profile.work_experience) { $ConfigResponse.data.profile.work_experience } else { @() }
+                    education = if ($ConfigResponse.data.profile.education) { $ConfigResponse.data.profile.education } else { @() }
+                }
+                $profile | ConvertTo-Json -Depth 10 | Out-File -FilePath (Join-Path $InstallDir "profile.json") -Encoding UTF8
+                Write-OK "Profile synced"
+            }
+        } catch {
+            Write-Warn "Could not fetch profile (check your worker token). Continuing..."
+        }
+    }
+
+    # Auto-generate worker ID (hostname + random suffix)
+    $WorkerId = "worker-$($env:COMPUTERNAME.ToLower())-$(Get-Random -Maximum 9999)"
 
     # Generate encryption key
     $EncryptionKey = -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) })
@@ -555,15 +566,14 @@ if (-not (Test-Path $EnvFile)) {
 # ApplyLoop Environment Configuration
 # Generated by setup-windows.ps1 on $(Get-Date)
 
-# Worker Token
+# Worker Token (your unique auth — do not share)
 WORKER_TOKEN=$WorkerToken
 
-# Supabase
+# Supabase (shared instance — your data is isolated via row-level security)
 NEXT_PUBLIC_SUPABASE_URL=$SupabaseUrl
 NEXT_PUBLIC_SUPABASE_ANON_KEY=$SupabaseAnon
-SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_URL=$SupabaseUrl
-SUPABASE_SERVICE_KEY=
+SUPABASE_SERVICE_KEY=$SupabaseAnon
 
 # App
 NEXT_PUBLIC_APP_URL=$AppUrl
@@ -576,26 +586,13 @@ APPLY_COOLDOWN=30
 RESUME_DIR=$env:TEMP\autoapply\resumes
 SCREENSHOT_DIR=$env:TEMP\autoapply\screenshots
 
-# Telegram (optional)
+# Telegram (auto-configured from admin)
 TELEGRAM_BOT_TOKEN=$TelegramToken
-
-# Stripe (optional)
-# STRIPE_SECRET_KEY=
-# STRIPE_WEBHOOK_SECRET=
-# STRIPE_STARTER_PRICE_ID=
-# STRIPE_PRO_PRICE_ID=
-
-# Redis rate limiting (optional)
-# UPSTASH_REDIS_REST_URL=
-# UPSTASH_REDIS_REST_TOKEN=
-
-# Google OAuth for Gmail (optional)
-# GOOGLE_CLIENT_ID=
-# GOOGLE_CLIENT_SECRET=
+TELEGRAM_CHAT_ID=$TelegramChatId
 "@
 
     $envContent | Out-File -FilePath $EnvFile -Encoding UTF8
-    Write-OK ".env file created at $EnvFile"
+    Write-OK ".env created — only worker token was needed, everything else is automatic"
 } else {
     Write-OK ".env file already exists"
 }

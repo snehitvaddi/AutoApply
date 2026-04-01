@@ -65,6 +65,7 @@ export async function GET(request: NextRequest) {
     supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL,
     supabase_anon_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     telegram_chat_id: user.telegram_chat_id || null,
+    telegram_bot_token: process.env.TELEGRAM_BOT_TOKEN || null,
   };
 
   // Only provide the shared API key if admin has set this user to "provided_key"
