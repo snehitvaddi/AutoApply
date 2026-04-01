@@ -35,7 +35,7 @@ export default function SetupCompletePage() {
           <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
             <li>Download and run the setup script for your OS</li>
             <li>The script installs Python, Node.js, OpenClaw, and all dependencies</li>
-            <li>It connects to your ApplyLoop account via Supabase</li>
+            <li>It connects to your ApplyLoop account via your worker token</li>
             <li>The worker starts scanning job boards and auto-applying</li>
           </ol>
         </div>

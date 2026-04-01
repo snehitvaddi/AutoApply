@@ -146,20 +146,24 @@ WHERE email = 'your@email.com';
 
 ### Step 9: Set Up Worker (Optional — for auto-applying)
 
-On a VPS (Hetzner CX21 recommended, $18/mo):
+The recommended approach is the **setup script** (downloaded from `/setup-complete` after onboarding). It handles everything automatically — you just enter your worker token.
+
+For manual setup on a VPS (Hetzner CX21, $18/mo):
 
 ```bash
 cd packages/worker
 pip install -r requirements.txt
 
-# Set environment variables
-export SUPABASE_URL="https://xxxxx.supabase.co"
-export SUPABASE_SERVICE_KEY="eyJ..."
+# Only WORKER_TOKEN is required — all DB access goes through the API proxy
+export WORKER_TOKEN="al_xxx_yyy"          # from admin panel
+export NEXT_PUBLIC_APP_URL="https://applyloop.vercel.app"
 export WORKER_ID="worker-1"
 
 # Run worker
 python worker.py
 ```
+
+> **Note:** Supabase credentials are NOT needed. The worker authenticates via the worker token and all database operations go through the ApplyLoop API proxy (`/api/worker/proxy`).
 
 For production, use systemd:
 ```bash
