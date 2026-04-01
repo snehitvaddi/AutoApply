@@ -290,53 +290,83 @@ def _enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
 
 
 def run_scout_cycle(user_id: str):
-    """Run one scout → filter → enqueue cycle for a user."""
+    """Run one scout → filter → enqueue cycle for a user.
+
+    Scouting sources are run in priority order:
+      HIGH:   Ashby API, Greenhouse API (reliable, high submit rate)
+      MEDIUM: Indeed, Himalayas (good volume, no auth)
+      LOW:    JSearch (optional, quota limited), LinkedIn public (limited results)
+
+    Higher priority sources are always run. Lower priority sources are
+    randomly included to spread load and avoid rate limits.
+    """
+    import random
+
     update_heartbeat(user_id, "scouting")
-    logger.info("Scout cycle: scanning Ashby + Greenhouse + LinkedIn + Indeed + Himalayas + JSearch...")
-
     user_prefs = fetch_user_job_preferences(user_id) if user_id != "system" else None
-
-    ashby_jobs = scout_ashby_boards(user_prefs)
-    gh_jobs = scout_greenhouse_boards(user_prefs)
-
-    # Build search queries from user preferences or defaults
     search_queries = (user_prefs or {}).get("target_titles") or ["AI Engineer", "ML Engineer", "Data Scientist"]
 
-    linkedin_jobs = []
+    counts = {}
+
+    # ── HIGH PRIORITY (always run) ─────────────────────────────────────────
+    logger.info("Scout: HIGH priority — Ashby + Greenhouse...")
+
+    ashby_jobs = scout_ashby_boards(user_prefs)
+    counts["Ashby"] = len(ashby_jobs)
+
+    gh_jobs = scout_greenhouse_boards(user_prefs)
+    counts["Greenhouse"] = len(gh_jobs)
+
+    # ── MEDIUM PRIORITY (run 80% of the time) ──────────────────────────────
     indeed_jobs = []
     himalayas_jobs = []
+
+    if random.random() < 0.8:
+        logger.info("Scout: MEDIUM priority — Indeed...")
+        try:
+            indeed_jobs = scan_indeed(search_queries)
+        except Exception as e:
+            logger.warning(f"Indeed scout failed: {e}")
+    counts["Indeed"] = len(indeed_jobs)
+
+    if random.random() < 0.8:
+        logger.info("Scout: MEDIUM priority — Himalayas...")
+        try:
+            himalayas_jobs = scan_himalayas(search_queries)
+        except Exception as e:
+            logger.warning(f"Himalayas scout failed: {e}")
+    counts["Himalayas"] = len(himalayas_jobs)
+
+    # ── LOW PRIORITY (run 40% of the time) ─────────────────────────────────
     jsearch_jobs = []
+    linkedin_jobs = []
 
-    try:
-        linkedin_jobs = scan_linkedin(search_queries)
-    except Exception as e:
-        logger.warning(f"LinkedIn scout failed: {e}")
+    if random.random() < 0.4:
+        logger.info("Scout: LOW priority — JSearch...")
+        try:
+            jsearch_jobs = scan_jsearch(search_queries)
+        except Exception as e:
+            logger.warning(f"JSearch scout failed: {e}")
+    counts["JSearch"] = len(jsearch_jobs)
 
-    try:
-        indeed_jobs = scan_indeed(search_queries)
-    except Exception as e:
-        logger.warning(f"Indeed scout failed: {e}")
+    if random.random() < 0.4:
+        logger.info("Scout: LOW priority — LinkedIn public...")
+        try:
+            linkedin_jobs = scan_linkedin(search_queries)
+        except Exception as e:
+            logger.warning(f"LinkedIn scout failed: {e}")
+    counts["LinkedIn"] = len(linkedin_jobs)
 
-    try:
-        himalayas_jobs = scan_himalayas(search_queries)
-    except Exception as e:
-        logger.warning(f"Himalayas scout failed: {e}")
-
-    try:
-        jsearch_jobs = scan_jsearch(search_queries)
-    except Exception as e:
-        logger.warning(f"JSearch scout failed: {e}")
-
-    # Filter jobs from sources that don't pre-filter
+    # ── Filter + enqueue ───────────────────────────────────────────────────
+    # Ashby/Greenhouse are pre-filtered in their scout functions.
+    # Others need filtering here.
     filtered_extra = [j for j in linkedin_jobs + indeed_jobs + himalayas_jobs + jsearch_jobs
                       if passes_filter(j["title"], j["company"], j["location"], user_prefs)]
 
     all_jobs = ashby_jobs + gh_jobs + filtered_extra
 
-    logger.info(f"Scout: {len(ashby_jobs)} Ashby, {len(gh_jobs)} Greenhouse, "
-                f"{len(linkedin_jobs)} LinkedIn, {len(indeed_jobs)} Indeed, "
-                f"{len(himalayas_jobs)} Himalayas, {len(jsearch_jobs)} JSearch "
-                f"= {len(all_jobs)} total (after filter)")
+    summary = ", ".join(f"{v} {k}" for k, v in counts.items() if v > 0)
+    logger.info(f"Scout: {summary} = {len(all_jobs)} total (after filter)")
 
     if not all_jobs:
         update_heartbeat(user_id, "idle", "No new jobs found")
@@ -344,7 +374,7 @@ def run_scout_cycle(user_id: str):
 
     enqueued = _enqueue_discovered_jobs(user_id, all_jobs)
     logger.info(f"Scout complete: {enqueued} new jobs enqueued (from {len(all_jobs)} raw)")
-    update_heartbeat(user_id, "scouted", f"{enqueued} enqueued")
+    update_heartbeat(user_id, "scouted", f"{enqueued} enqueued from {summary}")
     return enqueued
 
 
