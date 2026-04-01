@@ -1265,7 +1265,11 @@ if [[ -n "$CLI_CMD" ]]; then
   fi
 
   # exec replaces the shell — this is the final action
-  exec "$CLI_CMD" --cd "$INSTALL_DIR" "$CLI_PROMPT"
+  if [[ "$CLI_CMD" == "codex" ]]; then
+    exec codex --approval-mode full-auto --cd "$INSTALL_DIR" "$CLI_PROMPT"
+  else
+    exec "$CLI_CMD" --cd "$INSTALL_DIR" "$CLI_PROMPT"
+  fi
 else
   # No CLI available — show manual next steps
   log_warn "No AI CLI available — showing setup status manually."
