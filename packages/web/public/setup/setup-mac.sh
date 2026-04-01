@@ -470,41 +470,54 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
       ;;
   esac
 else
-  # ── Default mode: install Codex CLI (simplest path) ──
+  # ── Default mode: Claude Code (Level 1) + Codex (Level 2 via OpenClaw) ──
   echo ""
-  echo -e "  ${CYAN}Installing OpenAI Codex as your AI engine (default).${NC}"
+  echo -e "  ${CYAN}Setting up dual-LLM engine:${NC}"
+  echo -e "  ${CYAN}  Level 1 (you talk to): Claude Code (Anthropic)${NC}"
+  echo -e "  ${CYAN}  Level 2 (browser automation): Codex (OpenAI via OpenClaw)${NC}"
   echo -e "  ${CYAN}For advanced LLM options, re-run with: ./setup-mac.sh --advanced${NC}"
   echo ""
 
-  LLM_PROVIDER="openai"
-  LLM_MODEL="codex"
+  LLM_PROVIDER="anthropic"
+  LLM_MODEL="claude"
   LLM_ACCESS_TYPE="subscription"
 
-  log_info "Installing OpenAI Codex CLI..."
+  # Level 1: Install Claude Code CLI (user-facing orchestrator)
+  log_info "Installing Claude Code CLI (Level 1 — orchestrator)..."
+  npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code install failed"
+
+  if check_command claude; then
+    log_ok "Claude Code CLI installed"
+    log_info "Authenticating Claude Code (browser will open)..."
+    claude login 2>/dev/null || log_warn "Claude login skipped — run 'claude login' later"
+    LLM_CLI_TOOL="claude"
+  else
+    log_warn "Claude Code install failed — install manually: npm install -g @anthropic-ai/claude-code"
+  fi
+
+  # Level 2: Install Codex CLI (OpenClaw backend — browser automation LLM)
+  log_info "Installing Codex CLI (Level 2 — OpenClaw browser LLM)..."
   npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
 
   if check_command codex; then
-    log_ok "Codex CLI installed"
-    log_info "Launching Codex login (browser will open)..."
+    log_ok "Codex CLI installed (Level 2)"
+    log_info "Authenticating Codex (browser will open)..."
     codex auth 2>/dev/null || log_warn "Codex auth skipped — run 'codex auth' later"
-    LLM_CLI_TOOL="codex"
   else
     log_warn "Codex CLI install failed — install manually: npm install -g @openai/codex"
   fi
 fi
 
-[[ "$LLM_PROVIDER" != "none" ]] && log_ok "$LLM_PROVIDER / $LLM_MODEL ($LLM_ACCESS_TYPE) — used for chat + OpenClaw"
+[[ "$LLM_PROVIDER" != "none" ]] && log_ok "Level 1: Claude Code (orchestrator) | Level 2: Codex (OpenClaw browser)"
 
-# Same provider for backend — no separate question
-LLM_BACKEND_PROVIDER="$LLM_PROVIDER"; LLM_BACKEND_MODEL="$LLM_MODEL"
+# OpenClaw uses Codex (Level 2) for browser automation
+LLM_BACKEND_PROVIDER="openai"; LLM_BACKEND_MODEL="codex"
 echo ""
-# Configure OpenClaw with the same LLM
-if [[ "$LLM_PROVIDER" != "none" ]] && check_command openclaw; then
-  log_info "Configuring OpenClaw to use $LLM_PROVIDER..."
-  openclaw config set ai.provider "$LLM_PROVIDER" 2>/dev/null
-  [[ -n "$LLM_MODEL" ]] && openclaw config set ai.model "$LLM_MODEL" 2>/dev/null
-  [[ -n "$LLM_API_KEY" ]] && openclaw config set ai.apiKey "$LLM_API_KEY" 2>/dev/null
-  log_ok "OpenClaw configured with same LLM"
+# Configure OpenClaw with Codex as its LLM backend
+if check_command openclaw; then
+  log_info "Configuring OpenClaw to use Codex (Level 2)..."
+  openclaw config set ai.provider openai 2>/dev/null
+  log_ok "OpenClaw configured with Codex backend"
 fi
 
 # Install SDK
@@ -1326,7 +1339,9 @@ if [[ -n "$CLI_CMD" ]]; then
   fi
 
   # exec replaces the shell — this is the final action
-  if [[ "$CLI_CMD" == "codex" ]]; then
+  if [[ "$CLI_CMD" == "claude" ]]; then
+    exec claude --dangerously-skip-permissions --cd "$INSTALL_DIR" "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
+  elif [[ "$CLI_CMD" == "codex" ]]; then
     exec codex --full-auto -s danger-full-access --cd "$INSTALL_DIR" "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
   else
     exec "$CLI_CMD" --cd "$INSTALL_DIR" "$CLI_PROMPT"

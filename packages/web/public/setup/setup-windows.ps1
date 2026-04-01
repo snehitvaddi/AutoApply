@@ -553,48 +553,71 @@ if ($AdvancedMode) {
         default { Write-OK "No LLM - configure later via settings or openclaw config" }
     }
 } else {
-    # ── Default mode: install Codex CLI (simplest path) ──
+    # ── Default mode: Claude Code (Level 1) + Codex (Level 2 via OpenClaw) ──
     Write-Host ""
-    Write-Host "  Installing OpenAI Codex as your AI engine (default)." -ForegroundColor Cyan
+    Write-Host "  Setting up dual-LLM engine:" -ForegroundColor Cyan
+    Write-Host "    Level 1 (you talk to): Claude Code (Anthropic)" -ForegroundColor Cyan
+    Write-Host "    Level 2 (browser automation): Codex (OpenAI via OpenClaw)" -ForegroundColor Cyan
     Write-Host "  For advanced LLM options, re-run with: .\setup-windows.ps1 --advanced" -ForegroundColor Cyan
     Write-Host ""
 
-    $LlmProvider = "openai"
-    $LlmModel = "codex"
+    $LlmProvider = "anthropic"
+    $LlmModel = "claude"
     $LlmAccessType = "subscription"
 
-    Write-Info "Installing OpenAI Codex CLI..."
+    # Level 1: Install Claude Code CLI (user-facing orchestrator)
+    Write-Info "Installing Claude Code CLI (Level 1 — orchestrator)..."
+    $ErrorActionPreference = "Continue"
+    npm install -g @anthropic-ai/claude-code 2>&1 | Where-Object { $_ -notmatch "npm warn" } | Write-Host
+    $ErrorActionPreference = "Stop"
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+    if (Test-CommandExists "claude") {
+        Write-OK "Claude Code CLI installed"
+        Write-Info "Authenticating Claude Code (browser will open)..."
+        $ErrorActionPreference = "Continue"
+        try {
+            Start-Process -FilePath "claude" -ArgumentList "login" -NoNewWindow -Wait -ErrorAction SilentlyContinue 2>$null
+        } catch {
+            Write-Warn "Claude login failed. After setup, run: claude login"
+        }
+        $ErrorActionPreference = "Stop"
+        $LlmCliCmd = "claude"
+    } else {
+        Write-Warn "Claude Code install failed — install manually: npm install -g @anthropic-ai/claude-code"
+    }
+
+    # Level 2: Install Codex CLI (OpenClaw backend — browser automation LLM)
+    Write-Info "Installing Codex CLI (Level 2 — OpenClaw browser LLM)..."
     $ErrorActionPreference = "Continue"
     npm install -g @openai/codex 2>&1 | Where-Object { $_ -notmatch "npm warn" } | Write-Host
     $ErrorActionPreference = "Stop"
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
     if (Test-CommandExists "codex") {
-        Write-OK "Codex CLI installed"
+        Write-OK "Codex CLI installed (Level 2)"
         Write-Info "Authenticating Codex (browser will open)..."
         $ErrorActionPreference = "Continue"
         try {
-            # Start codex auth in a new interactive window to avoid "stdout is not a terminal"
             Start-Process -FilePath "codex" -ArgumentList "auth" -NoNewWindow -Wait -ErrorAction SilentlyContinue 2>$null
         } catch {
-            Write-Warn "Codex auth couldn't run here. After setup, run: codex auth"
+            Write-Warn "Codex auth failed. After setup, run: codex auth"
         }
         $ErrorActionPreference = "Stop"
-        $LlmCliCmd = "codex"
     } else {
         Write-Warn "Codex CLI install failed — install manually: npm install -g @openai/codex"
     }
 }
 
-if ($LlmProvider -ne "none") { Write-OK "$LlmProvider / $LlmModel ($LlmAccessType) - used for chat + OpenClaw" }
+if ($LlmProvider -ne "none") { Write-OK "Level 1: Claude Code (orchestrator) | Level 2: Codex (OpenClaw browser)" }
 
-# Same provider for backend — no separate question
-$LlmBackendProvider = $LlmProvider; $LlmBackendModel = $LlmModel
+# OpenClaw uses Codex (Level 2) for browser automation
+$LlmBackendProvider = "openai"; $LlmBackendModel = "codex"
 
-# Configure OpenClaw with the same LLM
-if ($LlmProvider -ne "none" -and (Test-CommandExists "openclaw")) {
+# Configure OpenClaw with Codex as its LLM backend
+if (Test-CommandExists "openclaw") {
     $ErrorActionPreference = "Continue"
-    openclaw config set ai.provider $LlmProvider 2>&1 | Out-Null
+    openclaw config set ai.provider openai 2>&1 | Out-Null
     if ($LlmModel) { openclaw config set ai.model $LlmModel 2>&1 | Out-Null }
     if ($LlmApiKey) { openclaw config set ai.apiKey $LlmApiKey 2>&1 | Out-Null }
     $ErrorActionPreference = "Stop"
@@ -1215,7 +1238,7 @@ if ($LlmCliCmd -eq "claude") {
         $env:ANTHROPIC_API_KEY = $LlmApiKey
     }
 
-    claude --cd $InstallDir $ContextPrompt
+    claude --dangerously-skip-permissions --cd $InstallDir "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
 
 } elseif ($LlmCliCmd -eq "codex") {
     Write-OK "Launching Codex to complete setup..."
