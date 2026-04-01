@@ -1160,7 +1160,7 @@ if ($LlmCliCmd -eq "claude") {
         $env:OPENAI_API_KEY = $LlmApiKey
     }
 
-    codex --full-auto --cd $InstallDir $ContextPrompt
+    codex --full-auto --cd $InstallDir "Read SOUL.md in this directory and follow it exactly. You are ApplyLoop. Start the scout→filter→apply loop immediately using openclaw browser commands. Do NOT run worker.py."
 
 } else {
     # ── Fallback: No CLI available — show interactive status dashboard ────────

@@ -1266,7 +1266,7 @@ if [[ -n "$CLI_CMD" ]]; then
 
   # exec replaces the shell — this is the final action
   if [[ "$CLI_CMD" == "codex" ]]; then
-    exec codex --full-auto --cd "$INSTALL_DIR" "$CLI_PROMPT"
+    exec codex --full-auto --cd "$INSTALL_DIR" "Read SOUL.md in this directory and follow it exactly. You are ApplyLoop. Start the scout→filter→apply loop immediately using openclaw browser commands. Do NOT run worker.py."
   else
     exec "$CLI_CMD" --cd "$INSTALL_DIR" "$CLI_PROMPT"
   fi
