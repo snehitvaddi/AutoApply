@@ -528,7 +528,7 @@ $EnvFile = Join-Path $InstallDir ".env"
 $AppUrl = "https://applyloop.vercel.app"
 
 # Hardcoded Supabase connection (admin's shared instance — RLS enforces per-user access)
-$SupabaseUrl = "https://vegcqubtypdqldudhqv.supabase.co"
+$SupabaseUrl = "https://vegcqubtypvdqlduxhqv.supabase.co"
 $SupabaseAnon = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlZ2NxdWJ0eXB2ZHFsZHV4aHF2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3NTkyOTYsImV4cCI6MjA4OTMzNTI5Nn0.MJ24A6INzw2dOkv-TZUchM5WGPI2ZG-WxpEy-GROjfw"
 
 if (-not (Test-Path $EnvFile)) {
