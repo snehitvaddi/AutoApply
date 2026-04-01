@@ -27,14 +27,14 @@ export async function GET(request: NextRequest) {
       supabase
         .from("user_profiles")
         .select(
-          "full_name, phone, linkedin_url, github_url, portfolio_url, location, summary, work_experience, education"
+          "first_name, last_name, phone, linkedin_url, github_url, portfolio_url, current_company, current_title, years_experience, education_level, school_name, degree, graduation_year, work_authorization, requires_sponsorship, gender, race_ethnicity, veteran_status, disability_status, work_experience, education, skills, answer_key_json, cover_letter_template"
         )
         .eq("user_id", auth.userId)
         .single(),
       supabase
         .from("user_job_preferences")
         .select(
-          "target_roles, target_locations, min_salary, visa_sponsorship, remote_preference, excluded_companies"
+          "target_titles, target_keywords, excluded_titles, excluded_companies, preferred_locations, min_salary, remote_only, auto_apply, max_daily"
         )
         .eq("user_id", auth.userId)
         .single(),

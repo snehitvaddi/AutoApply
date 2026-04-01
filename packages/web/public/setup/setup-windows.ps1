@@ -348,6 +348,54 @@ if (Test-CommandExists "himalaya") {
     } else {
         Write-Info "Skipping Himalaya"
     }
+
+    # Gmail setup for Himalaya
+    if (Test-CommandExists "himalaya") {
+        $setupGmail = Read-Host "  Set up Gmail for email verification codes? [Y/n]"
+        if (-not $setupGmail -or $setupGmail -match "^[Yy]") {
+            Write-Host ""
+            Write-Host "  To read verification codes, Himalaya needs a Gmail App Password." -ForegroundColor Cyan
+            Write-Host "  Steps:" -ForegroundColor Cyan
+            Write-Host "    1. Go to: https://myaccount.google.com/apppasswords" -ForegroundColor Cyan
+            Write-Host "    2. Sign in to your Google account" -ForegroundColor Cyan
+            Write-Host "    3. App name: 'ApplyLoop' -> click Create" -ForegroundColor Cyan
+            Write-Host "    4. Copy the 16-character password (like 'abcd efgh ijkl mnop')" -ForegroundColor Cyan
+            Write-Host ""
+            $gmailEmail = Read-Host "  Your Gmail address"
+            $gmailAppPw = Read-Host "  App password (16 chars, spaces OK)"
+
+            if ($gmailEmail -and $gmailAppPw) {
+                $himConfigDir = Join-Path $env:APPDATA "himalaya"
+                New-Item -ItemType Directory -Path $himConfigDir -Force | Out-Null
+                $himConfig = @"
+[accounts.gmail]
+default = true
+email = "$gmailEmail"
+display-name = "ApplyLoop"
+
+backend.type = "imap"
+backend.host = "imap.gmail.com"
+backend.port = 993
+backend.encryption = "tls"
+backend.login = "$gmailEmail"
+backend.auth.type = "password"
+backend.auth.raw = "$gmailAppPw"
+
+message.send.backend.type = "smtp"
+message.send.backend.host = "smtp.gmail.com"
+message.send.backend.port = 465
+message.send.backend.encryption = "tls"
+message.send.backend.login = "$gmailEmail"
+message.send.backend.auth.type = "password"
+message.send.backend.auth.raw = "$gmailAppPw"
+"@
+                $himConfig | Out-File -FilePath (Join-Path $himConfigDir "config.toml") -Encoding UTF8
+                Write-OK "Himalaya Gmail configured"
+            } else {
+                Write-Warn "Gmail setup skipped"
+            }
+        }
+    }
 }
 
 # AgentMail (disposable inboxes)
@@ -366,6 +414,26 @@ if ($amInstalled) {
     } else {
         Write-Info "Skipping AgentMail - install later: pip install agentmail"
     }
+}
+
+# AgentMail API key
+$amKey = Read-Host "  AgentMail API key (from agentmail.to dashboard, or Enter to skip)"
+if ($amKey) {
+    $EnvFile = Join-Path $InstallDir ".env"
+    if (Test-Path $EnvFile) {
+        Add-Content -Path $EnvFile -Value "AGENTMAIL_API_KEY=$amKey"
+    }
+    Write-OK "AgentMail API key saved to .env"
+}
+
+# Finetune Resume URL
+$ftUrl = Read-Host "  Finetune Resume API URL (or Enter to skip)"
+if ($ftUrl) {
+    $EnvFile = Join-Path $InstallDir ".env"
+    if (Test-Path $EnvFile) {
+        Add-Content -Path $EnvFile -Value "FINETUNE_RESUME_URL=$ftUrl"
+    }
+    Write-OK "Finetune Resume URL saved to .env"
 }
 
 Write-Host ""

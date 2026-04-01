@@ -250,6 +250,54 @@ else
   else
     log_info "Skipping Himalaya — install later: brew install himalaya"
   fi
+
+  # Gmail setup for Himalaya
+  if check_command himalaya; then
+    read -p "  Set up Gmail for email verification codes? [Y/n]: " SETUP_GMAIL
+    SETUP_GMAIL="${SETUP_GMAIL:-Y}"
+    if [[ "$SETUP_GMAIL" =~ ^[Yy] ]]; then
+      echo ""
+      echo -e "  ${CYAN}To read verification codes, Himalaya needs a Gmail App Password.${NC}"
+      echo -e "  ${CYAN}Steps:${NC}"
+      echo -e "  ${CYAN}  1. Go to: https://myaccount.google.com/apppasswords${NC}"
+      echo -e "  ${CYAN}  2. Sign in to your Google account${NC}"
+      echo -e "  ${CYAN}  3. App name: 'ApplyLoop' → click Create${NC}"
+      echo -e "  ${CYAN}  4. Copy the 16-character password${NC}"
+      echo ""
+      read -p "  Your Gmail address: " GMAIL_EMAIL
+      read -p "  App password (16 chars): " GMAIL_APP_PW
+
+      if [[ -n "$GMAIL_EMAIL" && -n "$GMAIL_APP_PW" ]]; then
+        HIM_CONFIG_DIR="$HOME/.config/himalaya"
+        mkdir -p "$HIM_CONFIG_DIR"
+        cat > "$HIM_CONFIG_DIR/config.toml" <<HIMEOF
+[accounts.gmail]
+default = true
+email = "$GMAIL_EMAIL"
+display-name = "ApplyLoop"
+
+backend.type = "imap"
+backend.host = "imap.gmail.com"
+backend.port = 993
+backend.encryption = "tls"
+backend.login = "$GMAIL_EMAIL"
+backend.auth.type = "password"
+backend.auth.raw = "$GMAIL_APP_PW"
+
+message.send.backend.type = "smtp"
+message.send.backend.host = "smtp.gmail.com"
+message.send.backend.port = 465
+message.send.backend.encryption = "tls"
+message.send.backend.login = "$GMAIL_EMAIL"
+message.send.backend.auth.type = "password"
+message.send.backend.auth.raw = "$GMAIL_APP_PW"
+HIMEOF
+        log_ok "Himalaya Gmail configured at $HIM_CONFIG_DIR/config.toml"
+      else
+        log_warn "Gmail setup skipped"
+      fi
+    fi
+  fi
 fi
 
 # AgentMail (disposable inboxes)
@@ -265,6 +313,20 @@ else
   else
     log_info "Skipping AgentMail — install later: pip install agentmail"
   fi
+fi
+
+# AgentMail API key
+read -p "  AgentMail API key (from agentmail.to, or Enter to skip): " AM_KEY
+if [[ -n "$AM_KEY" ]]; then
+  echo "AGENTMAIL_API_KEY=$AM_KEY" >> "$ENV_FILE"
+  log_ok "AgentMail API key saved to .env"
+fi
+
+# Finetune Resume URL
+read -p "  Finetune Resume API URL (or Enter to skip): " FT_URL
+if [[ -n "$FT_URL" ]]; then
+  echo "FINETUNE_RESUME_URL=$FT_URL" >> "$ENV_FILE"
+  log_ok "Finetune Resume URL saved to .env"
 fi
 
 echo ""
