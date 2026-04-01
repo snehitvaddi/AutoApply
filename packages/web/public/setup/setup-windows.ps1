@@ -1160,7 +1160,7 @@ if ($LlmCliCmd -eq "claude") {
         $env:OPENAI_API_KEY = $LlmApiKey
     }
 
-    codex --approval-mode full-auto --cd $InstallDir $ContextPrompt
+    codex --full-auto --cd $InstallDir $ContextPrompt
 
 } else {
     # ── Fallback: No CLI available — show interactive status dashboard ────────

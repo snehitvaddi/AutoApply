@@ -1266,7 +1266,7 @@ if [[ -n "$CLI_CMD" ]]; then
 
   # exec replaces the shell — this is the final action
   if [[ "$CLI_CMD" == "codex" ]]; then
-    exec codex --approval-mode full-auto --cd "$INSTALL_DIR" "$CLI_PROMPT"
+    exec codex --full-auto --cd "$INSTALL_DIR" "$CLI_PROMPT"
   else
     exec "$CLI_CMD" --cd "$INSTALL_DIR" "$CLI_PROMPT"
   fi
