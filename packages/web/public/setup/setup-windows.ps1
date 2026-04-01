@@ -224,22 +224,32 @@ if (Test-CommandExists "himalaya") {
 } else {
     $installHim = Read-Host "  Install Himalaya CLI for Gmail reading? [Y/n]"
     if (-not $installHim -or $installHim -match "^[Yy]") {
-        if (Test-CommandExists "winget") {
-            Write-Info "Installing Himalaya via winget..."
+        # Try cargo first (most reliable), then direct download, then winget
+        $himInstalled = $false
+        if (Test-CommandExists "cargo") {
+            Write-Info "Installing Himalaya via cargo..."
             $ErrorActionPreference = "Continue"
-            winget install --id pimalaya.himalaya --accept-package-agreements --accept-source-agreements --silent 2>&1 | Out-Null
+            cargo install himalaya 2>&1 | Out-Null
             $ErrorActionPreference = "Stop"
-            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-            if (Test-CommandExists "himalaya") {
-                Write-OK "Himalaya installed"
-            } else {
-                Write-Warn "Himalaya install failed - install later: winget install pimalaya.himalaya"
-            }
-        } else {
-            Write-Warn "winget not available - install Himalaya manually from https://github.com/pimalaya/himalaya/releases"
+            if (Test-CommandExists "himalaya") { $himInstalled = $true; Write-OK "Himalaya installed via cargo" }
+        }
+        if (-not $himInstalled) {
+            # Direct download from GitHub releases
+            Write-Info "Downloading Himalaya from GitHub..."
+            $ErrorActionPreference = "Continue"
+            try {
+                $himUrl = "https://github.com/pimalaya/himalaya/releases/latest/download/himalaya-x86_64-windows.exe"
+                $himDest = "$env:LOCALAPPDATA\Microsoft\WindowsApps\himalaya.exe"
+                Invoke-WebRequest -Uri $himUrl -OutFile $himDest -UseBasicParsing 2>$null
+                if (Test-Path $himDest) { $himInstalled = $true; Write-OK "Himalaya downloaded to $himDest" }
+            } catch {}
+            $ErrorActionPreference = "Stop"
+        }
+        if (-not $himInstalled) {
+            Write-Warn "Himalaya install failed. Install manually from: https://github.com/pimalaya/himalaya/releases"
         }
     } else {
-        Write-Info "Skipping Himalaya - install later: winget install pimalaya.himalaya"
+        Write-Info "Skipping Himalaya"
     }
 }
 
@@ -278,14 +288,33 @@ if (Test-Path $InstallDir) {
         try { git pull origin main 2>$null } catch { Write-Warn "Git pull failed — using existing files" }
     }
 } else {
-    Write-Info "Cloning ApplyLoop..."
+    Write-Info "Cloning ApplyLoop (this may open a browser for GitHub auth)..."
+    Write-Host "  If the terminal hangs after browser auth, press Ctrl+C and re-run the script." -ForegroundColor Yellow
+    $cloned = $false
     try {
-        git clone https://github.com/snehitvaddi/AutoApply.git $InstallDir 2>$null
-    } catch {
-        Write-Warn "Git clone failed (repo may be private). Creating directory..."
-        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+        # Set GIT_TERMINAL_PROMPT to avoid interactive prompts hanging
+        $env:GIT_TERMINAL_PROMPT = "0"
+        $cloneProcess = Start-Process -FilePath "git" -ArgumentList "clone", "https://github.com/snehitvaddi/AutoApply.git", $InstallDir -NoNewWindow -PassThru -Wait -RedirectStandardError "$env:TEMP\git-clone-err.txt"
+        if ($cloneProcess.ExitCode -eq 0 -and (Test-Path "$InstallDir\.git")) {
+            $cloned = $true
+            Write-OK "Repository cloned"
+        }
+    } catch {}
+
+    if (-not $cloned) {
+        Write-Warn "Git clone failed. The repo is private — you need GitHub access."
+        Write-Host ""
+        Write-Host "  Option 1: Ask the admin to add your GitHub account as a collaborator" -ForegroundColor Yellow
+        Write-Host "  Option 2: Ask the admin for a personal access token and run:" -ForegroundColor Yellow
+        Write-Host "    git clone https://TOKEN@github.com/snehitvaddi/AutoApply.git $InstallDir" -ForegroundColor Cyan
+        Write-Host ""
+        $manualClone = Read-Host "  Press Enter after cloning manually, or type 'skip' to continue without code"
+        if (-not (Test-Path $InstallDir)) {
+            New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+        }
     }
-    Set-Location $InstallDir
+
+    if (Test-Path $InstallDir) { Set-Location $InstallDir }
 }
 
 # ── Step 7: Install dependencies ────────────────────────────────────────────
