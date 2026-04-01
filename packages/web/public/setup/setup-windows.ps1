@@ -1058,7 +1058,20 @@ npm run dev
 
 $AgentsMdPath = Join-Path $InstallDir "AGENTS.md"
 $agentsMd | Out-File -FilePath $AgentsMdPath -Encoding UTF8
-Write-OK "AGENTS.md generated at $AgentsMdPath"
+
+# Append SOUL.md content to AGENTS.md so Codex auto-reads it (Codex reads AGENTS.md natively)
+$SoulPath = Join-Path $InstallDir "packages\worker\SOUL.md"
+if (-not (Test-Path $SoulPath)) { $SoulPath = Join-Path $InstallDir "repo\packages\worker\SOUL.md" }
+if (-not (Test-Path $SoulPath)) {
+    try { Invoke-WebRequest -Uri "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/worker/SOUL.md" -OutFile (Join-Path $InstallDir "SOUL.md") -UseBasicParsing 2>$null; $SoulPath = Join-Path $InstallDir "SOUL.md" } catch {}
+}
+if (Test-Path $SoulPath) {
+    Add-Content -Path $AgentsMdPath -Value "`n`n---`n"
+    Get-Content $SoulPath | Add-Content -Path $AgentsMdPath
+    Write-OK "AGENTS.md generated with SOUL instructions (Codex auto-reads this)"
+} else {
+    Write-OK "AGENTS.md generated at $AgentsMdPath"
+}
 
 Write-Host ""
 
@@ -1216,7 +1229,7 @@ if ($LlmCliCmd -eq "claude") {
         $env:OPENAI_API_KEY = $LlmApiKey
     }
 
-    codex --full-auto --cd $InstallDir "Read SOUL.md in this directory and follow it exactly. You are ApplyLoop. Start the scout→filter→apply loop immediately using openclaw browser commands. Do NOT run worker.py."
+    codex --full-auto -s danger-full-access --cd $InstallDir "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
 
 } else {
     # ── Fallback: No CLI available — show interactive status dashboard ────────

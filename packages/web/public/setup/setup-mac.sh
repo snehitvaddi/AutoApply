@@ -988,7 +988,18 @@ AGENTSCMDS
 
 } > "$AGENTS_FILE"
 
-log_ok "AGENTS.md written to $AGENTS_FILE"
+# Append SOUL.md content to AGENTS.md so Codex auto-reads it
+SOUL_PATH="$INSTALL_DIR/packages/worker/SOUL.md"
+[[ ! -f "$SOUL_PATH" ]] && SOUL_PATH="$INSTALL_DIR/repo/packages/worker/SOUL.md"
+[[ ! -f "$SOUL_PATH" ]] && curl -s "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/worker/SOUL.md" -o "$INSTALL_DIR/SOUL.md" 2>/dev/null && SOUL_PATH="$INSTALL_DIR/SOUL.md"
+
+if [[ -f "$SOUL_PATH" ]]; then
+  echo -e "\n\n---\n" >> "$AGENTS_FILE"
+  cat "$SOUL_PATH" >> "$AGENTS_FILE"
+  log_ok "AGENTS.md generated with SOUL instructions (Codex auto-reads this)"
+else
+  log_ok "AGENTS.md written to $AGENTS_FILE"
+fi
 
 # ── Print console status dashboard ─────────────────────────────────────────
 
@@ -1316,7 +1327,7 @@ if [[ -n "$CLI_CMD" ]]; then
 
   # exec replaces the shell — this is the final action
   if [[ "$CLI_CMD" == "codex" ]]; then
-    exec codex --full-auto --cd "$INSTALL_DIR" "Read SOUL.md in this directory and follow it exactly. You are ApplyLoop. Start the scout→filter→apply loop immediately using openclaw browser commands. Do NOT run worker.py."
+    exec codex --full-auto -s danger-full-access --cd "$INSTALL_DIR" "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
   else
     exec "$CLI_CMD" --cd "$INSTALL_DIR" "$CLI_PROMPT"
   fi
