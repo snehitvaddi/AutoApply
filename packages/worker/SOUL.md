@@ -301,15 +301,107 @@ new target roles, etc.):
 
 This ensures the web dashboard and local worker always have the same data.
 
-═══ FILES ═══
-- `profile.json` — user's full profile (personal, experience[], education[], skills, legal, preferences, standard_answers)
-- `packages/worker/knowledge/learnings.md` — ATS patterns, fixes, platform-specific notes
-- `packages/worker/knowledge/answer-key-template.json` — pre-computed form field answers
-- `packages/worker/config.py` — board slug lists, filter rules, blocked companies
-- `.env` — environment config:
-  - WORKER_TOKEN — auth token for API proxy
-  - TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID — notification delivery
-  - FINETUNE_RESUME_URL, FINETUNE_RESUME_API_KEY — resume tailoring (optional)
-  - AGENTMAIL_API_KEY — AgentMail for email verification (optional)
-  - LLM_PROVIDER, LLM_MODEL — primary chat LLM
-  - LLM_BACKEND_PROVIDER, LLM_BACKEND_MODEL — OpenClaw browser LLM
+═══ EXACT FILE PATHS (on the client's machine) ═══
+
+All paths are relative to the install directory (~/autoapply or $INSTALL_DIR).
+Read these at startup. Write to these during operation.
+
+CONFIGURATION:
+- `.env` — ALL credentials and config. Read with: grep KEY .env | cut -d= -f2
+  - WORKER_TOKEN — auth for API proxy
+  - TELEGRAM_BOT_TOKEN — bot token (admin's global bot)
+  - TELEGRAM_CHAT_ID — this user's chat ID
+  - FINETUNE_RESUME_URL, FINETUNE_RESUME_API_KEY — resume tailoring
+  - AGENTMAIL_API_KEY — disposable email inboxes
+  - LLM_PROVIDER, LLM_MODEL, LLM_BACKEND_PROVIDER, LLM_BACKEND_MODEL
+
+USER DATA:
+- `profile.json` — user's full profile (READ this for form filling)
+  - personal: first_name, last_name, email, phone, linkedin_url, github_url
+  - work: current_company, current_title, years_experience
+  - legal: work_authorization, requires_sponsorship
+  - eeo: gender, race_ethnicity, veteran_status, disability_status
+  - experience[]: array of work history entries
+  - education[]: array of education entries
+  - preferences: target_titles[], excluded_companies[], min_salary, remote_only
+  - standard_answers: why_interested, strengths, career_goals, etc.
+
+KNOWLEDGE (read-only reference):
+- `packages/worker/knowledge/learnings.md` — ATS patterns, platform fixes
+- `packages/worker/knowledge/answer-key-template.json` — form field answer mappings
+- `packages/worker/config.py` — board slugs, filter rules, blocked companies
+
+LOGS & STATE (write to these during operation):
+- `/tmp/applied-dedup.json` — local dedup DB: {company}|{job_id} → status + timestamp
+- `/tmp/applyloop-progress.json` — current queue position (for session resume)
+- `/tmp/openclaw/uploads/resume.pdf` — staged resume for OpenClaw upload
+- `/tmp/autoapply/screenshots/` — screenshots saved here before Telegram send
+
+SCREENSHOTS:
+- OpenClaw saves screenshots to a temp path. After `openclaw browser screenshot`:
+  - The output contains the file path (e.g., /tmp/openclaw/screenshots/screenshot_1234.png)
+  - Read that path → send to Telegram via sendPhoto
+  - Example: `openclaw browser screenshot --full-page --type png`
+    → output includes path like: /tmp/openclaw/...screenshot.png
+    → then: curl sendPhoto -F photo=@/tmp/openclaw/...screenshot.png
+
+═══ LOGGING APPLICATIONS TO DASHBOARD ═══
+After EVERY successful or failed application, log it to the API so the
+admin dashboard shows accurate data:
+
+```bash
+TOKEN=$(grep WORKER_TOKEN .env | cut -d= -f2)
+APP_URL=$(grep NEXT_PUBLIC_APP_URL .env | cut -d= -f2)
+
+# Log successful submission
+curl -s -X POST "$APP_URL/api/worker/proxy" \
+  -H "X-Worker-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"log_application","company":"<company>","title":"<role>","ats":"<ats>","apply_url":"<url>","status":"submitted"}'
+
+# Log failure
+curl -s -X POST "$APP_URL/api/worker/proxy" \
+  -H "X-Worker-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"log_application","company":"<company>","title":"<role>","ats":"<ats>","apply_url":"<url>","status":"failed","error":"<reason>"}'
+
+# Update heartbeat (do this every action so admin dashboard shows you're alive)
+curl -s -X POST "$APP_URL/api/worker/proxy" \
+  -H "X-Worker-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"heartbeat","last_action":"applied","details":"<company> — <role>"}'
+```
+
+DO THIS FOR EVERY APPLICATION. Without it, the admin dashboard shows 0 applications.
+
+═══ TELEGRAM NOTIFICATIONS — EXACT COMMANDS ═══
+Read these from .env at startup:
+```bash
+TOKEN=$(grep TELEGRAM_BOT_TOKEN .env | cut -d= -f2)
+CHAT_ID=$(grep TELEGRAM_CHAT_ID .env | cut -d= -f2)
+```
+
+If either is empty, tell the user:
+"Telegram not configured. Message your admin's bot on Telegram → /start → copy Chat ID → tell me."
+
+Send screenshot + caption after each application:
+```bash
+curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendPhoto" \
+  -F "chat_id=${CHAT_ID}" \
+  -F "photo=@<screenshot_path>" \
+  -F "caption=✅ Applied: <title> @ <company> | <ats>"
+```
+
+Send text-only for errors/status:
+```bash
+curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+  -F "chat_id=${CHAT_ID}" \
+  -F "text=<message>"
+```
+
+Send hourly pipeline summary:
+```bash
+curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+  -F "chat_id=${CHAT_ID}" \
+  -F "text=📊 Hourly: Applied <N>, Failed <N>, Skipped <N>, Queue <N>"
+```
