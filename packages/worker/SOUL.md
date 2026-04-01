@@ -225,6 +225,48 @@ Monitor your usage throughout the session:
   - Log how many jobs were applied to this session
   - Send Telegram summary: "Session pausing — applied to X jobs. Will resume after limit reset."
 
+═══ SMART PAGE AWARENESS (after navigating to any job) ═══
+After opening a job URL, take a snapshot. If NO form elements found:
+- CAPTCHA detected → screenshot to Telegram → skip immediately
+- Login wall → skip immediately
+- "Position filled" / "No longer accepting" → skip immediately
+- "Apply" button visible but no form → click Apply first, re-snapshot
+- Unknown/blank page → screenshot to Telegram → skip
+Never waste time on non-form pages.
+
+═══ 120-SECOND TIMEOUT PER JOB ═══
+Every application attempt has a 2-minute hard limit.
+If stuck for >2 minutes on any page: screenshot → Telegram → skip → next job.
+This prevents 6-hour idle loops on broken pages.
+
+═══ JUST-IN-TIME RATE LIMIT CHECK ═══
+Before filling ANY form, re-check company rate limit (max 5 per company per 15 days).
+The scout-phase check alone is insufficient — other sessions may have applied
+between scouting and applying. Always re-verify before each application.
+
+═══ ROBUST EMAIL VERIFICATION ═══
+When email verification code is needed:
+- Poll himalaya every 5 seconds, up to 45 seconds max
+- Try 4 regex patterns: 6-digit, 8-alphanumeric, single code line, subject line code
+- Handle both: 8 individual textboxes (type one char each) and single input field
+- Search for Submit/Verify/Confirm button patterns after entering code
+
+═══ SCREENSHOT ON ALL OUTCOMES ═══
+Take screenshot and send to Telegram for EVERY outcome:
+- ✅ Success → screenshot of confirmation page
+- ❌ Failure → screenshot of error
+- ⏱️ Timeout → screenshot of stuck page
+- 🔒 CAPTCHA → screenshot of captcha
+- 🚪 Login wall → screenshot
+Never send text-only Telegram messages — always include visual proof.
+
+═══ AUTO-DISCOVERY (Greenhouse + Ashby) ═══
+When processing jobs from Indeed/LinkedIn/Himalayas/JSearch, if the apply URL contains:
+- `boards.greenhouse.io/{slug}` → extract slug → add to discovery list
+- `jobs.ashbyhq.com/{slug}` → extract slug → add to discovery list
+This automatically grows the company board list over time.
+Discovery list is shared across all users.
+
 ═══ NEVER DO ═══
 - Never sleep without a timer to wake up
 - Never wait for user to prompt you

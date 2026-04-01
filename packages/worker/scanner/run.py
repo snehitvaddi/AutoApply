@@ -17,7 +17,7 @@ import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import SUPABASE_URL, SUPABASE_SERVICE_KEY, ASHBY_SLUGS, GREENHOUSE_NO_RECAPTCHA, GREENHOUSE_RECAPTCHA
+from config import SUPABASE_URL, SUPABASE_SERVICE_KEY, ASHBY_SLUGS, GREENHOUSE_SUBMITTABLE, GREENHOUSE_RECAPTCHA
 from db import get_supabase_client
 from scanner.greenhouse import scan_greenhouse_boards
 from scanner.ashby import scan_ashby_boards
@@ -31,7 +31,7 @@ logger = logging.getLogger("scanner")
 
 # ── Board lists (imported from config.py) ───────────────────────────────────
 
-GREENHOUSE_BOARDS = GREENHOUSE_NO_RECAPTCHA + GREENHOUSE_RECAPTCHA
+GREENHOUSE_BOARDS = GREENHOUSE_SUBMITTABLE + GREENHOUSE_RECAPTCHA
 ASHBY_BOARDS = ASHBY_SLUGS
 LEVER_COMPANIES = ["voleon", "nominal", "levelai", "fieldai", "nimblerx", "weride"]
 

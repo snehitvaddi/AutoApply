@@ -59,7 +59,8 @@ BLOCKED_STAFFING = [
 # ─── Scout → Filter → Apply cycle config ────────────────────────────────────
 
 SCOUT_INTERVAL_MINUTES = int(os.environ.get("SCOUT_INTERVAL_MINUTES", "30"))
-MAX_COMPANY_APPS_PER_30_DAYS = 5
+MAX_COMPANY_APPS_PER_15_DAYS = 5  # Rate limit window: 15 days (was 30)
+JOB_TIMEOUT_SECONDS = 120  # Max time per application before skip
 
 # ─── DEFAULT FILTERS (fallback when user has no preferences) ───────────────
 
@@ -69,12 +70,13 @@ SKIP_LEVELS = ["lead", "principal", "staff", "director", "manager", "vp", "inter
 # Skip irrelevant role types (sales, legal, marketing, etc.)
 SKIP_ROLE_KEYWORDS = [
     "sales", "account executive", "account manager", "business development",
+    "sales development", "solutions architect",
     "legal", "counsel", "attorney", "paralegal",
-    "marketing", "content", "copywriter", "social media",
-    "recruiter", "talent acquisition", "people ops",
-    "designer", "graphic design", "ux design",
-    "security engineer", "iam", "identity", "soc analyst",
-    "datacenter", "facilities", "office manager",
+    "marketing", "marketing analyst", "content", "copywriter", "social media",
+    "recruiter", "talent acquisition", "people ops", "trainer",
+    "designer", "product designer", "graphic design", "ux design",
+    "security architect", "identity architect", "security engineer", "iam", "soc analyst",
+    "datacenter", "electrical engineer", "facilities", "office manager",
     "customer success", "support engineer", "technical support",
 ]
 
@@ -121,7 +123,7 @@ ASHBY_SLUGS = [
 # ─── Greenhouse reCAPTCHA map ────────────────────────────────────────────────
 
 # These companies have NO reCAPTCHA — safe to auto-submit
-GREENHOUSE_NO_RECAPTCHA = [
+GREENHOUSE_SUBMITTABLE = [
     "affirm", "airtable", "asana", "aurora", "benchling",
     "calendly", "canva", "chime", "cloudflare", "coinbase",
     "crowdstrike", "databricks", "datadog", "deel", "doordash",
@@ -144,4 +146,4 @@ GREENHOUSE_RECAPTCHA = [
 ]
 
 # Combined list — used by scanner to discover ALL jobs
-GREENHOUSE_ALL_BOARDS = GREENHOUSE_NO_RECAPTCHA + GREENHOUSE_RECAPTCHA
+GREENHOUSE_ALL_BOARDS = GREENHOUSE_SUBMITTABLE + GREENHOUSE_RECAPTCHA

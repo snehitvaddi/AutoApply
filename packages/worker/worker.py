@@ -10,10 +10,10 @@ import re
 from config import (
     WORKER_ID, POLL_INTERVAL, APPLY_COOLDOWN, ATS_COOLDOWNS,
     MAX_SYSTEM_APPS_PER_HOUR, BLOCKED_DOMAINS, COMPANY_PAUSES, BLOCKED_COMPANIES,
-    BLOCKED_STAFFING, SCOUT_INTERVAL_MINUTES, MAX_COMPANY_APPS_PER_30_DAYS,
+    BLOCKED_STAFFING, SCOUT_INTERVAL_MINUTES, MAX_COMPANY_APPS_PER_15_DAYS,
     SKIP_LEVELS, SKIP_COMPANIES_SENIOR, AI_KEYWORDS, AI_KEYWORDS_SHORT,
     SKIP_LOCATIONS, SKIP_ROLE_KEYWORDS,
-    ASHBY_SLUGS, GREENHOUSE_NO_RECAPTCHA, GREENHOUSE_RECAPTCHA,
+    ASHBY_SLUGS, GREENHOUSE_SUBMITTABLE, GREENHOUSE_RECAPTCHA,
 )
 from db import (
     claim_next_job, load_user_profile, update_queue_status, log_application,
@@ -238,7 +238,7 @@ def scout_greenhouse_boards(user_prefs: dict | None = None) -> list[dict]:
     import httpx
     jobs = []
     with httpx.Client(timeout=10, follow_redirects=True) as client:
-        for slug in GREENHOUSE_NO_RECAPTCHA + GREENHOUSE_RECAPTCHA:
+        for slug in GREENHOUSE_SUBMITTABLE + GREENHOUSE_RECAPTCHA:
             try:
                 resp = client.get(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs")
                 if resp.status_code != 200:

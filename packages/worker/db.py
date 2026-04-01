@@ -119,7 +119,7 @@ def check_daily_limit(user_id: str) -> bool:
 
 
 def check_company_rate(user_id: str, company: str) -> bool:
-    """Return True if user can still apply to this company (< 5 in 30 days)."""
+    """Return True if user can still apply to this company (< 5 in 15 days)."""
     result = _api_call("check_company_rate", company=company)
     return result.get("within_limit", True)
 

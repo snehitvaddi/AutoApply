@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
       }
 
       case "check_company_rate": {
-        const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const cutoff = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString();
         const result = await supabase
           .from("applications")
           .select("id", { count: "exact" })

@@ -915,7 +915,39 @@ Gusto job `7557049` reached submit-no-confirmation cap:
 - Some Greenhouse links under `job-boards.greenhouse.io/{company}/jobs/{id}` or `boards.greenhouse.io/{company}/jobs/{id}` can return `NOT_FOUND` in `apply_v2`; treat as dead posting and do not keep retrying beyond 2 attempts.
 - This applies across ALL ATS platforms — never burn more than 2 attempts on a single blocker.
 
----
+### Indeed via python-jobspy (April 2026)
+
+- hours_old=24 parameter is UNRELIABLE — filter by date_posted AFTER fetch
+- LinkedIn/Glassdoor/Google modes are BROKEN in python-jobspy — only Indeed works
+- ~40-50 fresh jobs/day across 8 queries
+
+### Himalayas API (April 2026)
+
+- GET https://himalayas.app/jobs/api/search?query={query}&limit=50
+- pubDate is Unix epoch (seconds) — convert before freshness check
+- BOTH `query=` and `q=` params return DIFFERENT results — use both for max coverage
+- ~25-30 fresh AI/ML jobs/day
+
+### JSearch / Google Jobs (April 2026)
+
+- Free tier: 200 requests/month = max 6 queries/day
+- date_posted=today still returns 3-day-old jobs — verify freshness AFTER fetch
+- Catches jobs from Built In, HERC, Adzuna, company career sites
+
+### Greenhouse Email Verification (April 2026)
+
+- What we thought was "reCAPTCHA" is actually Greenhouse EMAIL VERIFICATION
+- Solution: read 8-char code from Gmail via himalaya CLI
+- GREENHOUSE_SUBMITTABLE: 56 companies (renamed from GREENHOUSE_NO_RECAPTCHA)
+- Companies with email verification still submit — just need the code
+
+### Auto-Discovery System (April 2026)
+
+- Extract ATS slugs from job URLs found on Indeed/LinkedIn/Himalayas/JSearch
+- boards.greenhouse.io/{slug} → auto-add to Greenhouse discovery list
+- jobs.ashbyhq.com/{slug} → auto-add to Ashby discovery list
+- 346 Greenhouse + 168 Ashby companies, growing automatically
+- Discovery list shared across all SaaS users
 
 ### Scouting Sources (March 2026)
 
