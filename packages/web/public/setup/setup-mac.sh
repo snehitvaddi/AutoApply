@@ -554,7 +554,12 @@ else
 
   if check_command claude; then
     log_ok "Claude Code CLI installed"
-    log_info "Authenticating Claude Code (browser will open)..."
+    echo ""
+    echo -e "  ${CYAN}Claude Code needs authentication. A browser will open.${NC}"
+    echo -e "  ${CYAN}Sign in with your Anthropic account (or the admin's account${NC}"
+    echo -e "  ${CYAN}if the admin is setting this up for you).${NC}"
+    echo -e "  ${CYAN}After signing in, copy the auth code and paste it here.${NC}"
+    echo ""
     claude login 2>/dev/null || log_warn "Claude login skipped — run 'claude login' later"
     LLM_CLI_TOOL="claude"
   else
@@ -675,6 +680,22 @@ json.dump(profile, open('$INSTALL_DIR/profile.json', 'w'), indent=2)
     fi
   else
     log_warn "No worker token provided. You can add it to .env later."
+  fi
+
+  # Telegram chat ID — if not fetched from API, prompt the user
+  if [[ -z "$TELEGRAM_CHAT_ID" ]]; then
+    echo ""
+    echo -e "  ${BOLD}┌─── TELEGRAM NOTIFICATIONS ────────────────────────┐${NC}"
+    echo -e "  ${BOLD}│ Step 1: Bot token is already configured (admin).  │${NC}"
+    echo -e "  ${BOLD}│                                                    │${NC}"
+    echo -e "  ${BOLD}│ Step 2: YOUR Chat ID (unique to you):             │${NC}"
+    echo -e "  ${BOLD}│   1. Open Telegram                                │${NC}"
+    echo -e "  ${BOLD}│   2. Search for the bot the admin gave you        │${NC}"
+    echo -e "  ${BOLD}│   3. Send /start to the bot                       │${NC}"
+    echo -e "  ${BOLD}│   4. Bot replies with your Chat ID number         │${NC}"
+    echo -e "  ${BOLD}│   5. Paste that number below                      │${NC}"
+    echo -e "  ${BOLD}└────────────────────────────────────────────────────┘${NC}"
+    read -p "  Your Telegram Chat ID (or Enter to skip): " TELEGRAM_CHAT_ID
   fi
 
   # Auto-generate worker ID
@@ -1450,6 +1471,15 @@ if [[ -n "$CLI_CMD" ]]; then
 
   # exec replaces the shell — this is the final action
   if [[ "$CLI_CMD" == "claude" ]]; then
+    echo ""
+    echo -e "  ${GREEN}=============================================${NC}"
+    echo -e "  ${GREEN}SETUP COMPLETE! To start ApplyLoop, run:${NC}"
+    echo ""
+    echo -e "  ${CYAN}claude --dangerously-skip-permissions --cd $INSTALL_DIR \"Read AGENTS.md. Start scouting and applying.\"${NC}"
+    echo ""
+    echo -e "  ${GREEN}Copy the command above and paste in a NEW terminal window.${NC}"
+    echo -e "  ${GREEN}=============================================${NC}"
+    echo ""
     exec claude --dangerously-skip-permissions --cd "$INSTALL_DIR" "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
   elif [[ "$CLI_CMD" == "codex" ]]; then
     exec codex --full-auto -s danger-full-access --cd "$INSTALL_DIR" "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."

@@ -648,12 +648,17 @@ if ($AdvancedMode) {
 
     if (Test-CommandExists "claude") {
         Write-OK "Claude Code CLI installed"
-        Write-Info "Authenticating Claude Code (browser will open)..."
+        Write-Host ""
+        Write-Host "  Claude Code needs authentication. A browser will open." -ForegroundColor Cyan
+        Write-Host "  Sign in with your Anthropic account (or the admin's account" -ForegroundColor Cyan
+        Write-Host "  if the admin is setting this up for you)." -ForegroundColor Cyan
+        Write-Host "  After signing in, copy the auth code and paste it here." -ForegroundColor Cyan
+        Write-Host ""
         $ErrorActionPreference = "Continue"
         try {
-            Start-Process -FilePath "claude" -ArgumentList "login" -NoNewWindow -Wait -ErrorAction SilentlyContinue 2>$null
+            claude.cmd login 2>&1 | Write-Host
         } catch {
-            Write-Warn "Claude login failed. After setup, run: claude login"
+            Write-Warn "Claude login failed. Run this after setup: claude login"
         }
         $ErrorActionPreference = "Stop"
         $LlmCliCmd = "claude"
@@ -787,6 +792,24 @@ if (-not (Test-Path $EnvFile)) {
         } catch {
             Write-Warn "Could not fetch profile (check your worker token). Continuing..."
         }
+    }
+
+    # Telegram chat ID — if not fetched from API, prompt the user
+    if (-not $TelegramChatId) {
+        Write-Host ""
+        Write-Host "  ┌─── TELEGRAM NOTIFICATIONS ────────────────────────┐" -ForegroundColor Purple
+        Write-Host "  │                                                    │" -ForegroundColor Purple
+        Write-Host "  │  Step 1: Bot token is already configured (admin).  │" -ForegroundColor Purple
+        Write-Host "  │                                                    │" -ForegroundColor Purple
+        Write-Host "  │  Step 2: YOUR Chat ID (unique to you):             │" -ForegroundColor Purple
+        Write-Host "  │    1. Open Telegram                                │" -ForegroundColor Purple
+        Write-Host "  │    2. Search for the bot the admin gave you        │" -ForegroundColor Purple
+        Write-Host "  │    3. Send /start to the bot                       │" -ForegroundColor Purple
+        Write-Host "  │    4. Bot replies with your Chat ID number         │" -ForegroundColor Purple
+        Write-Host "  │    5. Paste that number below                      │" -ForegroundColor Purple
+        Write-Host "  │                                                    │" -ForegroundColor Purple
+        Write-Host "  └────────────────────────────────────────────────────┘" -ForegroundColor Purple
+        $TelegramChatId = Read-Host "  Your Telegram Chat ID (or Enter to skip)"
     }
 
     # Auto-generate worker ID (hostname + random suffix)
@@ -1368,7 +1391,18 @@ if ($LlmCliCmd -eq "claude") {
         $env:ANTHROPIC_API_KEY = $LlmApiKey
     }
 
-    claude --dangerously-skip-permissions --cd $InstallDir "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
+    Write-Host ""
+    Write-Host "  =============================================" -ForegroundColor Green
+    Write-Host "  SETUP COMPLETE! To start ApplyLoop, run:" -ForegroundColor Green
+    Write-Host "" -ForegroundColor Green
+    Write-Host "  claude.cmd --dangerously-skip-permissions --cd $InstallDir `"Read AGENTS.md. Start scouting and applying.`"" -ForegroundColor Cyan
+    Write-Host "" -ForegroundColor Green
+    Write-Host "  Copy the command above and paste in a NEW terminal window." -ForegroundColor Green
+    Write-Host "  =============================================" -ForegroundColor Green
+    Write-Host ""
+
+    # Also try launching directly
+    claude.cmd --dangerously-skip-permissions --cd $InstallDir "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
 
 } elseif ($LlmCliCmd -eq "codex") {
     Write-OK "Launching Codex to complete setup..."

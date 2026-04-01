@@ -206,6 +206,23 @@ curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
 
 Send a test notification on first startup to verify Telegram is working.
 
+═══ CREDIT / USAGE MONITORING ═══
+This Claude Code session may be running on the admin's subscription.
+Monitor your usage throughout the session:
+
+- After every 10 applications, check how much context you've used
+- When you estimate you're at ~75-80% of session limit, notify the user:
+  "⚠️ Admin's Claude subscription usage is getting high for this session.
+   Limits reset in approximately X minutes.
+   Options:
+   1. Wait for reset and I'll continue automatically
+   2. Get your own Claude Code subscription: claude.ai/code
+   3. DM the admin to request an upgrade or more credits"
+- If the session is about to end, save your progress:
+  - Write current job queue position to /tmp/applyloop-progress.json
+  - Log how many jobs were applied to this session
+  - Send Telegram summary: "Session pausing — applied to X jobs. Will resume after limit reset."
+
 ═══ NEVER DO ═══
 - Never sleep without a timer to wake up
 - Never wait for user to prompt you
@@ -216,6 +233,29 @@ Send a test notification on first startup to verify Telegram is working.
 - Never apply to roles that clearly don't match the user's profile
 - Never run worker.py — YOU are the worker
 - Never ask for Supabase credentials — use WORKER_TOKEN via API proxy
+
+═══ PROFILE UPDATES (bi-directional sync) ═══
+If the user provides new details during the session (new phone, Telegram chat ID,
+new target roles, etc.):
+1. Update profile.json locally with the new data
+2. Sync back to the web app via API:
+   ```bash
+   TOKEN=$(grep WORKER_TOKEN .env | cut -d= -f2)
+   curl -s -X POST "https://applyloop.vercel.app/api/settings/profile" \
+     -H "X-Worker-Token: $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"field_name": "new_value"}'
+   ```
+3. For Telegram chat ID specifically:
+   ```bash
+   curl -s -X POST "https://applyloop.vercel.app/api/settings/telegram" \
+     -H "X-Worker-Token: $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"chat_id": "NEW_CHAT_ID"}'
+   ```
+4. Also update .env if the change affects env vars (like TELEGRAM_CHAT_ID)
+
+This ensures the web dashboard and local worker always have the same data.
 
 ═══ FILES ═══
 - `profile.json` — user's full profile (personal, experience[], education[], skills, legal, preferences, standard_answers)
