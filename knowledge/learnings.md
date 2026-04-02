@@ -958,3 +958,43 @@ ApplyLoop scans 6 job sources every 30 minutes:
 4. **Indeed** — Via python-jobspy. Large volume, 24h freshness filter.
 5. **Himalayas** — Remote-focused API. Free, no auth.
 6. **JSearch/Google Jobs** — Via RapidAPI (optional, needs RAPIDAPI_KEY). Fresh postings with salary.
+
+### Greenhouse Country Dropdown — CRITICAL (April 2026)
+
+- Greenhouse has a phone country code dropdown BEFORE the phone number field
+- You MUST select "United States" / "+1" FIRST, or the phone number won't save
+- This blocks many applications silently — phone field appears empty on submit
+- Fix: always set country dropdown before filling phone number
+- JS fallback: `document.querySelector("select[name*='country']").value = 'US'`
+
+### Company Rate Limit — Two Layers (April 2026)
+
+- **Max 2 per company per day** — even if 15-day cap allows more
+- **Max 5 per company per 15-day window** — hard cap
+- When multiple roles at same company: rank by fit, apply to top 2 only
+- Best fit: AI/ML/GenAI/NLP roles matching user's core skills
+- Skip: roles requiring domain experience user lacks, 6+ years, clearance
+- Spread applications across many companies rather than stacking one
+
+### Anti-Spam Telegram Updates (April 2026)
+
+- Send only material deltas to Telegram (new submits, failures, blocker changes)
+- If no material change in a cycle, suppress repetitive status spam
+- Source of truth for recent status: local dedup DB, not legacy log files
+
+### Stripe Form Variants (April 2026)
+
+- Multiple Stripe Greenhouse postings with different required field sets
+- Some require: residence country, anticipated work countries (checkbox), WhatsApp opt-in, BrightHire consent
+- All Stripe forms trigger 8-char email verification code after submit
+- Enter one character per box (not all 8 in first box)
+
+### Zscaler Compliance (April 2026)
+
+- Zscaler forms have extra compliance checkboxes + residence fields
+- Must click all consent/acknowledge checkboxes before submit
+
+### Brex Relocation (April 2026)
+
+- Brex intern forms ask about in-office relocation requirements
+- Check if role is remote-eligible before applying

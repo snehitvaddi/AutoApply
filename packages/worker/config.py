@@ -59,7 +59,8 @@ BLOCKED_STAFFING = [
 # ─── Scout → Filter → Apply cycle config ────────────────────────────────────
 
 SCOUT_INTERVAL_MINUTES = int(os.environ.get("SCOUT_INTERVAL_MINUTES", "30"))
-MAX_COMPANY_APPS_PER_15_DAYS = 5  # Rate limit window: 15 days (was 30)
+MAX_COMPANY_APPS_PER_DAY = 2  # Max 2 per company per day (rank by fit, pick top 2)
+MAX_COMPANY_APPS_PER_15_DAYS = 5  # Hard cap: 5 per company per 15-day window
 JOB_TIMEOUT_SECONDS = 120  # Max time per application before skip
 
 # ─── DEFAULT FILTERS (fallback when user has no preferences) ───────────────
@@ -124,16 +125,22 @@ ASHBY_SLUGS = [
 
 # These companies have NO reCAPTCHA — safe to auto-submit
 GREENHOUSE_SUBMITTABLE = [
-    "affirm", "airtable", "asana", "aurora", "benchling",
-    "calendly", "canva", "chime", "cloudflare", "coinbase",
-    "crowdstrike", "databricks", "datadog", "deel", "doordash",
-    "drata", "elastic", "figma", "fireworksai", "flexport",
-    "gusto", "hashicorp", "headspace", "instacart", "lattice",
-    "mongodb", "notion", "nuro", "okta", "openai",
-    "ramp", "replicate", "rippling", "runway", "samsara",
-    "sentinelone", "shopify", "snap", "springhealth", "stability",
-    "tempus", "together", "torcrobotics", "twilio", "upstart",
-    "vanta", "verkada", "waymo", "wiz", "ginkgo",
+    "affirm", "airtable", "asana", "assemblyai", "attentive", "aurora",
+    "benchling", "block", "brex", "calendly", "canva", "carta", "chime",
+    "cloudflare", "cockroachlabs", "coinbase", "coursera", "cresta",
+    "crowdstrike", "databricks", "datadog", "deel", "doordash", "drata",
+    "elastic", "fastly", "figma", "fireworksai", "flexport", "forethought",
+    "ginkgo", "gitlab", "gusto", "hashicorp", "headspace", "hebbia",
+    "hightouch", "instacart", "intercom", "iterable", "justworks",
+    "klaviyo", "labelbox", "lattice", "launchdarkly", "lyft", "marqeta",
+    "mercury", "mixpanel", "mongodb", "motional", "moveworks", "netlify",
+    "netskope", "newrelic", "notion", "nuro", "okta", "openai",
+    "pagerduty", "postman", "ramp", "replicate", "rippling", "roblox",
+    "root", "runway", "samsara", "sendbird", "sentinelone", "shopify",
+    "snap", "snorkelai", "sofi", "springhealth", "squarespace", "stability",
+    "tempus", "tenstorrent", "thumbtack", "together", "torcrobotics",
+    "twilio", "upstart", "vanta", "vercel", "verkada", "waymo",
+    "webflow", "wiz", "ziprecruiter",
 ]
 
 # These companies HAVE reCAPTCHA — can fill form but submit may be blocked

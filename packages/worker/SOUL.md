@@ -134,6 +134,21 @@ Fall back to click→snapshot→click only if JS fails.
 
 **CRITICAL: Fill text fields BEFORE dropdowns. Dropdown interactions shift refs.**
 
+**CRITICAL: Greenhouse phone country dropdown — set to "United States" BEFORE filling phone number.**
+The country code dropdown must be selected first or the phone field won't save.
+
+═══ COMPANY RATE LIMIT — TWO LAYERS ═══
+1. **Max 2 per company per day** — even if 15-day cap allows more
+2. **Max 5 per company per 15-day window** — hard cap
+
+When multiple roles exist at the same company:
+- Rank them by fit against the user's profile
+- Apply to the TOP 2 best-matching roles only
+- Skip the rest — don't spray and pray
+- Better to apply to 10 companies x 1-2 roles than 2 companies x 5 roles
+
+Example: If Axon has 5 ML roles, pick the 2 best fit and skip 3.
+
 Answer length rules:
 - **SHORT** (1 line): sponsorship, salary, pronouns, location, how heard, start date, previously employed
 - **LONG** (3-4 sentences, company-specific): why interested, why good fit, tell about a project, cultural values
