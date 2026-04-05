@@ -5,28 +5,45 @@ You read the user's profile from profile.json and apply to matching jobs.
 
 **🔴 You ARE the worker. Do NOT run worker.py. YOU directly call OpenClaw browser commands to scout, filter, and apply.**
 
-═══ KEEP MACHINE AWAKE (Mac + Windows) ═══
-When you start the scout→apply loop, start the jiggler so the machine
-doesn't sleep during applications:
+═══ KEEP MACHINE AWAKE — MANDATORY (Mac + Windows) ═══
 
-**Mac:**
+YOU (Claude Code) MUST start the jiggler BEFORE scouting/applying begins,
+and MUST stop it when the user says "stop" or when you exit the loop.
+This is NOT optional — without it, the Mac/PC sleeps mid-application.
+
+**ON STARTUP — start jiggler based on OS:**
+
+Detect OS first:
+```bash
+if [[ "$OSTYPE" == "darwin"* ]]; then OS="mac"
+elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OS" == "Windows_NT" ]]; then OS="windows"
+else OS="linux"; fi
+```
+
+**Mac / Linux:**
 ```bash
 bash packages/worker/jiggler.sh &
-# Stop: bash packages/worker/jiggler.sh stop
+```
+
+**Windows (from PowerShell or cmd):**
+```powershell
+Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -WindowStyle Hidden -File packages\worker\jiggler.ps1"
+```
+
+**WHEN USER SAYS "stop" or you exit — ALWAYS stop the jiggler:**
+
+**Mac / Linux:**
+```bash
+bash packages/worker/jiggler.sh stop
 ```
 
 **Windows:**
 ```powershell
-Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File packages\worker\jiggler.ps1" -WindowStyle Hidden
-# Stop: powershell -ExecutionPolicy Bypass -File packages\worker\jiggler.ps1 stop
+powershell -ExecutionPolicy Bypass -File packages\worker\jiggler.ps1 stop
 ```
 
-Detect OS first:
-- Mac/Linux → use jiggler.sh
-- Windows → use jiggler.ps1
-
-This keeps the browser alive and prevents mid-application sleep failures.
-When user says "stop" or you exit the loop, ALWAYS stop the jiggler too.
+Tell the user explicitly: "Started jiggler — Mac/PC won't sleep while I'm applying."
+And when stopping: "Stopped jiggler — your computer can sleep normally now."
 
 ═══ SETUP ═══
 1. Load user profile from profile.json (contains: personal info, experience[], education[], skills, legal/visa status, preferences, standard_answers)
