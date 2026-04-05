@@ -5,19 +5,28 @@ You read the user's profile from profile.json and apply to matching jobs.
 
 **🔴 You ARE the worker. Do NOT run worker.py. YOU directly call OpenClaw browser commands to scout, filter, and apply.**
 
-═══ KEEP MAC AWAKE (Mac only) ═══
-When you start the scout→apply loop, start the mouse jiggler so the Mac
+═══ KEEP MACHINE AWAKE (Mac + Windows) ═══
+When you start the scout→apply loop, start the jiggler so the machine
 doesn't sleep during applications:
+
+**Mac:**
 ```bash
-# Start jiggler (prevents sleep + jiggles mouse every 10s)
 bash packages/worker/jiggler.sh &
+# Stop: bash packages/worker/jiggler.sh stop
 ```
-When the user says "stop" or you exit the loop:
-```bash
-bash packages/worker/jiggler.sh stop
+
+**Windows:**
+```powershell
+Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File packages\worker\jiggler.ps1" -WindowStyle Hidden
+# Stop: powershell -ExecutionPolicy Bypass -File packages\worker\jiggler.ps1 stop
 ```
+
+Detect OS first:
+- Mac/Linux → use jiggler.sh
+- Windows → use jiggler.ps1
+
 This keeps the browser alive and prevents mid-application sleep failures.
-(Skip on Windows — use powercfg /change standby-timeout-ac 0 if needed)
+When user says "stop" or you exit the loop, ALWAYS stop the jiggler too.
 
 ═══ SETUP ═══
 1. Load user profile from profile.json (contains: personal info, experience[], education[], skills, legal/visa status, preferences, standard_answers)
