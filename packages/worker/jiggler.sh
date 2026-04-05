@@ -7,6 +7,7 @@
 #   Stop:   ./jiggler.sh stop   (or just Ctrl+C the running instance)
 
 PIDFILE="/tmp/jiggler.pid"
+MAX_DURATION_SECONDS=86400  # 24h auto-stop safety cap
 
 stop_jiggler() {
     if [ -f "$PIDFILE" ]; then
@@ -80,6 +81,15 @@ trap "kill $CAFE_PID $JIGGLE_PID 2>/dev/null; rm -f $PIDFILE" EXIT
 
 echo "Jiggler running (PID $$) — mouse jiggles every 10s, sleep blocked."
 echo "Stop with: $0 stop"
+
+# Auto-stop after 24 hours (safety cap)
+(
+    sleep $MAX_DURATION_SECONDS
+    echo "Jiggler auto-stopped after 24 hours."
+    kill $CAFE_PID $JIGGLE_PID 2>/dev/null
+    rm -f "$PIDFILE"
+    kill $$ 2>/dev/null
+) &
 
 # Wait forever (keeps parent alive so stop works)
 wait

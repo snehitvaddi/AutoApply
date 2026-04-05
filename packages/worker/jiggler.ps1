@@ -6,6 +6,7 @@
 #   Stop:   powershell -ExecutionPolicy Bypass -File jiggler.ps1 stop
 
 $PidFile = Join-Path $env:TEMP "jiggler.pid"
+$MaxDurationSeconds = 86400  # 24h auto-stop safety cap
 
 function Stop-Jiggler {
     if (Test-Path $PidFile) {
@@ -64,9 +65,15 @@ public class MouseJig {
 Write-Host "Jiggler running (PID $PID) — mouse jiggles every 10s, sleep blocked."
 Write-Host "Stop with: powershell -ExecutionPolicy Bypass -File $PSCommandPath stop"
 
-# Jiggle loop
+# Jiggle loop (auto-stops after 24h safety cap)
+$StartTime = Get-Date
 try {
     while ($true) {
+        $Elapsed = (New-TimeSpan -Start $StartTime -End (Get-Date)).TotalSeconds
+        if ($Elapsed -ge $MaxDurationSeconds) {
+            Write-Host "Jiggler auto-stopped after 24 hours."
+            break
+        }
         $pos = New-Object System.Drawing.Point
         [MouseJig]::GetCursorPos([ref]$pos) | Out-Null
         [MouseJig]::SetCursorPos($pos.X + 1, $pos.Y) | Out-Null
