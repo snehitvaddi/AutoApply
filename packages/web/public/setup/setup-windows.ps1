@@ -355,11 +355,18 @@ if (Test-CommandExists "himalaya") {
         if (-not $setupGmail -or $setupGmail -match "^[Yy]") {
             Write-Host ""
             Write-Host "  To read verification codes, Himalaya needs a Gmail App Password." -ForegroundColor Cyan
-            Write-Host "  Steps:" -ForegroundColor Cyan
+            Write-Host "" -ForegroundColor Cyan
+            Write-Host "  PREREQUISITE: 2-Step Verification must be ON." -ForegroundColor Yellow
+            Write-Host "    If not enabled: https://myaccount.google.com/signinoptions/two-step-verification" -ForegroundColor Yellow
+            Write-Host "    Click 'Get Started' → follow the prompts → enable 2FA first." -ForegroundColor Yellow
+            Write-Host "" -ForegroundColor Cyan
+            Write-Host "  Steps to create App Password:" -ForegroundColor Cyan
             Write-Host "    1. Go to: https://myaccount.google.com/apppasswords" -ForegroundColor Cyan
             Write-Host "    2. Sign in to your Google account" -ForegroundColor Cyan
             Write-Host "    3. App name: 'ApplyLoop' -> click Create" -ForegroundColor Cyan
             Write-Host "    4. Copy the 16-character password (like 'abcd efgh ijkl mnop')" -ForegroundColor Cyan
+            Write-Host "    NOTE: If the App Passwords page doesn't load," -ForegroundColor Yellow
+            Write-Host "    you need to enable 2-Step Verification first." -ForegroundColor Yellow
             Write-Host ""
             $gmailEmail = Read-Host "  Your Gmail address"
             $gmailAppPw = Read-Host "  App password (16 chars, spaces OK)"

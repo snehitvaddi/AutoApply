@@ -258,11 +258,17 @@ else
     if [[ "$SETUP_GMAIL" =~ ^[Yy] ]]; then
       echo ""
       echo -e "  ${CYAN}To read verification codes, Himalaya needs a Gmail App Password.${NC}"
-      echo -e "  ${CYAN}Steps:${NC}"
+      echo ""
+      echo -e "  ${YELLOW}PREREQUISITE: 2-Step Verification must be ON.${NC}"
+      echo -e "  ${YELLOW}  If not enabled: https://myaccount.google.com/signinoptions/two-step-verification${NC}"
+      echo -e "  ${YELLOW}  Click 'Get Started' → follow prompts → enable 2FA first.${NC}"
+      echo ""
+      echo -e "  ${CYAN}Steps to create App Password:${NC}"
       echo -e "  ${CYAN}  1. Go to: https://myaccount.google.com/apppasswords${NC}"
       echo -e "  ${CYAN}  2. Sign in to your Google account${NC}"
       echo -e "  ${CYAN}  3. App name: 'ApplyLoop' → click Create${NC}"
       echo -e "  ${CYAN}  4. Copy the 16-character password${NC}"
+      echo -e "  ${YELLOW}  NOTE: If App Passwords page doesn't load, enable 2FA first.${NC}"
       echo ""
       read -p "  Your Gmail address: " GMAIL_EMAIL
       read -p "  App password (16 chars): " GMAIL_APP_PW
