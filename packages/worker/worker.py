@@ -27,6 +27,7 @@ from scanner.linkedin import scan_linkedin
 from scanner.indeed import scan_indeed
 from scanner.himalayas import scan_himalayas
 from scanner.jsearch import scan_jsearch
+from scanner.ziprecruiter import scan_ziprecruiter
 from applier.greenhouse import GreenhouseApplier
 from applier.lever import LeverApplier
 from applier.ashby import AshbyApplier
@@ -357,10 +358,19 @@ def run_scout_cycle(user_id: str):
             logger.warning(f"LinkedIn scout failed: {e}")
     counts["LinkedIn"] = len(linkedin_jobs)
 
+    ziprecruiter_jobs = []
+    if random.random() < 0.4:
+        logger.info("Scout: LOW priority — ZipRecruiter...")
+        try:
+            ziprecruiter_jobs = scan_ziprecruiter(search_queries, max_locations=5)
+        except Exception as e:
+            logger.warning(f"ZipRecruiter scout failed: {e}")
+    counts["ZipRecruiter"] = len(ziprecruiter_jobs)
+
     # ── Filter + enqueue ───────────────────────────────────────────────────
     # Ashby/Greenhouse are pre-filtered in their scout functions.
     # Others need filtering here.
-    filtered_extra = [j for j in linkedin_jobs + indeed_jobs + himalayas_jobs + jsearch_jobs
+    filtered_extra = [j for j in linkedin_jobs + indeed_jobs + himalayas_jobs + jsearch_jobs + ziprecruiter_jobs
                       if passes_filter(j["title"], j["company"], j["location"], user_prefs)]
 
     all_jobs = ashby_jobs + gh_jobs + filtered_extra

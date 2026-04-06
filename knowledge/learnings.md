@@ -998,3 +998,14 @@ ApplyLoop scans 6 job sources every 30 minutes:
 
 - Brex intern forms ask about in-office relocation requirements
 - Check if role is remote-eligible before applying
+
+### ZipRecruiter Scouting (April 2026)
+
+- 8th job source. Uses Scrapling PlayWrightFetcher to bypass CAPTCHA
+- Multi-city mega scrape: 6 queries × 20 US cities = 120 search combos
+- URL pattern: ziprecruiter.com/jobs-search?search={query}&location={city}&days=1
+- 60+ staffing agencies blocked (extended blocklist)
+- ATS detection: check if company has Greenhouse board → auto-add to discovery list
+- Results ~30-50 unique AI/ML jobs per full scrape
+- Dedup by company+title (many dupes across cities)
+- LOW priority in rotation (run ~40% of cycles, heavy on browser resources)

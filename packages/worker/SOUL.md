@@ -113,6 +113,7 @@ Query these APIs for jobs matching user's target_roles:
 **LOW PRIORITY (run occasionally):**
 - LinkedIn public: scrapling Fetcher or browser scraping
 - JSearch: GET https://jsearch.p.rapidapi.com/search (max 6/day, needs RAPIDAPI_KEY)
+- ZipRecruiter: scrapling PlayWrightFetcher, multi-city search (6 queries × 5-20 cities)
 
 ═══ STEP 2: FILTER ═══
 For each job, check ALL of these:

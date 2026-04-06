@@ -7,3 +7,4 @@ google-api-python-client>=2.0.0
 cryptography>=41.0.0
 scrapling>=0.2.0
 python-jobspy>=1.1.0
+beautifulsoup4>=4.12.0
