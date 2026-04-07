@@ -70,7 +70,7 @@ export default function SetupCompletePage() {
               </div>
               <button
                 onClick={() => {
-                  navigator.clipboard.writeText("curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh -o /tmp/ApplyLoop-Setup.sh && bash /tmp/ApplyLoop-Setup.sh");
+                  navigator.clipboard.writeText("curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh | bash -s -- YOUR_TOKEN_HERE");
                 }}
                 className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
               >
@@ -78,9 +78,11 @@ export default function SetupCompletePage() {
               </button>
             </div>
             <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto">
-{`curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh -o /tmp/ApplyLoop-Setup.sh && bash /tmp/ApplyLoop-Setup.sh`}
+{`curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh | bash -s -- YOUR_TOKEN_HERE`}
             </pre>
-            <p className="text-xs text-gray-500 mt-2">Open Terminal (Cmd+Space → &quot;Terminal&quot;) → paste → Enter. No download needed.</p>
+            <p className="text-xs text-gray-500 mt-2">
+              Replace <code className="bg-gray-800 px-1 rounded text-yellow-300">YOUR_TOKEN_HERE</code> with the worker token from admin. Open Terminal → paste → Enter.
+            </p>
           </div>
 
           {/* Windows */}
@@ -107,8 +109,14 @@ export default function SetupCompletePage() {
               </a>
             </div>
             <p className="text-xs text-gray-500">
-              Right-click → <em>Run as administrator</em>. Downloads the setup script and runs it automatically.
+              Right-click → <em>Run as administrator</em>. It will ask for your worker token first.
             </p>
+            <p className="text-xs text-gray-400 mt-1">
+              Or paste in PowerShell (Admin) with your token:
+            </p>
+            <pre className="bg-gray-900 text-green-400 text-xs rounded-lg p-2 mt-1 overflow-x-auto">
+{`irm https://applyloop.vercel.app/setup/ApplyLoop-Setup-Windows.ps1 | iex`}
+            </pre>
             <p className="text-xs text-gray-400 mt-1">
               If blocked: paste in PowerShell (Admin): <code className="bg-gray-100 px-1 rounded">irm https://applyloop.vercel.app/setup/ApplyLoop-Setup-Windows.ps1 | iex</code>
             </p>

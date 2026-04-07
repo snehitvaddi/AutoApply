@@ -154,23 +154,26 @@ Upload your resume as a PDF:
 
 ## Step 8: Download & Run Setup Script
 
-After completing onboarding, you'll land on the **Setup Complete** page with download buttons for your OS.
+After completing onboarding, you'll land on the **Setup Complete** page. The admin will give you a **worker token** — this is your one key to connect everything.
 
 ### macOS
 
+Open Terminal and paste (replace `YOUR_TOKEN` with your actual token):
+
 ```bash
-chmod +x setup-mac.sh
-./setup-mac.sh
+curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh | bash -s -- YOUR_TOKEN
 ```
 
-### Windows (PowerShell as Administrator)
+### Windows
 
+Download **ApplyLoop.bat** from the setup page, then right-click → Run as administrator. It will ask for your worker token.
+
+Or paste in PowerShell (Admin):
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process
-.\setup-windows.ps1
+irm https://applyloop.vercel.app/setup/ApplyLoop-Setup-Windows.ps1 | iex
 ```
 
-The script automatically:
+The script verifies your token first — invalid tokens are rejected immediately. Then it automatically:
 - Installs Python 3.11+, Node.js 18+, OpenClaw CLI
 - Installs Playwright browsers (Chromium)
 - Clones the ApplyLoop repo
