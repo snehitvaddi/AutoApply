@@ -94,7 +94,7 @@ if [[ -z "$WORKER_TOKEN" ]]; then
   echo -e "${BOLD}Before we begin, enter your worker token to verify access.${NC}"
   echo -e "${CYAN}(Get this from the admin who approved your account.)${NC}"
   echo ""
-  read -p "  Worker token: " WORKER_TOKEN
+  read -p "  Worker token: " WORKER_TOKEN < /dev/tty
 fi
 
 if [[ -z "$WORKER_TOKEN" ]]; then
@@ -138,7 +138,7 @@ echo "  10. Launch LLM CLI for remaining setup"
 echo ""
 echo -e "${YELLOW}Estimated time: 5-10 minutes${NC}"
 echo ""
-read -p "Press Enter to continue (or Ctrl+C to cancel)..."
+read -p "Press Enter to continue (or Ctrl+C to cancel)..." < /dev/tty
 
 # ── Step 1: Homebrew ─────────────────────────────────────────────────────────
 log_step 1 "Checking Homebrew..."
@@ -302,7 +302,7 @@ echo ""
 if check_command himalaya; then
   log_ok "Himalaya CLI already installed ($(himalaya --version 2>&1 | head -1))"
 else
-  read -p "  Install Himalaya CLI for Gmail reading? [Y/n]: " INSTALL_HIM
+  read -p "  Install Himalaya CLI for Gmail reading? [Y/n]: " INSTALL_HIM < /dev/tty
   INSTALL_HIM="${INSTALL_HIM:-Y}"
   if [[ "$INSTALL_HIM" =~ ^[Yy] ]]; then
     log_info "Installing Himalaya via Homebrew..."
@@ -316,7 +316,7 @@ else
 
   # Gmail setup for Himalaya
   if check_command himalaya; then
-    read -p "  Set up Gmail for email verification codes? [Y/n]: " SETUP_GMAIL
+    read -p "  Set up Gmail for email verification codes? [Y/n]: " SETUP_GMAIL < /dev/tty
     SETUP_GMAIL="${SETUP_GMAIL:-Y}"
     if [[ "$SETUP_GMAIL" =~ ^[Yy] ]]; then
       echo ""
@@ -333,8 +333,8 @@ else
       echo -e "  ${CYAN}  4. Copy the 16-character password${NC}"
       echo -e "  ${YELLOW}  NOTE: If App Passwords page doesn't load, enable 2FA first.${NC}"
       echo ""
-      read -p "  Your Gmail address: " GMAIL_EMAIL
-      read -p "  App password (16 chars): " GMAIL_APP_PW
+      read -p "  Your Gmail address: " GMAIL_EMAIL < /dev/tty
+      read -p "  App password (16 chars): " GMAIL_APP_PW < /dev/tty
 
       # Strip spaces from app password (Google shows as "abcd efgh ijkl mnop")
       GMAIL_APP_PW=$(echo "$GMAIL_APP_PW" | tr -d ' ')
@@ -378,9 +378,9 @@ HIMEOF
           echo -e "    ${YELLOW}3. IMAP not enabled — go to Gmail Settings → Forwarding/IMAP → Enable IMAP${NC}"
           echo -e "    ${YELLOW}4. Less secure app access blocked — use App Password (not regular password)${NC}"
           echo ""
-          read -p "  Retry with a new app password? [Y/n]: " RETRY_GMAIL
+          read -p "  Retry with a new app password? [Y/n]: " RETRY_GMAIL < /dev/tty
           if [[ -z "$RETRY_GMAIL" || "$RETRY_GMAIL" =~ ^[Yy] ]]; then
-            read -p "  New app password (16 chars): " GMAIL_APP_PW_NEW
+            read -p "  New app password (16 chars): " GMAIL_APP_PW_NEW < /dev/tty
             if [[ -n "$GMAIL_APP_PW_NEW" ]]; then
               sed -i '' "s|backend.auth.raw = \".*\"|backend.auth.raw = \"$GMAIL_APP_PW_NEW\"|g" "$HIM_CONFIG_DIR/config.toml"
               HIM_TEST2=$(himalaya envelope list --account gmail --folder INBOX -o json 2>&1 | head -1)
@@ -403,7 +403,7 @@ fi
 if "$PYTHON_CMD" -c "import agentmail" 2>/dev/null; then
   log_ok "AgentMail SDK already installed"
 else
-  read -p "  Install AgentMail SDK for disposable inboxes? [Y/n]: " INSTALL_AM
+  read -p "  Install AgentMail SDK for disposable inboxes? [Y/n]: " INSTALL_AM < /dev/tty
   INSTALL_AM="${INSTALL_AM:-Y}"
   if [[ "$INSTALL_AM" =~ ^[Yy] ]]; then
     log_info "Installing AgentMail..."
@@ -416,7 +416,7 @@ fi
 
 # AgentMail API key (saved to .env later when .env is created)
 AM_KEY=""
-read -p "  AgentMail API key (from agentmail.to, or Enter to skip): " AM_KEY
+read -p "  AgentMail API key (from agentmail.to, or Enter to skip): " AM_KEY < /dev/tty
 if [[ -n "$AM_KEY" ]]; then
   # Test AgentMail API key (save to .env happens later when .env is created)
   log_info "Testing AgentMail API key..."
@@ -425,7 +425,7 @@ if [[ -n "$AM_KEY" ]]; then
     log_ok "AgentMail API key verified! Will save to .env during config step."
   elif [[ "$AM_TEST" == "403" ]]; then
     log_warn "AgentMail API key is INVALID (403 Forbidden). Check your key at agentmail.to/dashboard"
-    read -p "  Retry with correct key (or Enter to skip): " AM_KEY_RETRY
+    read -p "  Retry with correct key (or Enter to skip): " AM_KEY_RETRY < /dev/tty
     if [[ -n "$AM_KEY_RETRY" ]]; then
       AM_TEST2=$(curl -s -o /dev/null -w "%{http_code}" "https://api.agentmail.to/v0/inboxes" -H "Authorization: Bearer $AM_KEY_RETRY" 2>/dev/null)
       if [[ "$AM_TEST2" == "200" ]]; then
@@ -446,9 +446,9 @@ fi
 # Finetune Resume URL + API Key (saved to .env later)
 FT_URL=""
 FT_KEY=""
-read -p "  Finetune Resume API URL (or Enter to skip): " FT_URL
+read -p "  Finetune Resume API URL (or Enter to skip): " FT_URL < /dev/tty
 if [[ -n "$FT_URL" ]]; then
-  read -p "  Finetune Resume API Key (or Enter to skip): " FT_KEY
+  read -p "  Finetune Resume API Key (or Enter to skip): " FT_KEY < /dev/tty
   log_ok "Finetune Resume config captured. Will save to .env during config step."
 fi
 
@@ -525,7 +525,7 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
   echo "    3. Gemini (Google)        4. Local/Ollama"
   echo "    5. None (skip for now)"
   echo ""
-  read -p "  Provider [1-5] (default: 1): " LLM_CHOICE
+  read -p "  Provider [1-5] (default: 1): " LLM_CHOICE < /dev/tty
   LLM_CHOICE="${LLM_CHOICE:-1}"
 
   case "$LLM_CHOICE" in
@@ -533,11 +533,11 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
       LLM_PROVIDER="anthropic"
       echo ""
       echo "    1. Subscription (Pro \$20, Max \$100-200/mo)    2. API (pay-per-token)"
-      read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
+      read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}" < /dev/tty
       if [[ "$AC" == "1" ]]; then
         LLM_ACCESS_TYPE="subscription"
         echo "    1. Pro (\$20)  2. Max 5x (\$100)  3. Max 20x (\$200)"
-        read -p "  Tier [1-3] (default: 1): " ST
+        read -p "  Tier [1-3] (default: 1): " ST < /dev/tty
         case "$ST" in 2) LLM_MODEL="claude-max-5x" ;; 3) LLM_MODEL="claude-max-20x" ;; *) LLM_MODEL="claude-pro" ;; esac
 
         log_info "Installing Claude Code CLI..."
@@ -551,10 +551,10 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
       else
         LLM_ACCESS_TYPE="api"
         echo "    1. Sonnet 4.6 (recommended)  2. Opus 4.6  3. Haiku 4.5"
-        read -p "  Model [1-3] (default: 1): " CM; CM="${CM:-1}"
+        read -p "  Model [1-3] (default: 1): " CM; CM="${CM:-1}" < /dev/tty
         case "$CM" in 2) LLM_MODEL="claude-opus-4-6" ;; 3) LLM_MODEL="claude-haiku-4-5-20251001" ;; *) LLM_MODEL="claude-sonnet-4-6" ;; esac
         LLM_API_KEY_NAME="ANTHROPIC_API_KEY"
-        read -p "  API Key (console.anthropic.com): " LLM_API_KEY
+        read -p "  API Key (console.anthropic.com): " LLM_API_KEY < /dev/tty
 
         log_info "Installing Claude Code CLI..."
         npm install -g @anthropic-ai/claude-code 2>/dev/null || sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
@@ -572,11 +572,11 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
       LLM_PROVIDER="openai"
       echo ""
       echo "    1. Subscription (Plus \$20, Pro \$200/mo)    2. API (pay-per-token)"
-      read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}"
+      read -p "  Access type [1-2] (default: 2): " AC; AC="${AC:-2}" < /dev/tty
       if [[ "$AC" == "1" ]]; then
         LLM_ACCESS_TYPE="subscription"
         echo "    1. Plus (\$20)  2. Pro (\$200)  3. Business (\$30/user)"
-        read -p "  Tier [1-3] (default: 1): " ST
+        read -p "  Tier [1-3] (default: 1): " ST < /dev/tty
         case "$ST" in 2) LLM_MODEL="chatgpt-pro" ;; 3) LLM_MODEL="chatgpt-business" ;; *) LLM_MODEL="chatgpt-plus" ;; esac
 
         log_info "Installing OpenAI Codex CLI..."
@@ -590,10 +590,10 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
       else
         LLM_ACCESS_TYPE="api"
         echo "    1. GPT-4.1 (recommended)  2. GPT-4.1-mini  3. GPT-4.1-nano  4. o3"
-        read -p "  Model [1-4] (default: 1): " OM; OM="${OM:-1}"
+        read -p "  Model [1-4] (default: 1): " OM; OM="${OM:-1}" < /dev/tty
         case "$OM" in 2) LLM_MODEL="gpt-4.1-mini" ;; 3) LLM_MODEL="gpt-4.1-nano" ;; 4) LLM_MODEL="o3" ;; *) LLM_MODEL="gpt-4.1" ;; esac
         LLM_API_KEY_NAME="OPENAI_API_KEY"
-        read -p "  API Key (platform.openai.com): " LLM_API_KEY
+        read -p "  API Key (platform.openai.com): " LLM_API_KEY < /dev/tty
 
         log_info "Installing OpenAI Codex CLI..."
         npm install -g @openai/codex 2>/dev/null || sudo npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
@@ -612,7 +612,7 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
       LLM_MODEL="gemini-2.5-pro"
       LLM_API_KEY_NAME="GOOGLE_AI_API_KEY"
       echo ""
-      read -p "  Google AI API Key (get one at aistudio.google.com): " LLM_API_KEY
+      read -p "  Google AI API Key (get one at aistudio.google.com): " LLM_API_KEY < /dev/tty
       if [[ -n "$LLM_API_KEY" ]]; then
         log_ok "Google AI API key saved — $LLM_MODEL"
       else
@@ -639,7 +639,7 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
       echo "    3. mistral:7b                — Fast, lightweight"
       echo "    4. Custom model"
       echo ""
-      read -p "  Enter choice [1-4] (default: 1): " LOCAL_MODEL
+      read -p "  Enter choice [1-4] (default: 1): " LOCAL_MODEL < /dev/tty
       LOCAL_MODEL="${LOCAL_MODEL:-1}"
       case "$LOCAL_MODEL" in
         2) LLM_MODEL="llama3.1:70b" ;;
@@ -734,7 +734,7 @@ else
   if [[ -z "$WORKER_TOKEN" ]]; then
     echo ""
     echo -e "  ${BOLD}Enter your worker token (provided by admin after approval).${NC}"
-    read -p "  Worker token: " WORKER_TOKEN
+    read -p "  Worker token: " WORKER_TOKEN < /dev/tty
   else
     log_ok "Using verified worker token from startup"
   fi
@@ -819,7 +819,7 @@ json.dump(profile, open('$INSTALL_DIR/profile.json', 'w'), indent=2)
     echo -e "  ${BOLD}│   4. Bot replies with your Chat ID number         │${NC}"
     echo -e "  ${BOLD}│   5. Paste that number below                      │${NC}"
     echo -e "  ${BOLD}└────────────────────────────────────────────────────┘${NC}"
-    read -p "  Your Telegram Chat ID (or Enter to skip): " TELEGRAM_CHAT_ID
+    read -p "  Your Telegram Chat ID (or Enter to skip): " TELEGRAM_CHAT_ID < /dev/tty
   fi
 
   # Auto-generate worker ID
@@ -1643,9 +1643,9 @@ else
   if [[ "$HAS_SB_URL" != "true" ]]; then
     echo ""
     echo -e "${BOLD}Would you like to enter your worker token now?${NC}"
-    read -p "  [y/N]: " ENTER_TOKEN
+    read -p "  [y/N]: " ENTER_TOKEN < /dev/tty
     if [[ "$ENTER_TOKEN" =~ ^[Yy] ]]; then
-      read -p "  Worker token (from admin): " FALLBACK_TOKEN
+      read -p "  Worker token (from admin): " FALLBACK_TOKEN < /dev/tty
       log_info "Fetching credentials from ApplyLoop..."
       RESP=$(curl -s -H "X-Worker-Token: $FALLBACK_TOKEN" "$APP_URL/api/settings/cli-config" 2>/dev/null)
       if echo "$RESP" | "$PYTHON_CMD" -c "import sys,json; d=json.load(sys.stdin); assert d.get('data')" 2>/dev/null; then
@@ -1662,8 +1662,8 @@ else
         log_ok "Credentials fetched and saved to .env"
       else
         log_warn "Could not fetch — entering manually"
-        read -p "  Supabase URL: " MANUAL_SB_URL
-        read -p "  Supabase Anon Key: " MANUAL_SB_ANON
+        read -p "  Supabase URL: " MANUAL_SB_URL < /dev/tty
+        read -p "  Supabase Anon Key: " MANUAL_SB_ANON < /dev/tty
         if [[ -n "$MANUAL_SB_URL" ]]; then
           sed -i '' "s|^NEXT_PUBLIC_SUPABASE_URL=.*|NEXT_PUBLIC_SUPABASE_URL=$MANUAL_SB_URL|" "$ENV_FILE"
           sed -i '' "s|^SUPABASE_URL=.*|SUPABASE_URL=$MANUAL_SB_URL|" "$ENV_FILE"
