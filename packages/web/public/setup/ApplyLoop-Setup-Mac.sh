@@ -283,6 +283,8 @@ else
       read -p "  Your Gmail address: " GMAIL_EMAIL
       read -p "  App password (16 chars): " GMAIL_APP_PW
 
+      # Strip spaces from app password (Google shows as "abcd efgh ijkl mnop")
+      GMAIL_APP_PW=$(echo "$GMAIL_APP_PW" | tr -d ' ')
       if [[ -n "$GMAIL_EMAIL" && -n "$GMAIL_APP_PW" ]]; then
         HIM_CONFIG_DIR="$HOME/.config/himalaya"
         mkdir -p "$HIM_CONFIG_DIR"
@@ -309,6 +311,34 @@ message.send.backend.auth.type = "password"
 message.send.backend.auth.raw = "$GMAIL_APP_PW"
 HIMEOF
         log_ok "Himalaya Gmail configured at $HIM_CONFIG_DIR/config.toml"
+
+        # Verify Gmail access works
+        log_info "Testing Gmail connection..."
+        HIM_TEST=$(himalaya envelope list --account gmail --folder INBOX -o json 2>&1 | head -1)
+        if echo "$HIM_TEST" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+          INBOX_COUNT=$(echo "$HIM_TEST" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+          log_ok "Gmail connected! Found $INBOX_COUNT emails in inbox."
+        else
+          log_warn "Gmail test failed. Possible causes:"
+          echo -e "    ${YELLOW}1. App password is incorrect — regenerate at myaccount.google.com/apppasswords${NC}"
+          echo -e "    ${YELLOW}2. 2-Step Verification not enabled — enable at myaccount.google.com/signinoptions/two-step-verification${NC}"
+          echo -e "    ${YELLOW}3. IMAP not enabled — go to Gmail Settings → Forwarding/IMAP → Enable IMAP${NC}"
+          echo -e "    ${YELLOW}4. Less secure app access blocked — use App Password (not regular password)${NC}"
+          echo ""
+          read -p "  Retry with a new app password? [Y/n]: " RETRY_GMAIL
+          if [[ -z "$RETRY_GMAIL" || "$RETRY_GMAIL" =~ ^[Yy] ]]; then
+            read -p "  New app password (16 chars): " GMAIL_APP_PW_NEW
+            if [[ -n "$GMAIL_APP_PW_NEW" ]]; then
+              sed -i '' "s|backend.auth.raw = \".*\"|backend.auth.raw = \"$GMAIL_APP_PW_NEW\"|g" "$HIM_CONFIG_DIR/config.toml"
+              HIM_TEST2=$(himalaya envelope list --account gmail --folder INBOX -o json 2>&1 | head -1)
+              if echo "$HIM_TEST2" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+                log_ok "Gmail connected on retry!"
+              else
+                log_warn "Still failing — you can fix this later. The bot will skip email verification."
+              fi
+            fi
+          fi
+        fi
       else
         log_warn "Gmail setup skipped"
       fi

@@ -393,6 +393,9 @@ if (Test-CommandExists "himalaya") {
             $gmailEmail = Read-Host "  Your Gmail address"
             $gmailAppPw = Read-Host "  App password (16 chars, spaces OK)"
 
+            # Strip spaces from app password (Google shows as "abcd efgh ijkl mnop")
+            $gmailAppPw = $gmailAppPw -replace '\s', ''
+
             if ($gmailEmail -and $gmailAppPw) {
                 $himConfigDir = Join-Path $env:APPDATA "himalaya"
                 New-Item -ItemType Directory -Path $himConfigDir -Force | Out-Null
@@ -420,6 +423,37 @@ message.send.backend.auth.raw = "$gmailAppPw"
 "@
                 $himConfig | Out-File -FilePath (Join-Path $himConfigDir "config.toml") -Encoding UTF8
                 Write-OK "Himalaya Gmail configured"
+
+                # Test Gmail connection
+                Write-Info "Testing Gmail connection..."
+                $ErrorActionPreference = "Continue"
+                try {
+                    $himTest = himalaya.cmd envelope list --account gmail --folder INBOX -o json 2>&1 | Select-Object -First 1
+                    $parsed = $himTest | ConvertFrom-Json -ErrorAction Stop
+                    Write-OK "Gmail connected! Found $($parsed.Count) emails in inbox."
+                } catch {
+                    Write-Warn "Gmail test failed. Possible causes:"
+                    Write-Host "    1. App password incorrect — regenerate at myaccount.google.com/apppasswords" -ForegroundColor Yellow
+                    Write-Host "    2. 2-Step Verification not enabled" -ForegroundColor Yellow
+                    Write-Host "    3. IMAP not enabled in Gmail Settings" -ForegroundColor Yellow
+                    Write-Host ""
+                    $retryGmail = Read-Host "  Retry with a new app password? [Y/n]"
+                    if (-not $retryGmail -or $retryGmail -match "^[Yy]") {
+                        $newPw = Read-Host "  New app password (16 chars)"
+                        $newPw = $newPw -replace '\s', ''
+                        if ($newPw) {
+                            (Get-Content (Join-Path $himConfigDir "config.toml")) -replace 'backend.auth.raw = ".*"', "backend.auth.raw = `"$newPw`"" | Set-Content (Join-Path $himConfigDir "config.toml")
+                            try {
+                                $himTest2 = himalaya.cmd envelope list --account gmail --folder INBOX -o json 2>&1 | Select-Object -First 1
+                                $parsed2 = $himTest2 | ConvertFrom-Json -ErrorAction Stop
+                                Write-OK "Gmail connected on retry!"
+                            } catch {
+                                Write-Warn "Still failing — fix later. Bot will skip email verification."
+                            }
+                        }
+                    }
+                }
+                $ErrorActionPreference = "Stop"
             } else {
                 Write-Warn "Gmail setup skipped"
             }
