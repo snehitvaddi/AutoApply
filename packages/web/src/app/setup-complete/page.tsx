@@ -70,7 +70,7 @@ export default function SetupCompletePage() {
               </div>
               <button
                 onClick={() => {
-                  navigator.clipboard.writeText("curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh | bash");
+                  navigator.clipboard.writeText("curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh -o /tmp/ApplyLoop-Setup.sh && bash /tmp/ApplyLoop-Setup.sh");
                 }}
                 className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
               >
@@ -78,7 +78,7 @@ export default function SetupCompletePage() {
               </button>
             </div>
             <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto">
-{`curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh | bash`}
+{`curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh -o /tmp/ApplyLoop-Setup.sh && bash /tmp/ApplyLoop-Setup.sh`}
             </pre>
             <p className="text-xs text-gray-500 mt-2">Open Terminal (Cmd+Space → &quot;Terminal&quot;) → paste → Enter. No download needed.</p>
           </div>

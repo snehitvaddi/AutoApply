@@ -71,11 +71,31 @@ install_or_update_brew() {
 
 print_banner
 
-echo ""
-echo -e "${BOLD}Before we begin, enter your worker token to verify access.${NC}"
-echo -e "${CYAN}(Get this from the admin who approved your account.)${NC}"
-echo ""
-read -p "  Worker token: " WORKER_TOKEN
+# Accept token as argument: curl ... | bash -s -- <token>
+# Or if running interactively, prompt for it
+WORKER_TOKEN="${1:-}"
+
+if [[ -z "$WORKER_TOKEN" ]]; then
+  # Check if running in a pipe (curl | bash) — stdin is not a terminal
+  if [[ ! -t 0 ]]; then
+    echo ""
+    echo -e "${RED}  Cannot prompt for token when running via pipe (curl | bash).${NC}"
+    echo -e "${YELLOW}  Run with your token as an argument instead:${NC}"
+    echo ""
+    echo -e "  ${CYAN}curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh -o /tmp/ApplyLoop-Setup.sh && bash /tmp/ApplyLoop-Setup.sh${NC}"
+    echo ""
+    echo -e "  ${YELLOW}Or pass token directly:${NC}"
+    echo -e "  ${CYAN}curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh | bash -s -- YOUR_TOKEN_HERE${NC}"
+    echo ""
+    exit 1
+  fi
+
+  echo ""
+  echo -e "${BOLD}Before we begin, enter your worker token to verify access.${NC}"
+  echo -e "${CYAN}(Get this from the admin who approved your account.)${NC}"
+  echo ""
+  read -p "  Worker token: " WORKER_TOKEN
+fi
 
 if [[ -z "$WORKER_TOKEN" ]]; then
   echo -e "${RED}  No token entered. Setup cannot continue without a valid worker token.${NC}"
