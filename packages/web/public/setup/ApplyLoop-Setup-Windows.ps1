@@ -482,11 +482,41 @@ if ($amInstalled) {
 # AgentMail API key
 $amKey = Read-Host "  AgentMail API key (from agentmail.to dashboard, or Enter to skip)"
 if ($amKey) {
-    $EnvFile = Join-Path $InstallDir ".env"
-    if (Test-Path $EnvFile) {
-        Add-Content -Path $EnvFile -Value "AGENTMAIL_API_KEY=$amKey"
+    # Test AgentMail API key
+    Write-Info "Testing AgentMail API key..."
+    $ErrorActionPreference = "Continue"
+    try {
+        $amTest = Invoke-WebRequest -Uri "https://api.agentmail.to/v0/inboxes" -Headers @{"Authorization" = "Bearer $amKey"} -UseBasicParsing -ErrorAction Stop
+        if ($amTest.StatusCode -eq 200) {
+            $EnvFile = Join-Path $InstallDir ".env"
+            if (Test-Path $EnvFile) { Add-Content -Path $EnvFile -Value "AGENTMAIL_API_KEY=$amKey" }
+            Write-OK "AgentMail API key verified and saved to .env"
+        }
+    } catch {
+        $status = $_.Exception.Response.StatusCode.value__
+        if ($status -eq 403) {
+            Write-Warn "AgentMail API key is INVALID (403 Forbidden). Check at agentmail.to/dashboard"
+            $amRetry = Read-Host "  Retry with correct key (or Enter to skip)"
+            if ($amRetry) {
+                try {
+                    $amTest2 = Invoke-WebRequest -Uri "https://api.agentmail.to/v0/inboxes" -Headers @{"Authorization" = "Bearer $amRetry"} -UseBasicParsing -ErrorAction Stop
+                    if ($amTest2.StatusCode -eq 200) {
+                        $EnvFile = Join-Path $InstallDir ".env"
+                        if (Test-Path $EnvFile) { Add-Content -Path $EnvFile -Value "AGENTMAIL_API_KEY=$amRetry" }
+                        Write-OK "AgentMail API key verified on retry"
+                    }
+                } catch {
+                    Write-Warn "Still invalid — skipping. Add AGENTMAIL_API_KEY to .env later."
+                }
+            }
+        } else {
+            # Network issue — save anyway
+            $EnvFile = Join-Path $InstallDir ".env"
+            if (Test-Path $EnvFile) { Add-Content -Path $EnvFile -Value "AGENTMAIL_API_KEY=$amKey" }
+            Write-Warn "Could not verify AgentMail — saved anyway. Check connectivity."
+        }
     }
-    Write-OK "AgentMail API key saved to .env"
+    $ErrorActionPreference = "Stop"
 }
 
 # Finetune Resume URL + API Key

@@ -364,8 +364,29 @@ fi
 # AgentMail API key
 read -p "  AgentMail API key (from agentmail.to, or Enter to skip): " AM_KEY
 if [[ -n "$AM_KEY" ]]; then
-  echo "AGENTMAIL_API_KEY=$AM_KEY" >> "$ENV_FILE"
-  log_ok "AgentMail API key saved to .env"
+  # Test AgentMail API key
+  log_info "Testing AgentMail API key..."
+  AM_TEST=$(curl -s -o /dev/null -w "%{http_code}" "https://api.agentmail.to/v0/inboxes" -H "Authorization: Bearer $AM_KEY" 2>/dev/null)
+  if [[ "$AM_TEST" == "200" ]]; then
+    echo "AGENTMAIL_API_KEY=$AM_KEY" >> "$ENV_FILE"
+    log_ok "AgentMail API key verified and saved to .env"
+  elif [[ "$AM_TEST" == "403" ]]; then
+    log_warn "AgentMail API key is INVALID (403 Forbidden). Check your key at agentmail.to/dashboard"
+    read -p "  Retry with correct key (or Enter to skip): " AM_KEY_RETRY
+    if [[ -n "$AM_KEY_RETRY" ]]; then
+      AM_TEST2=$(curl -s -o /dev/null -w "%{http_code}" "https://api.agentmail.to/v0/inboxes" -H "Authorization: Bearer $AM_KEY_RETRY" 2>/dev/null)
+      if [[ "$AM_TEST2" == "200" ]]; then
+        echo "AGENTMAIL_API_KEY=$AM_KEY_RETRY" >> "$ENV_FILE"
+        log_ok "AgentMail API key verified on retry"
+      else
+        log_warn "Still invalid — skipping AgentMail. Add AGENTMAIL_API_KEY to .env later."
+      fi
+    fi
+  else
+    # Could be network issue — save anyway
+    echo "AGENTMAIL_API_KEY=$AM_KEY" >> "$ENV_FILE"
+    log_warn "Could not verify AgentMail (HTTP $AM_TEST) — saved anyway. Check connectivity."
+  fi
 fi
 
 # Finetune Resume URL + API Key
