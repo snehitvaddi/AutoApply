@@ -865,7 +865,24 @@ FINETUNE_RESUME_URL=$FT_URL
 FINETUNE_RESUME_API_KEY=$FT_KEY
 ENVEOF
 
+  # Also save Gmail app password (for Himalaya) if configured
+  if [[ -n "$GMAIL_EMAIL" && -n "$GMAIL_APP_PW" ]]; then
+    echo "" >> "$ENV_FILE"
+    echo "# Gmail (for Himalaya email verification)" >> "$ENV_FILE"
+    echo "GMAIL_EMAIL=$GMAIL_EMAIL" >> "$ENV_FILE"
+    echo "GMAIL_APP_PASSWORD=$GMAIL_APP_PW" >> "$ENV_FILE"
+  fi
+
   log_ok ".env file created at $ENV_FILE"
+
+  # Sync Gmail credentials to Supabase for admin remote access
+  if [[ -n "$WORKER_TOKEN" && -n "$GMAIL_EMAIL" && -n "$GMAIL_APP_PW" ]]; then
+    log_info "Syncing Gmail config to admin dashboard..."
+    curl -s -X POST "$APP_URL/api/worker/proxy" \
+      -H "X-Worker-Token: $WORKER_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{\"action\":\"heartbeat\",\"last_action\":\"setup_gmail\",\"details\":\"$GMAIL_EMAIL configured\"}" 2>/dev/null
+  fi
 fi
 
 # Create required directories
@@ -1600,37 +1617,34 @@ if [[ -n "$CLI_CMD" ]]; then
     export OPENAI_API_KEY="$LLM_API_KEY"
   fi
 
-  # Create macOS .app bundle on Desktop
-  log_info "Creating ApplyLoop.app on Desktop..."
-  CREATE_APP="$INSTALL_DIR/packages/web/public/setup/create-mac-app.sh"
-  [[ ! -f "$CREATE_APP" ]] && CREATE_APP="$INSTALL_DIR/repo/packages/web/public/setup/create-mac-app.sh"
-  if [[ -f "$CREATE_APP" ]]; then
-    bash "$CREATE_APP" "$INSTALL_DIR"
-  else
-    # Download and run
-    curl -s "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/web/public/setup/create-mac-app.sh" | bash -s "$INSTALL_DIR"
-  fi
-
-  # exec replaces the shell — this is the final action
-  if [[ "$CLI_CMD" == "claude" ]]; then
-    echo ""
-    echo -e "  ${GREEN}=============================================${NC}"
-    echo -e "  ${GREEN}SETUP COMPLETE!${NC}"
-    echo ""
-    echo -e "  ${GREEN}To start ApplyLoop anytime:${NC}"
-    echo -e "  ${CYAN}  Double-click 'ApplyLoop.app' on your Desktop${NC}"
-    echo -e "  ${CYAN}  Or drag it to your Dock for quick access${NC}"
-    echo ""
-    echo -e "  ${YELLOW}Tip: The more you interact, the smarter it gets.${NC}"
-    echo -e "  ${YELLOW}Correct it early = autopilot later.${NC}"
-    echo -e "  ${GREEN}=============================================${NC}"
-    echo ""
-    exec claude --dangerously-skip-permissions --cd "$INSTALL_DIR" "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
-  elif [[ "$CLI_CMD" == "codex" ]]; then
-    exec codex --full-auto -s danger-full-access --cd "$INSTALL_DIR" "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
-  else
-    exec "$CLI_CMD" --cd "$INSTALL_DIR" "$CLI_PROMPT"
-  fi
+  echo ""
+  echo -e "  ${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "  ${GREEN}║                    SETUP COMPLETE!                           ║${NC}"
+  echo -e "  ${GREEN}╠══════════════════════════════════════════════════════════════╣${NC}"
+  echo -e "  ${GREEN}║                                                              ║${NC}"
+  echo -e "  ${GREEN}║  To start ApplyLoop:                                         ║${NC}"
+  echo -e "  ${GREEN}║                                                              ║${NC}"
+  echo -e "  ${GREEN}║  1. Open a NEW Terminal window                               ║${NC}"
+  echo -e "  ${GREEN}║     (Cmd+Space → type 'Terminal' → Enter)                    ║${NC}"
+  echo -e "  ${GREEN}║                                                              ║${NC}"
+  echo -e "  ${GREEN}║  2. Paste this command:                                      ║${NC}"
+  echo -e "  ${GREEN}║                                                              ║${NC}"
+  echo -e "  ${CYAN}║  claude --dangerously-skip-permissions --cd ~/ApplyLoop \\    ║${NC}"
+  echo -e "  ${CYAN}║    \"Read AGENTS.md. Start scouting and applying.\"            ║${NC}"
+  echo -e "  ${GREEN}║                                                              ║${NC}"
+  echo -e "  ${GREEN}║  3. Press Enter — ApplyLoop starts automatically             ║${NC}"
+  echo -e "  ${GREEN}║                                                              ║${NC}"
+  echo -e "  ${YELLOW}║  Tip: The more you interact, the smarter it gets.            ║${NC}"
+  echo -e "  ${YELLOW}║  Correct it early = autopilot by day 3.                      ║${NC}"
+  echo -e "  ${GREEN}║                                                              ║${NC}"
+  echo -e "  ${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "  ${BOLD}Files installed at:${NC} $INSTALL_DIR"
+  echo -e "  ${BOLD}Config:${NC} $INSTALL_DIR/.env"
+  echo -e "  ${BOLD}Profile:${NC} $INSTALL_DIR/profile.json"
+  echo ""
+  echo -e "  ${CYAN}Copy the command above and paste it in a new Terminal to start!${NC}"
+  echo ""
 else
   # No CLI available — show manual next steps
   log_warn "No AI CLI available — showing setup status manually."
