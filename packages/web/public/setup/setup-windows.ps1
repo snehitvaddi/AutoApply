@@ -12,7 +12,7 @@ $AdvancedMode = $args -contains "--advanced"
 
 $RequiredPython = "3.11"
 $RequiredNode = "18"
-$InstallDir = "$env:USERPROFILE\autoapply"
+$InstallDir = "$env:USERPROFILE\ApplyLoop"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -847,8 +847,8 @@ ENCRYPTION_KEY=$EncryptionKey
 WORKER_ID=$WorkerId
 POLL_INTERVAL=10
 APPLY_COOLDOWN=30
-RESUME_DIR=$env:TEMP\autoapply\resumes
-SCREENSHOT_DIR=$env:TEMP\autoapply\screenshots
+RESUME_DIR=$env:TEMP\applyloop\resumes
+SCREENSHOT_DIR=$env:TEMP\applyloop\screenshots
 
 # Telegram (auto-configured from admin)
 TELEGRAM_BOT_TOKEN=$TelegramToken
@@ -1398,20 +1398,51 @@ if ($LlmCliCmd -eq "claude") {
         $env:ANTHROPIC_API_KEY = $LlmApiKey
     }
 
+    # Download ApplyLoop.bat launcher
+    Write-Info "Creating ApplyLoop launcher on Desktop..."
+    $LauncherUrl = "https://applyloop.vercel.app/setup/ApplyLoop.bat"
+    $LauncherDesktop = Join-Path ([Environment]::GetFolderPath("Desktop")) "ApplyLoop.bat"
+    $LauncherInstall = Join-Path $InstallDir "ApplyLoop.bat"
+    try {
+        Invoke-WebRequest -Uri $LauncherUrl -OutFile $LauncherInstall -UseBasicParsing 2>$null
+        Copy-Item $LauncherInstall $LauncherDesktop -Force
+        Write-OK "ApplyLoop.bat created on Desktop — double-click to start!"
+    } catch {
+        Write-Warn "Could not download launcher — create manually"
+    }
+
+    # Create desktop shortcut with admin elevation
+    try {
+        $WshShell = New-Object -ComObject WScript.Shell
+        $Shortcut = $WshShell.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "ApplyLoop.lnk"))
+        $Shortcut.TargetPath = $LauncherInstall
+        $Shortcut.WorkingDirectory = $InstallDir
+        $Shortcut.Description = "ApplyLoop — Autonomous Job Application Bot"
+        $Shortcut.Save()
+        Write-OK "Desktop shortcut created (ApplyLoop.lnk)"
+    } catch {
+        Write-Warn "Could not create shortcut — use the .bat file directly"
+    }
+
     Write-Host ""
     Write-Host "  =============================================" -ForegroundColor Green
-    Write-Host "  SETUP COMPLETE! To start ApplyLoop, run:" -ForegroundColor Green
+    Write-Host "  SETUP COMPLETE!" -ForegroundColor Green
     Write-Host "" -ForegroundColor Green
-    Write-Host "  claude.cmd --dangerously-skip-permissions --cd $InstallDir `"Read AGENTS.md. Start scouting and applying.`"" -ForegroundColor Cyan
+    Write-Host "  To start ApplyLoop:" -ForegroundColor Green
+    Write-Host "    Double-click 'ApplyLoop.bat' on your Desktop" -ForegroundColor Cyan
+    Write-Host "    (or right-click → Run as administrator)" -ForegroundColor Cyan
     Write-Host "" -ForegroundColor Green
-    Write-Host "  Copy the command above and paste in a NEW terminal window." -ForegroundColor Green
+    Write-Host "  It will:" -ForegroundColor Green
+    Write-Host "    1. Check for latest updates from admin" -ForegroundColor Green
+    Write-Host "    2. Start Claude Code with full permissions" -ForegroundColor Green
+    Write-Host "    3. Begin scouting and applying automatically" -ForegroundColor Green
     Write-Host "" -ForegroundColor Green
     Write-Host "  Tip: The more you interact, the smarter it gets." -ForegroundColor Yellow
     Write-Host "  Correct it early = autopilot later." -ForegroundColor Yellow
     Write-Host "  =============================================" -ForegroundColor Green
     Write-Host ""
 
-    # Also try launching directly
+    # Launch immediately
     claude.cmd --dangerously-skip-permissions --cd $InstallDir "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
 
 } elseif ($LlmCliCmd -eq "codex") {

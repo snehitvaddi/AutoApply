@@ -22,7 +22,7 @@ NC='\033[0m'
 
 REQUIRED_PYTHON="3.11"
 REQUIRED_NODE="18"
-INSTALL_DIR="$HOME/autoapply"
+INSTALL_DIR="$HOME/ApplyLoop"
 
 print_banner() {
   echo ""
@@ -732,8 +732,8 @@ ENCRYPTION_KEY=$ENCRYPTION_KEY
 WORKER_ID=$WORKER_ID
 POLL_INTERVAL=10
 APPLY_COOLDOWN=30
-RESUME_DIR=/tmp/autoapply/resumes
-SCREENSHOT_DIR=/tmp/autoapply/screenshots
+RESUME_DIR=/tmp/applyloop/resumes
+SCREENSHOT_DIR=/tmp/applyloop/screenshots
 
 # Telegram (auto-configured from admin)
 TELEGRAM_BOT_TOKEN=$TELEGRAM_TOKEN
@@ -744,7 +744,7 @@ ENVEOF
 fi
 
 # Create required directories
-mkdir -p /tmp/autoapply/resumes /tmp/autoapply/screenshots
+mkdir -p /tmp/applyloop/resumes /tmp/applyloop/screenshots
 log_ok "Worker directories created"
 
 # Skip database migration for regular users — admin handles migrations
@@ -756,7 +756,7 @@ if [[ -f "$INSTALL_DIR/packages/web/public/setup/run-migration.py" ]]; then
   MIGRATION_SCRIPT="$INSTALL_DIR/packages/web/public/setup/run-migration.py"
 else
   # Download migration script
-  MIGRATION_SCRIPT="/tmp/autoapply-migration.py"
+  MIGRATION_SCRIPT="/tmp/applyloop-migration.py"
   curl -fsSL "https://applyloop.vercel.app/setup/run-migration.py" -o "$MIGRATION_SCRIPT" 2>/dev/null
 fi
 
@@ -949,7 +949,7 @@ if check_command openclaw; then
   fi
 fi
 
-if [[ -d "/tmp/autoapply/resumes" ]]; then
+if [[ -d "/tmp/applyloop/resumes" ]]; then
   STATUS_SERVICES+=("[READY]   Worker directories")
 else
   STATUS_SERVICES+=("[MISSING] Worker directories")
@@ -1266,7 +1266,7 @@ if check_command openclaw; then
   fi
 fi
 
-status_line "test -d /tmp/autoapply/resumes" "Worker directories" ""
+status_line "test -d /tmp/applyloop/resumes" "Worker directories" ""
 
 echo ""
 echo -e "${BOLD}╠──────────────────────────────────────────────────────────────╣${NC}"

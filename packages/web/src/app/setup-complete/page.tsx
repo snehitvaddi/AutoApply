@@ -152,9 +152,28 @@ export default function SetupCompletePage() {
           </a>
         </div>
 
+        {/* After setup — one-click launcher */}
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+          <h3 className="font-semibold text-green-900 mb-2">After setup — one-click start</h3>
+          <p className="text-sm text-green-800 mb-3">
+            Setup creates an <strong>ApplyLoop.bat</strong> on your Desktop (Windows) or <strong>ApplyLoop.command</strong> (Mac).
+            Double-click it anytime to start the bot — it auto-updates, launches Claude Code, and begins scouting.
+          </p>
+          <div className="flex gap-2">
+            <a href="/setup/ApplyLoop.bat" download="ApplyLoop.bat"
+              className="px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700">
+              Download ApplyLoop.bat (Windows)
+            </a>
+            <a href="/setup/ApplyLoop.command" download="ApplyLoop.command"
+              className="px-3 py-1.5 border border-green-600 text-green-700 rounded text-xs font-medium hover:bg-green-50">
+              Download ApplyLoop.command (Mac)
+            </a>
+          </div>
+        </div>
+
         {/* Run instructions */}
         <div className="bg-gray-50 rounded-lg p-4 mb-8">
-          <h3 className="font-semibold mb-3">How to run</h3>
+          <h3 className="font-semibold mb-3">First-time setup</h3>
 
           <div className="space-y-4">
             <div>
