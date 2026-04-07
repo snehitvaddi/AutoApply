@@ -947,6 +947,22 @@ Gusto job `7557049` reached submit-no-confirmation cap:
 - boards.greenhouse.io/{slug} → auto-add to Greenhouse discovery list
 - jobs.ashbyhq.com/{slug} → auto-add to Ashby discovery list
 - 346 Greenhouse + 168 Ashby companies, growing automatically
+
+### Mac Python Virtual Environment — CRITICAL (April 2026)
+
+- macOS with Python 3.12+ enforces PEP 668 — pip install to system Python is BLOCKED
+- Symptom: setup script silently exits after "Installing Playwright" or pip breaks mid-install
+- Root cause: package version conflicts between system Python and pip packages
+- FIX: setup script creates a venv at ~/ApplyLoop/.venv BEFORE any pip installs
+- All pip install commands use .venv/bin/python instead of system python3
+- This avoids PEP 668 errors, package collisions, and silent failures
+- The venv is local to ApplyLoop — doesn't affect the user's system Python
+
+### Mac npm Permission Error (April 2026)
+
+- `npm install -g` fails with EACCES on Macs without root npm config
+- FIX: try without sudo first, fall back to `sudo npm install -g`
+- All global npm installs (openclaw, claude-code, codex) have this fallback
 - Discovery list shared across all SaaS users
 
 ### Scouting Sources (March 2026)

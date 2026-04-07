@@ -114,7 +114,17 @@ else
   log_ok "Python installed: $($PYTHON_CMD --version)"
 fi
 
-# Ensure pip is available
+# Create virtual environment to avoid PEP 668 / system Python conflicts
+VENV_DIR="$INSTALL_DIR/.venv"
+if [[ ! -d "$VENV_DIR" ]]; then
+  log_info "Creating Python virtual environment (avoids system package conflicts)..."
+  "$PYTHON_CMD" -m venv "$VENV_DIR"
+fi
+# Switch to venv Python for all subsequent pip installs
+PYTHON_CMD="$VENV_DIR/bin/python"
+log_ok "Virtual env: $VENV_DIR"
+
+# Ensure pip is available in venv
 if ! "$PYTHON_CMD" -m pip --version &>/dev/null; then
   log_info "Installing pip..."
   "$PYTHON_CMD" -m ensurepip --upgrade
