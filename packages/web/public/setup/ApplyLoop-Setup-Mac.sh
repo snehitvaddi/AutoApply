@@ -150,7 +150,7 @@ if check_command openclaw; then
   log_ok "OpenClaw already installed ($OC_VER)"
 else
   log_info "Installing OpenClaw CLI..."
-  npm install -g openclaw
+  npm install -g openclaw 2>/dev/null || sudo npm install -g openclaw
   log_ok "OpenClaw installed: $(openclaw --version 2>&1 || echo 'installed')"
 fi
 
@@ -428,7 +428,7 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
         case "$ST" in 2) LLM_MODEL="claude-max-5x" ;; 3) LLM_MODEL="claude-max-20x" ;; *) LLM_MODEL="claude-pro" ;; esac
 
         log_info "Installing Claude Code CLI..."
-        npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
+        npm install -g @anthropic-ai/claude-code 2>/dev/null || sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
         if check_command claude; then
           log_ok "Claude Code CLI installed"
           log_info "Launching Claude login (browser OAuth)..."
@@ -444,7 +444,7 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
         read -p "  API Key (console.anthropic.com): " LLM_API_KEY
 
         log_info "Installing Claude Code CLI..."
-        npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
+        npm install -g @anthropic-ai/claude-code 2>/dev/null || sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code CLI install failed"
         if check_command claude; then
           log_ok "Claude Code CLI installed"
           if [[ -n "$LLM_API_KEY" ]]; then
@@ -467,7 +467,7 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
         case "$ST" in 2) LLM_MODEL="chatgpt-pro" ;; 3) LLM_MODEL="chatgpt-business" ;; *) LLM_MODEL="chatgpt-plus" ;; esac
 
         log_info "Installing OpenAI Codex CLI..."
-        npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
+        npm install -g @openai/codex 2>/dev/null || sudo npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
         if check_command codex; then
           log_ok "Codex CLI installed"
           log_info "Launching Codex login (browser OAuth)..."
@@ -483,7 +483,7 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
         read -p "  API Key (platform.openai.com): " LLM_API_KEY
 
         log_info "Installing OpenAI Codex CLI..."
-        npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
+        npm install -g @openai/codex 2>/dev/null || sudo npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
         if check_command codex; then
           log_ok "Codex CLI installed"
           if [[ -n "$LLM_API_KEY" ]]; then
@@ -556,7 +556,7 @@ else
 
   # Level 1: Install Claude Code CLI (user-facing orchestrator)
   log_info "Installing Claude Code CLI (Level 1 — orchestrator)..."
-  npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code install failed"
+  npm install -g @anthropic-ai/claude-code 2>/dev/null || sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || log_warn "Claude Code install failed"
 
   if check_command claude; then
     log_ok "Claude Code CLI installed"
@@ -574,7 +574,7 @@ else
 
   # Level 2: Install Codex CLI (OpenClaw backend — browser automation LLM)
   log_info "Installing Codex CLI (Level 2 — OpenClaw browser LLM)..."
-  npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
+  npm install -g @openai/codex 2>/dev/null || sudo npm install -g @openai/codex 2>/dev/null || log_warn "Codex CLI install failed"
 
   if check_command codex; then
     log_ok "Codex CLI installed (Level 2)"
