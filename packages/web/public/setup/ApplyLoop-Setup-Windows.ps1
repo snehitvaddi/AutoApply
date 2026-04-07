@@ -1634,12 +1634,16 @@ if ($LlmCliCmd -eq "claude") {
     Write-Host "  You can paste credentials, ask questions, or type 'exit' to quit." -ForegroundColor Cyan
     Write-Host ""
 
-    # Set API key env var if available (for API access type)
-    if ($LlmApiKey -and $LlmAccessType -eq "api") {
-        $env:OPENAI_API_KEY = $LlmApiKey
-    }
-
-    codex --full-auto -s danger-full-access --cd $InstallDir "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
+    # Codex path — show same instructions (no auto-launch)
+    Write-Host ""
+    Write-Host "  ✅ SETUP COMPLETE!" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  To start ApplyLoop, open a NEW terminal and run:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  codex --full-auto -s danger-full-access --cd $InstallDir `"Read AGENTS.md. Start scouting and applying.`"" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Or double-click ApplyLoop.bat on your Desktop." -ForegroundColor Cyan
+    Write-Host ""
 
 } else {
     # ── Fallback: No CLI available — show interactive status dashboard ────────
