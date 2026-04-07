@@ -999,6 +999,24 @@ ApplyLoop scans 6 job sources every 30 minutes:
 - Brex intern forms ask about in-office relocation requirements
 - Check if role is remote-eligible before applying
 
+### Windows OpenClaw Bugs — 3 Critical Issues (April 2026)
+
+**Bug 1: Upload path mismatch** — `openclaw browser upload` ALWAYS fails on Windows.
+CLI resolves to `C:\tmp\openclaw\uploads`, Gateway resolves to `%TEMP%\openclaw\uploads`.
+Path containment check fails. Fix: copy resume to `%TEMP%\openclaw\uploads\` before uploading.
+OR use CDP direct connection (port 18800) with `DOM.setFileInputFiles`.
+
+**Bug 2: Gateway restart hangs** — `openclaw gateway restart` leaves stale WebSocket.
+Commands execute but stdout never returns. Fix: `taskkill /F /IM node.exe` then `openclaw gateway start`.
+
+**Bug 3: React form fill fails** — `openclaw browser fill` uses `element.value = x` which
+bypasses React synthetic events. Ashby forms see fields as empty after fill.
+Fix: Use CDP `Input.insertText` (triggers real keyboard events) instead of `browser fill`.
+Works: focus → Ctrl+A → Backspace → Input.insertText → blur.
+
+**General Windows recommendation:** Prefer CDP direct connection (port 18800) over
+`openclaw browser fill/upload` for ALL form operations. CDP is more reliable.
+
 ### ZipRecruiter Scouting (April 2026)
 
 - 8th job source. Uses Scrapling PlayWrightFetcher to bypass CAPTCHA

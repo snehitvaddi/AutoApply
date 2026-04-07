@@ -45,6 +45,65 @@ powershell -ExecutionPolicy Bypass -File packages\worker\jiggler.ps1 stop
 Tell the user explicitly: "Started jiggler — Mac/PC won't sleep while I'm applying."
 And when stopping: "Stopped jiggler — your computer can sleep normally now."
 
+═══ WINDOWS OPENCLAW BUGS — CRITICAL WORKAROUNDS ═══
+
+Three known OpenClaw bugs on Windows. USE THESE WORKAROUNDS:
+
+**Bug 1: Upload path mismatch — `openclaw browser upload` always fails**
+Symptom: "Invalid path: must stay within uploads directory"
+Cause: CLI uses C:\tmp\openclaw\uploads, Gateway uses %TEMP%\openclaw\uploads
+FIX: Before uploading, copy resume to the Gateway's expected path:
+```bash
+# Find Gateway's upload dir
+$GW_UPLOAD = "$env:TEMP\openclaw\uploads"
+mkdir -p $GW_UPLOAD
+cp /tmp/openclaw/uploads/resume.pdf $GW_UPLOAD/resume.pdf
+# Then upload from Gateway's dir:
+openclaw browser upload "$GW_UPLOAD\resume.pdf" --ref <ref>
+```
+OR use direct CDP (see Bug 3 workaround below).
+
+**Bug 2: `openclaw gateway restart` hangs on Windows**
+Symptom: After restart, commands execute but stdout never returns. CLI hangs.
+Cause: Windows Scheduled Task doesn't properly terminate the Node process.
+FIX: Don't use `openclaw gateway restart`. Instead:
+```powershell
+# Kill the gateway process manually
+taskkill /F /IM node.exe /FI "WINDOWTITLE eq OpenClaw*" 2>$null
+Start-Sleep -Seconds 2
+# Restart via scheduled task
+schtasks /Run /TN "OpenClaw Gateway" 2>$null
+# Or just start fresh:
+openclaw gateway start
+```
+
+**Bug 3: `openclaw browser fill` doesn't trigger React state (Ashby forms)**
+Symptom: Fields appear filled but form validation says "Missing required field"
+Cause: `element.value = x` bypasses React's synthetic event system.
+FIX: Use direct CDP connection instead of openclaw browser fill for React forms:
+```javascript
+// Connect to Chrome CDP on port 18800
+const ws = new WebSocket("ws://127.0.0.1:18800/devtools/page/...");
+
+// For text fields — use Input.insertText (triggers real keyboard events):
+1. Focus the element: Runtime.evaluate → document.querySelector(selector).focus()
+2. Select all: Input.dispatchKeyEvent (Ctrl+A)
+3. Delete: Input.dispatchKeyEvent (Backspace)
+4. Type new value: Input.insertText({text: "value"})
+5. Blur: Runtime.evaluate → document.querySelector(selector).blur()
+
+// For file upload — use DOM.setFileInputFiles:
+DOM.setFileInputFiles({files: ["C:\\path\\to\\resume.pdf"], nodeId: <nodeId>})
+```
+
+**DETECTION: Check if form is React-based (Ashby, some custom ATS):**
+- If `openclaw browser fill` → submit → "Missing required field" error
+- Switch to CDP method for that form
+- Greenhouse forms are NOT React — openclaw browser fill works fine for those
+
+**RECOMMENDED: On Windows, prefer CDP direct connection for ALL form filling.**
+It's more reliable than openclaw browser fill on every platform.
+
 ═══ SETUP ═══
 1. Load user profile from profile.json (contains: personal info, experience[], education[], skills, legal/visa status, preferences, standard_answers)
 2. Load dedup DB from /tmp/applied-dedup.json
