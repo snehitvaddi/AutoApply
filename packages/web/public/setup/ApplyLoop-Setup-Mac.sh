@@ -698,12 +698,8 @@ fi
 # OpenClaw uses Codex (Level 2) for browser automation
 LLM_BACKEND_PROVIDER="openai"; LLM_BACKEND_MODEL="codex"
 echo ""
-# Configure OpenClaw with Codex as its LLM backend
-if check_command openclaw; then
-  log_info "Configuring OpenClaw to use Codex (Level 2)..."
-  openclaw config set ai.provider openai 2>/dev/null
-  log_ok "OpenClaw configured with Codex backend"
-fi
+# OpenClaw already configured in step 4 (config written directly to openclaw.json)
+log_ok "OpenClaw configured with Codex backend (from step 4)"
 
 # Install SDK
 [[ "$LLM_PROVIDER" == "anthropic" ]] && "$PYTHON_CMD" -m pip install --quiet anthropic 2>/dev/null

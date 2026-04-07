@@ -803,14 +803,9 @@ if ($LlmProvider -ne "none") { Write-OK "Level 1: Claude Code (orchestrator) | L
 # OpenClaw uses Codex (Level 2) for browser automation
 $LlmBackendProvider = "openai"; $LlmBackendModel = "codex"
 
-# Configure OpenClaw with Codex as its LLM backend
-if (Test-CommandExists "openclaw") {
-    $ErrorActionPreference = "Continue"
-    openclaw config set ai.provider openai 2>&1 | Out-Null
-    if ($LlmModel) { openclaw config set ai.model $LlmModel 2>&1 | Out-Null }
-    if ($LlmApiKey) { openclaw config set ai.apiKey $LlmApiKey 2>&1 | Out-Null }
-    $ErrorActionPreference = "Stop"
-    Write-OK "OpenClaw configured with same LLM"
+# OpenClaw already configured in step 4 (config written directly to openclaw.json)
+Write-OK "OpenClaw configured with Codex backend (from step 4)"
+if ($false) {  # Kept for reference — not called (openclaw config set hangs)
 }
 
 # Install SDK + write LLM config to .env
