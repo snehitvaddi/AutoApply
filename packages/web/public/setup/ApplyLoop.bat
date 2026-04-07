@@ -43,13 +43,30 @@ if exist "%INSTALL_DIR%\repo\.git" (
     echo   No git repo found — skipping update check.
 )
 
+:: Fix Windows upload path mismatch (Bug #1)
+echo   Syncing upload directories...
+if not exist "%TEMP%\openclaw\uploads" mkdir "%TEMP%\openclaw\uploads" >nul 2>&1
+if not exist "C:\tmp\openclaw" mkdir "C:\tmp\openclaw" >nul 2>&1
+if not exist "C:\tmp\openclaw\uploads" (
+    mklink /J "C:\tmp\openclaw\uploads" "%TEMP%\openclaw\uploads" >nul 2>&1
+)
+
+:: Ensure OpenClaw gateway is running (Bug #2 — use fresh start, not restart)
+echo   Ensuring OpenClaw gateway is running...
+tasklist /FI "IMAGENAME eq node.exe" 2>nul | find "node.exe" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo   Starting OpenClaw gateway...
+    start /B openclaw.cmd gateway start >nul 2>&1
+    timeout /t 3 /nobreak >nul
+)
+
 echo.
 echo   Starting ApplyLoop with Claude Code...
 echo   (This window will stay open while ApplyLoop runs)
 echo.
 
 cd /d "%INSTALL_DIR%"
-claude.cmd --dangerously-skip-permissions --cd "%INSTALL_DIR%" "Read AGENTS.md. You are ApplyLoop. Start the jiggler, then begin the scout→filter→apply loop using openclaw browser commands. Do NOT use web search. Do NOT run worker.py."
+claude.cmd --dangerously-skip-permissions --cd "%INSTALL_DIR%" "Read AGENTS.md. You are ApplyLoop. IMPORTANT: On Windows, if openclaw browser fill doesn't work on React forms (Ashby), use CDP direct connection on port 18800 with Input.insertText instead. If openclaw browser upload fails with path error, copy resume to %%TEMP%%\openclaw\uploads\ first. Start the jiggler, then begin the scout→filter→apply loop."
 
 echo.
 echo   ApplyLoop stopped.

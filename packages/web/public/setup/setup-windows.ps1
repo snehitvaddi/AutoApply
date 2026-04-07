@@ -283,6 +283,28 @@ if (Test-CommandExists "openclaw") {
         Write-Warn "Gateway start failed. After setup, run: openclaw gateway start"
     }
     $ErrorActionPreference = "Stop"
+
+    # FIX Windows Bug #1: Sync upload directories
+    # CLI uses C:\tmp\openclaw\uploads, Gateway uses %TEMP%\openclaw\uploads
+    # Create both and junction them so uploads work from either path
+    Write-Info "Fixing Windows upload path mismatch..."
+    $GwUploadDir = Join-Path $env:TEMP "openclaw\uploads"
+    $CliUploadDir = "C:\tmp\openclaw\uploads"
+    New-Item -ItemType Directory -Path $GwUploadDir -Force | Out-Null
+    New-Item -ItemType Directory -Path "C:\tmp\openclaw" -Force | Out-Null
+    if (-not (Test-Path $CliUploadDir)) {
+        try {
+            # Create junction: C:\tmp\openclaw\uploads → %TEMP%\openclaw\uploads
+            cmd /c mklink /J "$CliUploadDir" "$GwUploadDir" 2>$null | Out-Null
+            Write-OK "Upload path junction created (fixes openclaw upload bug)"
+        } catch {
+            # Fallback: just create the directory
+            New-Item -ItemType Directory -Path $CliUploadDir -Force | Out-Null
+            Write-Warn "Could not create junction — resume upload may need manual fix"
+        }
+    } else {
+        Write-OK "Upload directories already synced"
+    }
 }
 
 
