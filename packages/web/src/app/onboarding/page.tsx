@@ -8,48 +8,87 @@ const ROLE_PRESETS = [
   "GenAI Engineer", "NLP Engineer", "Applied Scientist", "Research Engineer",
   "MLOps Engineer", "Computer Vision Engineer", "Analytics Engineer",
   "ML Platform Engineer", "AI Infrastructure Engineer",
+  "Research Scientist", "Deep Learning Engineer", "Data Analyst",
+  "BI Engineer", "Search Relevance Engineer",
 ];
 
-const AI_PROFILE_PROMPT = `I'm setting up an automated job application system. I need you to extract my professional details in a specific JSON format. Use everything you know about me from our past conversations, my resume, or anything I've shared before.
+const AI_PROFILE_PROMPT = `I'm setting up ApplyLoop — an automated job application bot. I need my COMPLETE professional profile extracted as JSON. Use my resume (paste it below or reference from our past conversations).
 
-Please respond with ONLY this JSON (fill in what you know, leave empty string "" for unknown):
+IMPORTANT: Include ALL work experiences, ALL education entries, skills, and generate professional answers for common application questions.
+
+Respond with ONLY this JSON (fill everything you know, leave "" for unknown):
 
 {
   "first_name": "",
   "last_name": "",
   "email": "",
   "phone": "",
+  "pronouns": "he/him",
   "linkedin_url": "",
   "github_url": "",
   "portfolio_url": "",
-  "current_company": "",
-  "current_title": "",
-  "years_experience": 0,
-  "education_level": "bachelors",
-  "school_name": "",
-  "degree": "",
-  "graduation_year": 0,
-  "work_authorization": "",
-  "requires_sponsorship": false,
-  "gender": "",
-  "race_ethnicity": "",
   "city": "",
   "state": "",
   "zip_code": "",
   "street_address": "",
+
+  "current_company": "",
+  "current_title": "",
+  "years_experience": 0,
+
+  "work_experience": [
+    {"company": "", "title": "", "location": "", "start_date": "Mon YYYY", "end_date": "Present", "achievements": ["bullet 1", "bullet 2", "bullet 3"]},
+    {"company": "", "title": "", "location": "", "start_date": "Mon YYYY", "end_date": "Mon YYYY", "achievements": ["bullet 1", "bullet 2"]}
+  ],
+
+  "education": [
+    {"school": "", "degree": "", "field": "", "start_date": "Mon YYYY", "end_date": "Mon YYYY", "gpa": ""},
+    {"school": "", "degree": "", "field": "", "start_date": "Mon YYYY", "end_date": "Mon YYYY", "gpa": ""}
+  ],
+
+  "skills": ["Python", "PyTorch", "etc"],
+
+  "education_level": "masters",
+  "school_name": "",
+  "degree": "",
+  "graduation_year": 0,
+
+  "work_authorization": "opt",
+  "requires_sponsorship": true,
+  "gender": "male",
+  "race_ethnicity": "asian",
+  "veteran_status": "not_veteran",
+  "disability_status": "no_disability",
+  "hispanic_latino": "no",
+
   "salary_min": 120000,
   "salary_max": 180000,
-  "target_titles": ["AI Engineer", "ML Engineer"],
+  "willing_to_relocate": true,
+
+  "target_titles": ["AI Engineer", "ML Engineer", "Data Scientist"],
   "excluded_companies": [],
+  "preferred_locations": ["United States"],
   "remote_only": false,
-  "auto_apply": true
+  "auto_apply": true,
+
+  "standard_answers": {
+    "why_interested": "3-4 sentence answer about why you're interested in AI/ML roles, referencing your background",
+    "strengths": "3-4 sentence answer about your key technical strengths",
+    "career_goals": "2-3 sentence answer about your career direction",
+    "cover_letter_template": "4-5 sentence cover letter intro referencing your experience and what excites you about the role",
+    "additional_info": "Any relevant info: visa status, publications, certifications, etc."
+  }
 }
 
 Valid values:
 - education_level: "bachelors", "masters", "phd", "other"
 - work_authorization: "us_citizen", "green_card", "h1b", "opt", "tn", "other"
 - gender: "male", "female", "non_binary", "decline"
-- race_ethnicity: "asian", "black", "hispanic", "white", "native_american", "pacific_islander", "two_or_more", "decline"`;
+- race_ethnicity: "asian", "black", "hispanic", "white", "native_american", "pacific_islander", "two_or_more", "decline"
+- veteran_status: "not_veteran", "veteran", "decline"
+- disability_status: "no_disability", "has_disability", "decline"
+
+Include ALL your work experiences (not just current). Include ALL education. Generate real professional answers for standard_answers based on your actual background.`;
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -355,21 +394,28 @@ export default function OnboardingPage() {
         {step === 4 && (
           <div className="space-y-4">
             <h2 className="text-xl font-bold">Job Preferences</h2>
-            <p className="text-sm text-gray-500">Select target roles (click to toggle)</p>
+            <p className="text-sm text-gray-500">Select target roles (click to toggle). AI-suggested roles are pre-selected.</p>
             <div className="flex flex-wrap gap-2">
-              {ROLE_PRESETS.map((title) => (
-                <button
-                  key={title}
-                  onClick={() => toggleTitle(title)}
-                  className={`px-3 py-1 rounded-full text-sm border ${
-                    targetTitles.includes(title)
-                      ? "bg-brand-600 text-white border-brand-600"
-                      : "bg-white text-gray-700 border-gray-300 hover:border-brand-500"
-                  }`}
-                >
-                  {title}
-                </button>
-              ))}
+              {/* Show preset roles + any AI-suggested roles not in presets */}
+              {[...new Set([...ROLE_PRESETS, ...targetTitles])].map((title) => {
+                const isSelected = targetTitles.includes(title);
+                const isCustom = !ROLE_PRESETS.includes(title);
+                return (
+                  <button
+                    key={title}
+                    onClick={() => toggleTitle(title)}
+                    className={`px-3 py-1 rounded-full text-sm border ${
+                      isSelected
+                        ? isCustom
+                          ? "bg-purple-600 text-white border-purple-600"
+                          : "bg-brand-600 text-white border-brand-600"
+                        : "bg-white text-gray-700 border-gray-300 hover:border-brand-500"
+                    }`}
+                  >
+                    {title}{isCustom && isSelected ? " ✨" : ""}
+                  </button>
+                );
+              })}
             </div>
             <input placeholder="Excluded companies (comma separated)" value={excludedCompanies} onChange={(e) => setExcludedCompanies(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
             <input placeholder="Minimum salary (USD)" type="number" value={minSalary} onChange={(e) => setMinSalary(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
