@@ -1411,15 +1411,27 @@ if ($LlmCliCmd -eq "claude") {
         Write-Warn "Could not download launcher — create manually"
     }
 
-    # Create desktop shortcut with admin elevation
+    # Create desktop shortcut with admin elevation + icon
     try {
+        $ShortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "ApplyLoop.lnk"
         $WshShell = New-Object -ComObject WScript.Shell
-        $Shortcut = $WshShell.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "ApplyLoop.lnk"))
+        $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
         $Shortcut.TargetPath = $LauncherInstall
         $Shortcut.WorkingDirectory = $InstallDir
-        $Shortcut.Description = "ApplyLoop — Autonomous Job Application Bot"
+        $Shortcut.Description = "ApplyLoop — AI Job Application Bot. Double-click to start."
+        $Shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,144"
         $Shortcut.Save()
-        Write-OK "Desktop shortcut created (ApplyLoop.lnk)"
+
+        # Set "Run as administrator" flag in shortcut binary
+        $bytes = [System.IO.File]::ReadAllBytes($ShortcutPath)
+        $bytes[0x15] = $bytes[0x15] -bor 0x20
+        [System.IO.File]::WriteAllBytes($ShortcutPath, $bytes)
+
+        # Also add to Start Menu
+        $StartMenuPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\ApplyLoop.lnk"
+        Copy-Item $ShortcutPath $StartMenuPath -Force 2>$null
+
+        Write-OK "ApplyLoop shortcut on Desktop + Start Menu (runs as admin, with icon)"
     } catch {
         Write-Warn "Could not create shortcut — use the .bat file directly"
     }

@@ -1475,15 +1475,26 @@ if [[ -n "$CLI_CMD" ]]; then
     export OPENAI_API_KEY="$LLM_API_KEY"
   fi
 
+  # Create macOS .app bundle on Desktop
+  log_info "Creating ApplyLoop.app on Desktop..."
+  CREATE_APP="$INSTALL_DIR/packages/web/public/setup/create-mac-app.sh"
+  [[ ! -f "$CREATE_APP" ]] && CREATE_APP="$INSTALL_DIR/repo/packages/web/public/setup/create-mac-app.sh"
+  if [[ -f "$CREATE_APP" ]]; then
+    bash "$CREATE_APP" "$INSTALL_DIR"
+  else
+    # Download and run
+    curl -s "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/web/public/setup/create-mac-app.sh" | bash -s "$INSTALL_DIR"
+  fi
+
   # exec replaces the shell — this is the final action
   if [[ "$CLI_CMD" == "claude" ]]; then
     echo ""
     echo -e "  ${GREEN}=============================================${NC}"
-    echo -e "  ${GREEN}SETUP COMPLETE! To start ApplyLoop, run:${NC}"
+    echo -e "  ${GREEN}SETUP COMPLETE!${NC}"
     echo ""
-    echo -e "  ${CYAN}claude --dangerously-skip-permissions --cd $INSTALL_DIR \"Read AGENTS.md. Start scouting and applying.\"${NC}"
-    echo ""
-    echo -e "  ${GREEN}Copy the command above and paste in a NEW terminal window.${NC}"
+    echo -e "  ${GREEN}To start ApplyLoop anytime:${NC}"
+    echo -e "  ${CYAN}  Double-click 'ApplyLoop.app' on your Desktop${NC}"
+    echo -e "  ${CYAN}  Or drag it to your Dock for quick access${NC}"
     echo ""
     echo -e "  ${YELLOW}Tip: The more you interact, the smarter it gets.${NC}"
     echo -e "  ${YELLOW}Correct it early = autopilot later.${NC}"
