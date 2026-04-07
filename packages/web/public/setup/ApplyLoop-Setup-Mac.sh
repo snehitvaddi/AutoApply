@@ -545,7 +545,8 @@ if [[ "$ADVANCED_MODE" == "true" ]]; then
         if check_command claude; then
           log_ok "Claude Code CLI installed"
           log_info "Launching Claude login (browser OAuth)..."
-          claude login 2>/dev/null || log_warn "Claude login skipped — run 'claude login' later"
+          log_info "Skipping Claude auth during setup — you'll sign in on first launch."
+    log_info "When you run the command at the end, Claude will ask you to sign in once."
           LLM_CLI_TOOL="claude"
         fi
       else
@@ -673,13 +674,7 @@ else
 
   if check_command claude; then
     log_ok "Claude Code CLI installed"
-    echo ""
-    echo -e "  ${CYAN}Claude Code needs authentication. A browser will open.${NC}"
-    echo -e "  ${CYAN}Sign in with your Anthropic account (or the admin's account${NC}"
-    echo -e "  ${CYAN}if the admin is setting this up for you).${NC}"
-    echo -e "  ${CYAN}After signing in, copy the auth code and paste it here.${NC}"
-    echo ""
-    claude login 2>/dev/null || log_warn "Claude login skipped — run 'claude login' later"
+    log_info "Claude auth happens on first launch — not during setup."
     LLM_CLI_TOOL="claude"
   else
     log_warn "Claude Code install failed — install manually: npm install -g @anthropic-ai/claude-code"
@@ -692,7 +687,7 @@ else
   if check_command codex; then
     log_ok "Codex CLI installed (Level 2)"
     log_info "Authenticating Codex (browser will open)..."
-    codex auth 2>/dev/null || log_warn "Codex auth skipped — run 'codex auth' later"
+    log_info "Skipping Codex auth during setup — OpenClaw handles auth separately."
   else
     log_warn "Codex CLI install failed — install manually: npm install -g @openai/codex"
   fi

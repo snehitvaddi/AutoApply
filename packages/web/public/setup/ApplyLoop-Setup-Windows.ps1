@@ -695,10 +695,7 @@ if ($AdvancedMode) {
                 Write-OK "Claude Code CLI installed"
                 $LlmCliCmd = "claude"
                 if ($LlmAccessType -eq "subscription") {
-                    Write-Info "Launching Claude login (browser will open)..."
-                    $ErrorActionPreference = "Continue"
-                    claude login 2>&1 | Write-Host
-                    $ErrorActionPreference = "Stop"
+                    Write-Info "Claude auth happens on first launch — not during setup."
                 } else {
                     if ($LlmApiKey) {
                         $env:ANTHROPIC_API_KEY = $LlmApiKey
@@ -780,19 +777,7 @@ if ($AdvancedMode) {
 
     if (Test-CommandExists "claude") {
         Write-OK "Claude Code CLI installed"
-        Write-Host ""
-        Write-Host "  Claude Code needs authentication. A browser will open." -ForegroundColor Cyan
-        Write-Host "  Sign in with your Anthropic account (or the admin's account" -ForegroundColor Cyan
-        Write-Host "  if the admin is setting this up for you)." -ForegroundColor Cyan
-        Write-Host "  After signing in, copy the auth code and paste it here." -ForegroundColor Cyan
-        Write-Host ""
-        $ErrorActionPreference = "Continue"
-        try {
-            claude.cmd login 2>&1 | Write-Host
-        } catch {
-            Write-Warn "Claude login failed. Run this after setup: claude login"
-        }
-        $ErrorActionPreference = "Stop"
+        Write-Info "Claude auth happens on first launch — not during setup."
         $LlmCliCmd = "claude"
     } else {
         Write-Warn "Claude Code install failed — install manually: npm install -g @anthropic-ai/claude-code"
@@ -807,14 +792,7 @@ if ($AdvancedMode) {
 
     if (Test-CommandExists "codex") {
         Write-OK "Codex CLI installed (Level 2)"
-        Write-Info "Authenticating Codex (browser will open)..."
-        $ErrorActionPreference = "Continue"
-        try {
-            Start-Process -FilePath "codex" -ArgumentList "auth" -NoNewWindow -Wait -ErrorAction SilentlyContinue 2>$null
-        } catch {
-            Write-Warn "Codex auth failed. After setup, run: codex auth"
-        }
-        $ErrorActionPreference = "Stop"
+        Write-Info "Codex auth happens via OpenClaw — not during setup."
     } else {
         Write-Warn "Codex CLI install failed — install manually: npm install -g @openai/codex"
     }
