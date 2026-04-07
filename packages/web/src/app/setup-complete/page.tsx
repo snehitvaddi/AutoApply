@@ -54,28 +54,37 @@ export default function SetupCompletePage() {
           <h2 className="text-lg font-semibold">Download Setup Script</h2>
 
           {/* macOS */}
-          <div className={`border rounded-lg p-4 flex items-center justify-between ${
+          <div className={`border rounded-lg p-4 ${
             os === "mac" ? "border-brand-500 bg-brand-50" : "border-gray-200"
           }`}>
-            <div className="flex items-center gap-3">
-              <div className="text-2xl">&#63743;</div>
-              <div>
-                <p className="font-medium">macOS</p>
-                <p className="text-sm text-gray-500">Bash script — requires Homebrew</p>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-2xl">&#63743;</div>
+                <div>
+                  <p className="font-medium">macOS</p>
+                  <p className="text-sm text-gray-500">Paste in Terminal — no download needed</p>
+                </div>
+                {os === "mac" && (
+                  <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">
+                    Detected
+                  </span>
+                )}
               </div>
-              {os === "mac" && (
-                <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">
-                  Detected
-                </span>
-              )}
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText("curl -fsSL https://applyloop.vercel.app/setup/setup-mac.sh | bash");
+                }}
+                className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
+              >
+                Copy Command
+              </button>
             </div>
-            <a
-              href="/setup/setup-mac.sh"
-              download="setup-mac.sh"
-              className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
-            >
-              Download .sh
-            </a>
+            <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 mt-3 overflow-x-auto">
+{`curl -fsSL https://applyloop.vercel.app/setup/setup-mac.sh | bash`}
+            </pre>
+            <p className="text-xs text-gray-500 mt-2">
+              Open Terminal (Cmd+Space → &quot;Terminal&quot;) and paste. No Gatekeeper warning.
+            </p>
           </div>
 
           {/* Windows — .bat launcher (recommended) */}
