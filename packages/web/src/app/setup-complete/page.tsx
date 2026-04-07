@@ -57,73 +57,60 @@ export default function SetupCompletePage() {
           <div className={`border rounded-lg p-4 ${
             os === "mac" ? "border-brand-500 bg-brand-50" : "border-gray-200"
           }`}>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
                 <div className="text-2xl">&#63743;</div>
                 <div>
                   <p className="font-medium">macOS</p>
-                  <p className="text-sm text-gray-500">Paste in Terminal — no download needed</p>
+                  <p className="text-sm text-gray-500">Paste one command in Terminal</p>
                 </div>
                 {os === "mac" && (
-                  <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">
-                    Detected
-                  </span>
+                  <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">Detected</span>
                 )}
               </div>
               <button
                 onClick={() => {
-                  navigator.clipboard.writeText("curl -fsSL https://applyloop.vercel.app/setup/setup-mac.sh | bash");
+                  navigator.clipboard.writeText("curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh | bash");
                 }}
                 className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
               >
                 Copy Command
               </button>
             </div>
-            <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 mt-3 overflow-x-auto">
-{`curl -fsSL https://applyloop.vercel.app/setup/setup-mac.sh | bash`}
+            <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto">
+{`curl -fsSL https://applyloop.vercel.app/setup/ApplyLoop-Setup-Mac.sh | bash`}
             </pre>
-            <p className="text-xs text-gray-500 mt-2">
-              Open Terminal (Cmd+Space → &quot;Terminal&quot;) and paste. No Gatekeeper warning.
-            </p>
+            <p className="text-xs text-gray-500 mt-2">Open Terminal (Cmd+Space → &quot;Terminal&quot;) → paste → Enter. No download needed.</p>
           </div>
 
-          {/* Windows — .bat launcher (recommended) */}
+          {/* Windows */}
           <div className={`border rounded-lg p-4 ${
             os === "windows" ? "border-brand-500 bg-brand-50" : "border-gray-200"
           }`}>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
                 <div className="text-2xl">&#9783;</div>
                 <div>
                   <p className="font-medium">Windows</p>
-                  <p className="text-sm text-gray-500">Double-click to run — no extra steps</p>
+                  <p className="text-sm text-gray-500">Download and double-click</p>
                 </div>
                 {os === "windows" && (
-                  <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">
-                    Detected
-                  </span>
+                  <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">Detected</span>
                 )}
               </div>
-              <div className="flex gap-2">
-                <a
-                  href="/setup/install.bat"
-                  download="install.bat"
-                  className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
-                >
-                  Download .bat
-                </a>
-                <a
-                  href="/setup/setup-windows.ps1"
-                  download="setup-windows.ps1"
-                  className="px-3 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
-                >
-                  .ps1
-                </a>
-              </div>
+              <a
+                href="/setup/ApplyLoop.bat"
+                download="ApplyLoop.bat"
+                className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
+              >
+                Download ApplyLoop.bat
+              </a>
             </div>
-            <p className="text-xs text-gray-500 mt-2 ml-9">
-              Use the <strong>.bat</strong> file (recommended) — it works without Smart App Control issues.
-              Right-click → <em>Run as administrator</em>.
+            <p className="text-xs text-gray-500">
+              Right-click → <em>Run as administrator</em>. Downloads the setup script and runs it automatically.
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              If blocked: paste in PowerShell (Admin): <code className="bg-gray-100 px-1 rounded">irm https://applyloop.vercel.app/setup/ApplyLoop-Setup-Windows.ps1 | iex</code>
             </p>
           </div>
         </div>
@@ -131,81 +118,25 @@ export default function SetupCompletePage() {
         {/* Telegram setup */}
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-8">
           <h3 className="font-semibold text-purple-900 mb-2">Enable Telegram Notifications (Recommended)</h3>
-          <p className="text-sm text-purple-800 mb-3">
-            Get real-time notifications with screenshots every time an application is submitted.
-          </p>
+          <p className="text-sm text-purple-800 mb-2">Get screenshot proof for every application submitted.</p>
           <ol className="text-sm text-purple-800 space-y-1 list-decimal list-inside mb-3">
-            <li>
-              Open{" "}
-              <a
-                href="https://t.me/ApplyLoopBot"
-                target="_blank"
-                rel="noopener"
-                className="underline font-medium"
-              >
-                t.me/ApplyLoopBot
-              </a>{" "}
-              in Telegram
-            </li>
-            <li>Send <span className="font-mono">/start</span> to the bot</li>
-            <li>Copy the <strong>Chat ID</strong> it replies with</li>
-            <li>Paste it in <strong>Settings &rarr; Telegram</strong> on your dashboard</li>
+            <li>Open <a href="https://t.me/ApplyLoopBot" target="_blank" rel="noopener" className="underline font-medium">t.me/ApplyLoopBot</a> in Telegram</li>
+            <li>Send <span className="font-mono">/start</span></li>
+            <li>Copy the <strong>Chat ID</strong></li>
+            <li>Paste in <strong>Settings → Telegram</strong></li>
           </ol>
-          <a
-            href="https://t.me/ApplyLoopBot"
-            target="_blank"
-            rel="noopener"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700"
-          >
-            Open ApplyLoopBot in Telegram
-          </a>
         </div>
 
-        {/* After setup — one-click launcher */}
+        {/* After setup */}
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-          <h3 className="font-semibold text-green-900 mb-2">After setup — one-click start</h3>
-          <p className="text-sm text-green-800 mb-3">
-            Setup creates an <strong>ApplyLoop.bat</strong> on your Desktop (Windows) or <strong>ApplyLoop.command</strong> (Mac).
-            Double-click it anytime to start the bot — it auto-updates, launches Claude Code, and begins scouting.
+          <h3 className="font-semibold text-green-900 mb-2">After setup — daily start</h3>
+          <p className="text-sm text-green-800">
+            <strong>Windows:</strong> Double-click <code>ApplyLoop.bat</code> on your Desktop.<br/>
+            <strong>Mac:</strong> Open Terminal → run <code>claude --dangerously-skip-permissions --cd ~/ApplyLoop &quot;Read AGENTS.md. Start.&quot;</code>
           </p>
-          <div className="flex gap-2">
-            <a href="/setup/ApplyLoop.bat" download="ApplyLoop.bat"
-              className="px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700">
-              Download ApplyLoop.bat (Windows)
-            </a>
-            <a href="/setup/ApplyLoop.command" download="ApplyLoop.command"
-              className="px-3 py-1.5 border border-green-600 text-green-700 rounded text-xs font-medium hover:bg-green-50">
-              Download ApplyLoop.command (Mac)
-            </a>
-          </div>
-        </div>
-
-        {/* Run instructions */}
-        <div className="bg-gray-50 rounded-lg p-4 mb-8">
-          <h3 className="font-semibold mb-3">First-time setup</h3>
-
-          <div className="space-y-4">
-            <div>
-              <p className="text-sm font-medium text-gray-700 mb-1">macOS / Linux:</p>
-              <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto">
-{`chmod +x setup-mac.sh
-./setup-mac.sh`}
-              </pre>
-            </div>
-
-            <div>
-              <p className="text-sm font-medium text-gray-700 mb-1">Windows (recommended — .bat file):</p>
-              <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto">
-{`Right-click install.bat → "Run as administrator"`}
-              </pre>
-              <p className="text-xs text-gray-500 mt-2">
-                Or paste this into PowerShell (Admin) if .bat is also blocked:
-              </p>
-              <pre className="bg-gray-900 text-green-400 text-sm rounded-lg p-3 overflow-x-auto mt-1">
-{`irm https://applyloop.vercel.app/setup/setup-windows.ps1 | iex`}
-              </pre>
-            </div>
-          </div>
+          <p className="text-xs text-green-700 mt-2">
+            Each launch auto-pulls the latest updates from the admin.
+          </p>
         </div>
 
         {/* Requirements note */}

@@ -918,7 +918,7 @@ if ($ScriptDir -and (Test-Path (Join-Path $ScriptDir "update-windows.ps1"))) {
 } else {
     # Download from hosted URL
     try {
-        Invoke-WebRequest -Uri "https://applyloop.vercel.app/setup/update-windows.ps1" -OutFile $UpdateScript -UseBasicParsing -ErrorAction SilentlyContinue
+        Invoke-WebRequest -Uri "https://applyloop.vercel.app/setup/ApplyLoop-Update-Windows.ps1" -OutFile $UpdateScript -UseBasicParsing -ErrorAction SilentlyContinue
     } catch { }
 }
 

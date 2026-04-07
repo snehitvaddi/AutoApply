@@ -779,11 +779,11 @@ UPDATE_SCRIPT="$INSTALL_DIR/update.sh"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/update-mac.sh" ]; then
   cp "$SCRIPT_DIR/update-mac.sh" "$UPDATE_SCRIPT"
-elif [ -f "$INSTALL_DIR/packages/web/public/setup/update-mac.sh" ]; then
-  cp "$INSTALL_DIR/packages/web/public/setup/update-mac.sh" "$UPDATE_SCRIPT"
+elif [ -f "$INSTALL_DIR/packages/web/public/setup/ApplyLoop-Update-Mac.sh" ]; then
+  cp "$INSTALL_DIR/packages/web/public/setup/ApplyLoop-Update-Mac.sh" "$UPDATE_SCRIPT"
 else
   # Download from the hosted URL
-  curl -fsSL "https://applyloop.vercel.app/setup/update-mac.sh" -o "$UPDATE_SCRIPT" 2>/dev/null || true
+  curl -fsSL "https://applyloop.vercel.app/setup/ApplyLoop-Update-Mac.sh" -o "$UPDATE_SCRIPT" 2>/dev/null || true
 fi
 
 if [ -f "$UPDATE_SCRIPT" ]; then
