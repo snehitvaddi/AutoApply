@@ -361,43 +361,42 @@ else
   fi
 fi
 
-# AgentMail API key
+# AgentMail API key (saved to .env later when .env is created)
+AM_KEY=""
 read -p "  AgentMail API key (from agentmail.to, or Enter to skip): " AM_KEY
 if [[ -n "$AM_KEY" ]]; then
-  # Test AgentMail API key
+  # Test AgentMail API key (save to .env happens later when .env is created)
   log_info "Testing AgentMail API key..."
   AM_TEST=$(curl -s -o /dev/null -w "%{http_code}" "https://api.agentmail.to/v0/inboxes" -H "Authorization: Bearer $AM_KEY" 2>/dev/null)
   if [[ "$AM_TEST" == "200" ]]; then
-    echo "AGENTMAIL_API_KEY=$AM_KEY" >> "$ENV_FILE"
-    log_ok "AgentMail API key verified and saved to .env"
+    log_ok "AgentMail API key verified! Will save to .env during config step."
   elif [[ "$AM_TEST" == "403" ]]; then
     log_warn "AgentMail API key is INVALID (403 Forbidden). Check your key at agentmail.to/dashboard"
     read -p "  Retry with correct key (or Enter to skip): " AM_KEY_RETRY
     if [[ -n "$AM_KEY_RETRY" ]]; then
       AM_TEST2=$(curl -s -o /dev/null -w "%{http_code}" "https://api.agentmail.to/v0/inboxes" -H "Authorization: Bearer $AM_KEY_RETRY" 2>/dev/null)
       if [[ "$AM_TEST2" == "200" ]]; then
-        echo "AGENTMAIL_API_KEY=$AM_KEY_RETRY" >> "$ENV_FILE"
+        AM_KEY="$AM_KEY_RETRY"
         log_ok "AgentMail API key verified on retry"
       else
+        AM_KEY=""
         log_warn "Still invalid — skipping AgentMail. Add AGENTMAIL_API_KEY to .env later."
       fi
+    else
+      AM_KEY=""
     fi
   else
-    # Could be network issue — save anyway
-    echo "AGENTMAIL_API_KEY=$AM_KEY" >> "$ENV_FILE"
-    log_warn "Could not verify AgentMail (HTTP $AM_TEST) — saved anyway. Check connectivity."
+    log_warn "Could not verify AgentMail (HTTP $AM_TEST) — will save anyway."
   fi
 fi
 
-# Finetune Resume URL + API Key
+# Finetune Resume URL + API Key (saved to .env later)
+FT_URL=""
+FT_KEY=""
 read -p "  Finetune Resume API URL (or Enter to skip): " FT_URL
 if [[ -n "$FT_URL" ]]; then
-  echo "FINETUNE_RESUME_URL=$FT_URL" >> "$ENV_FILE"
   read -p "  Finetune Resume API Key (or Enter to skip): " FT_KEY
-  if [[ -n "$FT_KEY" ]]; then
-    echo "FINETUNE_RESUME_API_KEY=$FT_KEY" >> "$ENV_FILE"
-  fi
-  log_ok "Finetune Resume config saved to .env"
+  log_ok "Finetune Resume config captured. Will save to .env during config step."
 fi
 
 echo ""
@@ -799,6 +798,13 @@ SCREENSHOT_DIR=/tmp/applyloop/screenshots
 # Telegram (auto-configured from admin)
 TELEGRAM_BOT_TOKEN=$TELEGRAM_TOKEN
 TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID
+
+# AgentMail (optional — for disposable email verification)
+AGENTMAIL_API_KEY=$AM_KEY
+
+# Finetune Resume (optional — for per-job resume tailoring)
+FINETUNE_RESUME_URL=$FT_URL
+FINETUNE_RESUME_API_KEY=$FT_KEY
 ENVEOF
 
   log_ok ".env file created at $ENV_FILE"
