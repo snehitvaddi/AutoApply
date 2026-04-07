@@ -81,6 +81,45 @@ Write-Host "  8. Configure LLM provider + install AI CLI"
 Write-Host "  9. Generate setup context (AGENTS.md)"
 Write-Host "  10. Launch AI assistant to complete setup"
 Write-Host ""
+Write-Host ""
+Write-Host "  Before we begin, enter your worker token to verify access." -ForegroundColor White
+Write-Host "  (Get this from the admin who approved your account.)" -ForegroundColor Cyan
+Write-Host ""
+$WorkerTokenInit = Read-Host "  Worker token"
+
+if (-not $WorkerTokenInit) {
+    Write-Host ""
+    Write-Host "  No token entered. Setup cannot continue without a valid worker token." -ForegroundColor Red
+    Write-Host "  Contact the admin to get your token from applyloop.vercel.app/admin" -ForegroundColor Red
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+# Verify token with the API
+Write-Host "  Verifying token..." -ForegroundColor Cyan
+$AppUrl = "https://applyloop.vercel.app"
+try {
+    $tokenResp = Invoke-WebRequest -Uri "$AppUrl/api/worker/auth" -Method POST `
+        -Body (@{token = $WorkerTokenInit} | ConvertTo-Json) `
+        -ContentType "application/json" -UseBasicParsing -ErrorAction Stop
+    Write-Host "  ✓ Token verified — you're authorized. Starting setup..." -ForegroundColor Green
+} catch {
+    $status = $_.Exception.Response.StatusCode.value__
+    Write-Host ""
+    Write-Host "  ✗ Invalid or expired token (HTTP $status)." -ForegroundColor Red
+    Write-Host "    1. Token was revoked by admin" -ForegroundColor Red
+    Write-Host "    2. Token was mistyped — check for extra spaces" -ForegroundColor Red
+    Write-Host "    3. You need a new token from the admin" -ForegroundColor Red
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+# Store token for later use in .env creation
+$global:VerifiedWorkerToken = $WorkerTokenInit
+
+Write-Host ""
 Write-Host "Estimated time: 5-10 minutes" -ForegroundColor Yellow
 Write-Host ""
 Read-Host "Press Enter to continue (or Ctrl+C to cancel)"
@@ -812,12 +851,13 @@ $SupabaseUrl = "https://vegcqubtypvdqlduxhqv.supabase.co"
 $SupabaseAnon = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlZ2NxdWJ0eXB2ZHFsZHV4aHF2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3NTkyOTYsImV4cCI6MjA4OTMzNTI5Nn0.MJ24A6INzw2dOkv-TZUchM5WGPI2ZG-WxpEy-GROjfw"
 
 if (-not (Test-Path $EnvFile)) {
-    Write-Host ""
-    Write-Host "  Enter your worker token (provided by admin after approval)." -ForegroundColor Cyan
-    $WorkerToken = Read-Host "  Worker token"
-
+    # Use the token already verified at startup
+    $WorkerToken = $global:VerifiedWorkerToken
     if (-not $WorkerToken) {
-        Write-Warn "No worker token provided. You can add it to .env later."
+        Write-Host "  Enter your worker token (provided by admin after approval)." -ForegroundColor Cyan
+        $WorkerToken = Read-Host "  Worker token"
+    } else {
+        Write-OK "Using verified worker token from startup"
     }
 
     # Fetch profile + telegram config from API using worker token

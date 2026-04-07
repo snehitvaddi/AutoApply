@@ -71,6 +71,39 @@ install_or_update_brew() {
 
 print_banner
 
+echo ""
+echo -e "${BOLD}Before we begin, enter your worker token to verify access.${NC}"
+echo -e "${CYAN}(Get this from the admin who approved your account.)${NC}"
+echo ""
+read -p "  Worker token: " WORKER_TOKEN
+
+if [[ -z "$WORKER_TOKEN" ]]; then
+  echo -e "${RED}  No token entered. Setup cannot continue without a valid worker token.${NC}"
+  echo -e "${RED}  Contact the admin to get your token from applyloop.vercel.app/admin${NC}"
+  exit 1
+fi
+
+# Verify token with the API
+echo -e "  ${CYAN}→${NC} Verifying token..."
+APP_URL="https://applyloop.vercel.app"
+TOKEN_CHECK=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$APP_URL/api/worker/auth" \
+  -H "Content-Type: application/json" \
+  -d "{\"token\": \"$WORKER_TOKEN\"}" 2>/dev/null)
+
+if [[ "$TOKEN_CHECK" == "200" ]]; then
+  echo -e "  ${GREEN}✓${NC} Token verified — you're authorized. Starting setup..."
+else
+  echo ""
+  echo -e "  ${RED}✗ Invalid or expired token (HTTP $TOKEN_CHECK).${NC}"
+  echo -e "  ${RED}  Possible causes:${NC}"
+  echo -e "  ${RED}  1. Token was revoked by admin${NC}"
+  echo -e "  ${RED}  2. Token was mistyped — check for extra spaces${NC}"
+  echo -e "  ${RED}  3. You need a new token from the admin${NC}"
+  echo ""
+  exit 1
+fi
+
+echo ""
 echo -e "${BOLD}This script will:${NC}"
 echo "  1. Install Homebrew (if missing)"
 echo "  2. Install/verify Python $REQUIRED_PYTHON+"
@@ -81,7 +114,7 @@ echo "  6. Clone ApplyLoop repository"
 echo "  7. Install all dependencies"
 echo "  8. Configure LLM provider + install CLI (Claude Code / Codex)"
 echo "  9. Generate setup status + AGENTS.md"
-echo "  10. Launch LLM CLI for remaining setup (or manual steps)"
+echo "  10. Launch LLM CLI for remaining setup"
 echo ""
 echo -e "${YELLOW}Estimated time: 5-10 minutes${NC}"
 echo ""
@@ -677,9 +710,14 @@ if [[ -f "$ENV_FILE" ]]; then
   log_ok ".env file already exists"
   log_info "To reconfigure, delete $ENV_FILE and re-run"
 else
-  echo ""
-  echo -e "  ${BOLD}Enter your worker token (provided by admin after approval).${NC}"
-  read -p "  Worker token: " WORKER_TOKEN
+  # WORKER_TOKEN already verified at startup — reuse it
+  if [[ -z "$WORKER_TOKEN" ]]; then
+    echo ""
+    echo -e "  ${BOLD}Enter your worker token (provided by admin after approval).${NC}"
+    read -p "  Worker token: " WORKER_TOKEN
+  else
+    log_ok "Using verified worker token from startup"
+  fi
 
   # Fetch profile + telegram config from API using worker token
   TELEGRAM_TOKEN=""
