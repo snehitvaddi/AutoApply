@@ -1563,25 +1563,69 @@ if ($LlmCliCmd -eq "claude") {
     }
 
     Write-Host ""
-    Write-Host "  =============================================" -ForegroundColor Green
-    Write-Host "  SETUP COMPLETE!" -ForegroundColor Green
-    Write-Host "" -ForegroundColor Green
-    Write-Host "  To start ApplyLoop:" -ForegroundColor Green
-    Write-Host "    Double-click 'ApplyLoop.bat' on your Desktop" -ForegroundColor Cyan
-    Write-Host "    (or right-click → Run as administrator)" -ForegroundColor Cyan
-    Write-Host "" -ForegroundColor Green
-    Write-Host "  It will:" -ForegroundColor Green
-    Write-Host "    1. Check for latest updates from admin" -ForegroundColor Green
-    Write-Host "    2. Start Claude Code with full permissions" -ForegroundColor Green
-    Write-Host "    3. Begin scouting and applying automatically" -ForegroundColor Green
-    Write-Host "" -ForegroundColor Green
-    Write-Host "  Tip: The more you interact, the smarter it gets." -ForegroundColor Yellow
-    Write-Host "  Correct it early = autopilot later." -ForegroundColor Yellow
-    Write-Host "  =============================================" -ForegroundColor Green
     Write-Host ""
+    Start-Sleep -Milliseconds 300
+    Write-Host "     _                _       _                       " -ForegroundColor Green
+    Start-Sleep -Milliseconds 100
+    Write-Host "    / \   _ __  _ __ | |_   _| |    ___   ___  _ __  " -ForegroundColor Green
+    Start-Sleep -Milliseconds 100
+    Write-Host "   / _ \ | '_ \| '_ \| | | | | |   / _ \ / _ \| '_ \ " -ForegroundColor Green
+    Start-Sleep -Milliseconds 100
+    Write-Host "  / ___ \| |_) | |_) | | |_| | |__| (_) | (_) | |_) |" -ForegroundColor Green
+    Start-Sleep -Milliseconds 100
+    Write-Host " /_/   \_\ .__/| .__/|_|\__, |_____\___/ \___/| .__/ " -ForegroundColor Green
+    Start-Sleep -Milliseconds 100
+    Write-Host "         |_|   |_|      |___/                 |_|    " -ForegroundColor Green
+    Write-Host ""
+    Start-Sleep -Milliseconds 500
 
-    # Launch immediately
-    claude.cmd --dangerously-skip-permissions --cd $InstallDir "You are ApplyLoop. Read AGENTS.md — it contains your complete instructions including SOUL.md. Start the scout→filter→apply loop NOW using openclaw browser commands. Do NOT use web search. Do NOT run worker.py. Call curl and openclaw commands directly."
+    Write-Host "  ✅ SETUP COMPLETE — Everything is installed and configured!" -ForegroundColor Green
+    Write-Host ""
+    Start-Sleep -Milliseconds 300
+
+    Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  📂 Installed at: $InstallDir" -ForegroundColor White
+    Write-Host "  ⚙️  Config:      $InstallDir\.env" -ForegroundColor White
+    Write-Host "  👤 Profile:     $InstallDir\profile.json" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  🚀 HOW TO START APPLYLOOP:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Option 1: Double-click 'ApplyLoop.bat' on your Desktop" -ForegroundColor White
+    Write-Host "            (right-click → Run as administrator)" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Option 2: Open a NEW terminal and paste:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  claude.cmd --dangerously-skip-permissions --cd $InstallDir `"Read AGENTS.md. Start scouting and applying.`"" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  💡 WHAT HAPPENS NEXT:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  You'll see a chat interface — that's your AI job application assistant." -ForegroundColor White
+    Write-Host "  Talk to it like a human. It will:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "    🔍 Scout 500+ companies across 8 job boards every 30 minutes" -ForegroundColor White
+    Write-Host "    🎯 Filter for roles matching YOUR preferences" -ForegroundColor White
+    Write-Host "    📝 Fill out applications with YOUR full profile" -ForegroundColor White
+    Write-Host "    📸 Send you Telegram screenshots as proof" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  🧠 IMPORTANT — First few days:" -ForegroundColor Yellow
+    Write-Host "    The bot learns YOUR style as you use it." -ForegroundColor Yellow
+    Write-Host "    • Correct it when it picks the wrong role" -ForegroundColor Yellow
+    Write-Host "    • Tell it to skip companies you don't want" -ForegroundColor Yellow
+    Write-Host "    • Give feedback on its answers" -ForegroundColor Yellow
+    Write-Host "    By day 3, it runs nearly fully on autopilot." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Next time: just double-click ApplyLoop.bat on Desktop." -ForegroundColor Cyan
+    Write-Host "  It auto-updates on each launch." -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Happy applying! 🎉" -ForegroundColor Green
+    Write-Host ""
 
 } elseif ($LlmCliCmd -eq "codex") {
     Write-OK "Launching Codex to complete setup..."

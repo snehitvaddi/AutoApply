@@ -1604,47 +1604,76 @@ elif [[ "$LLM_PROVIDER" == "openai" ]] && check_command codex; then
 fi
 
 if [[ -n "$CLI_CMD" ]]; then
-  echo ""
-  echo -e "${BOLD}Launching $CLI_CMD to complete setup...${NC}"
-  echo -e "${CYAN}$CLI_CMD will help you finish configuring ApplyLoop.${NC}"
-  echo -e "${CYAN}You can paste credentials, ask questions, or type 'exit' to quit.${NC}"
-  echo ""
+echo ""
+sleep 0.3
+echo -e "  ${GREEN}  ___                _       _                        ${NC}"
+sleep 0.1
+echo -e "  ${GREEN} / _ \\              | |     | |                       ${NC}"
+sleep 0.1
+echo -e "  ${GREEN}/ /_\\ \\_ __  _ __  | |_   _| |     ___   ___  _ __   ${NC}"
+sleep 0.1
+echo -e "  ${GREEN}|  _  | '_ \\| '_ \\ | | | | | |    / _ \\ / _ \\| '_ \\  ${NC}"
+sleep 0.1
+echo -e "  ${GREEN}| | | | |_) | |_) || | |_| | |___| (_) | (_) | |_) | ${NC}"
+sleep 0.1
+echo -e "  ${GREEN}\\_| |_/ .__/| .__/ |_|\\__, \\_____/\\___/ \\___/| .__/  ${NC}"
+sleep 0.1
+echo -e "  ${GREEN}      | |   | |        __/ |                 | |     ${NC}"
+sleep 0.1
+echo -e "  ${GREEN}      |_|   |_|       |___/                  |_|     ${NC}"
+echo ""
+sleep 0.5
 
-  # Export API key so the CLI can use it
-  if [[ "$LLM_PROVIDER" == "anthropic" && -n "$LLM_API_KEY" ]]; then
-    export ANTHROPIC_API_KEY="$LLM_API_KEY"
-  elif [[ "$LLM_PROVIDER" == "openai" && -n "$LLM_API_KEY" ]]; then
-    export OPENAI_API_KEY="$LLM_API_KEY"
-  fi
+echo -e "  ${GREEN}${BOLD}✅ SETUP COMPLETE — Everything is installed and configured!${NC}"
+echo ""
+sleep 0.3
 
-  echo ""
-  echo -e "  ${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-  echo -e "  ${GREEN}║                    SETUP COMPLETE!                           ║${NC}"
-  echo -e "  ${GREEN}╠══════════════════════════════════════════════════════════════╣${NC}"
-  echo -e "  ${GREEN}║                                                              ║${NC}"
-  echo -e "  ${GREEN}║  To start ApplyLoop:                                         ║${NC}"
-  echo -e "  ${GREEN}║                                                              ║${NC}"
-  echo -e "  ${GREEN}║  1. Open a NEW Terminal window                               ║${NC}"
-  echo -e "  ${GREEN}║     (Cmd+Space → type 'Terminal' → Enter)                    ║${NC}"
-  echo -e "  ${GREEN}║                                                              ║${NC}"
-  echo -e "  ${GREEN}║  2. Paste this command:                                      ║${NC}"
-  echo -e "  ${GREEN}║                                                              ║${NC}"
-  echo -e "  ${CYAN}║  claude --dangerously-skip-permissions --cd ~/ApplyLoop \\    ║${NC}"
-  echo -e "  ${CYAN}║    \"Read AGENTS.md. Start scouting and applying.\"            ║${NC}"
-  echo -e "  ${GREEN}║                                                              ║${NC}"
-  echo -e "  ${GREEN}║  3. Press Enter — ApplyLoop starts automatically             ║${NC}"
-  echo -e "  ${GREEN}║                                                              ║${NC}"
-  echo -e "  ${YELLOW}║  Tip: The more you interact, the smarter it gets.            ║${NC}"
-  echo -e "  ${YELLOW}║  Correct it early = autopilot by day 3.                      ║${NC}"
-  echo -e "  ${GREEN}║                                                              ║${NC}"
-  echo -e "  ${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
-  echo ""
-  echo -e "  ${BOLD}Files installed at:${NC} $INSTALL_DIR"
-  echo -e "  ${BOLD}Config:${NC} $INSTALL_DIR/.env"
-  echo -e "  ${BOLD}Profile:${NC} $INSTALL_DIR/profile.json"
-  echo ""
-  echo -e "  ${CYAN}Copy the command above and paste it in a new Terminal to start!${NC}"
-  echo ""
+echo -e "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo -e "  ${BOLD}📂 Installed at:${NC} $INSTALL_DIR"
+echo -e "  ${BOLD}⚙️  Config:${NC}      $INSTALL_DIR/.env"
+echo -e "  ${BOLD}👤 Profile:${NC}     $INSTALL_DIR/profile.json"
+echo ""
+echo -e "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo -e "  ${BOLD}🚀 HOW TO START APPLYLOOP:${NC}"
+echo ""
+echo -e "  ${BOLD}Step 1:${NC} Open a ${BOLD}new${NC} Terminal window"
+echo -e "         ${CYAN}(Press Cmd+Space → type 'Terminal' → hit Enter)${NC}"
+echo ""
+echo -e "  ${BOLD}Step 2:${NC} Paste this command:"
+echo ""
+echo -e "  ${CYAN}${BOLD}  claude --dangerously-skip-permissions --cd ~/ApplyLoop \"Read AGENTS.md. Start scouting and applying.\"${NC}"
+echo ""
+echo -e "  ${BOLD}Step 3:${NC} Press Enter — that's it!"
+echo ""
+echo -e "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo -e "  ${BOLD}💡 WHAT HAPPENS NEXT:${NC}"
+echo ""
+echo -e "  You'll see a chat interface — that's your AI job application assistant."
+echo -e "  Talk to it like a human. It will:"
+echo ""
+echo -e "    🔍 Scout 500+ companies across 8 job boards every 30 minutes"
+echo -e "    🎯 Filter for roles matching YOUR preferences"
+echo -e "    📝 Fill out applications with YOUR full profile"
+echo -e "    📸 Send you Telegram screenshots as proof"
+echo ""
+echo -e "  ${YELLOW}${BOLD}🧠 IMPORTANT — First few days:${NC}"
+echo -e "  ${YELLOW}  The bot learns YOUR style as you use it.${NC}"
+echo -e "  ${YELLOW}  • Correct it when it picks the wrong role${NC}"
+echo -e "  ${YELLOW}  • Tell it to skip companies you don't want${NC}"
+echo -e "  ${YELLOW}  • Give feedback on its answers${NC}"
+echo -e "  ${YELLOW}  By day 3, it runs nearly fully on autopilot.${NC}"
+echo ""
+echo -e "  ${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo -e "  ${CYAN}${BOLD}  Next time you want to run it, just open Terminal and paste${NC}"
+echo -e "  ${CYAN}${BOLD}  the same command above. It auto-updates on each launch.${NC}"
+echo ""
+echo -e "  ${GREEN}${BOLD}  Happy applying! 🎉${NC}"
+echo ""
+
 else
   # No CLI available — show manual next steps
   log_warn "No AI CLI available — showing setup status manually."
