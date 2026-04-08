@@ -1011,9 +1011,12 @@ add_component "check_command node" "Node.js" "$(node --version 2>&1)"
 add_component "check_command npm" "npm" "$(npm --version 2>&1)"
 add_component "check_command git" "Git" "$(git --version 2>&1 | head -1)"
 add_component "check_command openclaw" "OpenClaw CLI" "$(openclaw --version 2>&1 || echo '')"
-add_component "$PYTHON_CMD -c 'import playwright' 2>/dev/null" "Playwright" ""
-add_component "$PYTHON_CMD -c 'import supabase' 2>/dev/null" "Supabase SDK" ""
-add_component "$PYTHON_CMD -c 'import httpx' 2>/dev/null" "httpx" ""
+PW_OK=false; "$PYTHON_CMD" -c "import playwright" 2>/dev/null && PW_OK=true
+SB_OK=false; "$PYTHON_CMD" -c "import supabase" 2>/dev/null && SB_OK=true
+HX_OK=false; "$PYTHON_CMD" -c "import httpx" 2>/dev/null && HX_OK=true
+add_component "$PW_OK" "Playwright" ""
+add_component "$SB_OK" "Supabase SDK" ""
+add_component "$HX_OK" "httpx" ""
 
 # LLM CLI
 if [[ -n "$LLM_CLI_TOOL" ]]; then
