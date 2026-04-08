@@ -773,8 +773,8 @@ profile = {
     'veteran_status': p.get('veteran_status', ''),
     'disability_status': p.get('disability_status', ''),
   },
-  'experience': p.get('work_experience', []),
-  'education': p.get('education', []),
+  'experience': p.get('work_experience', []) if p.get('work_experience') else [{'company': p.get('current_company',''), 'title': p.get('current_title',''), 'end_date': 'Present'}] if p.get('current_company') else [],
+  'education': p.get('education', []) if p.get('education') else [{'school': p.get('school_name',''), 'degree': p.get('degree',''), 'end_date': str(p.get('graduation_year',''))}] if p.get('school_name') else [],
   'education_summary': {
     'education_level': p.get('education_level', ''),
     'school_name': p.get('school_name', ''),

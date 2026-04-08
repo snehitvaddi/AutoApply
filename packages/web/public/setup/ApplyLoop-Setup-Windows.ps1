@@ -878,8 +878,8 @@ if (-not (Test-Path $EnvFile)) {
                         veteran_status = if ($p.veteran_status) { $p.veteran_status } else { "" }
                         disability_status = if ($p.disability_status) { $p.disability_status } else { "" }
                     }
-                    experience = if ($p.work_experience) { $p.work_experience } else { @() }
-                    education = if ($p.education) { $p.education } else { @() }
+                    experience = if ($p.work_experience -and $p.work_experience.Count -gt 0) { $p.work_experience } elseif ($p.current_company) { @(@{company=$p.current_company; title=$p.current_title; end_date="Present"}) } else { @() }
+                    education = if ($p.education -and $p.education.Count -gt 0) { $p.education } elseif ($p.school_name) { @(@{school=$p.school_name; degree=$p.degree; end_date=if($p.graduation_year){[string]$p.graduation_year}else{""}}) } else { @() }
                     education_summary = @{
                         education_level = if ($p.education_level) { $p.education_level } else { "" }
                         school_name = if ($p.school_name) { $p.school_name } else { "" }
