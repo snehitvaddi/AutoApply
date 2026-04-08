@@ -51,6 +51,35 @@ export async function GET(request: NextRequest) {
 
   const user = userResult.data;
 
+  // Build profile with fallback arrays from flat fields
+  const profile = profileResult.data || {};
+  const p = profile as Record<string, unknown>;
+
+  // If work_experience[] is empty but flat fields exist, build array from flat fields
+  if ((!p.work_experience || (Array.isArray(p.work_experience) && p.work_experience.length === 0)) && p.current_company) {
+    p.work_experience = [{
+      company: p.current_company || "",
+      title: p.current_title || "",
+      location: "",
+      start_date: "",
+      end_date: "Present",
+      current: true,
+      achievements: [],
+    }];
+  }
+
+  // If education[] is empty but flat fields exist, build array from flat fields
+  if ((!p.education || (Array.isArray(p.education) && p.education.length === 0)) && p.school_name) {
+    p.education = [{
+      school: p.school_name || "",
+      degree: p.degree || "",
+      field: "",
+      start_date: "",
+      end_date: p.graduation_year ? String(p.graduation_year) : "",
+      gpa: "",
+    }];
+  }
+
   const response: Record<string, unknown> = {
     ai_cli_mode: user.ai_cli_mode || "own_account",
     tier: user.tier,
@@ -59,7 +88,7 @@ export async function GET(request: NextRequest) {
       email: user.email,
       full_name: user.full_name,
     },
-    profile: profileResult.data || {},
+    profile: p,
     preferences: preferencesResult.data || {},
     resumes: resumesResult.data || [],
     supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL,
