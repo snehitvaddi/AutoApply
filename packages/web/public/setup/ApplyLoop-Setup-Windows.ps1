@@ -1572,7 +1572,7 @@ if ($LlmCliCmd -eq "claude") {
     Write-Host ""
     Write-Host "  Option 2: Open a NEW terminal and paste:" -ForegroundColor White
     Write-Host ""
-    Write-Host "  claude.cmd --dangerously-skip-permissions --cd $InstallDir `"Read AGENTS.md. Start scouting and applying.`"" -ForegroundColor Cyan
+    Write-Host "  cd $InstallDir && claude.cmd --dangerously-skip-permissions `"Read AGENTS.md. Start scouting and applying.`"" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
     Write-Host ""

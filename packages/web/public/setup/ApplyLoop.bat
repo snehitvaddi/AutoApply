@@ -66,7 +66,7 @@ echo   (This window will stay open while ApplyLoop runs)
 echo.
 
 cd /d "%INSTALL_DIR%"
-claude.cmd --dangerously-skip-permissions --cd "%INSTALL_DIR%" "Read AGENTS.md. You are ApplyLoop. IMPORTANT: On Windows, if openclaw browser fill doesn't work on React forms (Ashby), use CDP direct connection on port 18800 with Input.insertText instead. If openclaw browser upload fails with path error, copy resume to %%TEMP%%\openclaw\uploads\ first. Start the jiggler, then begin the scout→filter→apply loop."
+claude.cmd --dangerously-skip-permissions "Read AGENTS.md. You are ApplyLoop. IMPORTANT: On Windows, if openclaw browser fill doesn't work on React forms (Ashby), use CDP direct connection on port 18800 with Input.insertText instead. If openclaw browser upload fails with path error, copy resume to %%TEMP%%\openclaw\uploads\ first. Start the jiggler, then begin the scout→filter→apply loop."
 
 echo.
 echo   ApplyLoop stopped.

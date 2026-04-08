@@ -140,7 +140,7 @@ export default function SetupCompletePage() {
           <h3 className="font-semibold text-green-900 mb-2">After setup — daily start</h3>
           <p className="text-sm text-green-800">
             <strong>Windows:</strong> Double-click <code>ApplyLoop.bat</code> on your Desktop.<br/>
-            <strong>Mac:</strong> Open Terminal → run <code>claude --dangerously-skip-permissions --cd ~/ApplyLoop &quot;Read AGENTS.md. Start.&quot;</code>
+            <strong>Mac:</strong> Open Terminal → run <code>cd ~/ApplyLoop && claude --dangerously-skip-permissions &quot;Read AGENTS.md. Start.&quot;</code>
           </p>
           <p className="text-xs text-green-700 mt-2">
             Each launch auto-pulls the latest updates from the admin.

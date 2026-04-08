@@ -1639,7 +1639,7 @@ echo -e "         ${CYAN}(Press Cmd+Space → type 'Terminal' → hit Enter)${NC
 echo ""
 echo -e "  ${BOLD}Step 2:${NC} Paste this command:"
 echo ""
-echo -e "  ${CYAN}${BOLD}  claude --dangerously-skip-permissions --cd ~/ApplyLoop \"Read AGENTS.md. Start scouting and applying.\"${NC}"
+echo -e "  ${CYAN}${BOLD}  cd ~/ApplyLoop && claude --dangerously-skip-permissions \"Read AGENTS.md. Start scouting and applying.\"${NC}"
 echo ""
 echo -e "  ${BOLD}Step 3:${NC} Press Enter — that's it!"
 echo ""
