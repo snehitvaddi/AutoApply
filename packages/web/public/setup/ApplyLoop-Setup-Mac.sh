@@ -1028,9 +1028,9 @@ if [[ -f "$ENV_FILE" ]]; then
   L1_PROV=$(grep "^LLM_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
   L2_PROV=$(grep "^LLM_BACKEND_PROVIDER=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
 fi
-[[ "$L1_PROV" == "anthropic" || "$L2_PROV" == "anthropic" ]] && add_component "$PYTHON_CMD -c 'import anthropic' 2>/dev/null" "Anthropic SDK" ""
-[[ "$L1_PROV" == "openai" || "$L2_PROV" == "openai" ]] && add_component "$PYTHON_CMD -c 'import openai' 2>/dev/null" "OpenAI SDK" ""
-[[ "$L1_PROV" == "google" || "$L2_PROV" == "google" ]] && add_component "$PYTHON_CMD -c 'import google.generativeai' 2>/dev/null" "Google AI SDK" ""
+ANTHROPIC_OK=false; "$PYTHON_CMD" -c "import anthropic" 2>/dev/null && ANTHROPIC_OK=true; add_component "$ANTHROPIC_OK" "Anthropic SDK" ""
+OPENAI_OK=false; "$PYTHON_CMD" -c "import openai" 2>/dev/null && OPENAI_OK=true; add_component "$OPENAI_OK" "OpenAI SDK" ""
+GOOGLE_OK=false; "$PYTHON_CMD" -c "import google" 2>/dev/null && GOOGLE_OK=true; add_component "$GOOGLE_OK" "Google AI SDK" ""
 [[ "$L1_PROV" == "ollama" || "$L2_PROV" == "ollama" ]] && add_component "check_command ollama" "Ollama" ""
 
 # --- Config checks ---
@@ -1038,6 +1038,8 @@ add_config() {
   local key=$1 label=$2
   if [[ -f "$ENV_FILE" ]] && grep -q "^${key}=.\+" "$ENV_FILE" 2>/dev/null; then
     STATUS_CONFIG+=("[SET]     $label")
+  elif [[ "$label" == *"not needed"* || "$label" == *"optional"* ]]; then
+    STATUS_CONFIG+=("[SKIP]    $label")
   else
     STATUS_CONFIG+=("[NOT SET] $label  <-- action needed")
   fi
@@ -1107,7 +1109,7 @@ elif ! (openclaw status 2>&1 | grep -qi "pro\|active\|licensed" 2>/dev/null); th
 fi
 
 if ! [[ -f "$INSTALL_DIR/packages/worker/worker.py" ]]; then
-  add_todo "(required) Clone the ApplyLoop repo (private — ask admin for access)"
+  add_todo "(required) Clone the repo: git clone https://github.com/snehitvaddi/AutoApply.git $INSTALL_DIR/repo && cp -r $INSTALL_DIR/repo/* $INSTALL_DIR/"
 fi
 
 if [[ "$LLM_PROVIDER" == "none" && "$LLM_BACKEND_PROVIDER" == "none" ]]; then
@@ -1311,9 +1313,9 @@ status_line "check_command node" "Node.js" "$(node --version 2>&1)"
 status_line "check_command npm" "npm" "$(npm --version 2>&1)"
 status_line "check_command git" "Git" "$(git --version 2>&1 | head -1)"
 status_line "check_command openclaw" "OpenClaw CLI" "$(openclaw --version 2>&1 || echo '')"
-status_line "$PYTHON_CMD -c 'import playwright' 2>/dev/null" "Playwright" ""
-status_line "$PYTHON_CMD -c 'import supabase' 2>/dev/null" "Supabase SDK" ""
-status_line "$PYTHON_CMD -c 'import httpx' 2>/dev/null" "httpx" ""
+PLAYWRIGHT_CHK=false; "$PYTHON_CMD" -c "import playwright" 2>/dev/null && PLAYWRIGHT_CHK=true; status_line "$PLAYWRIGHT_CHK" "Playwright" ""
+SUPABASE_CHK=false; "$PYTHON_CMD" -c "import supabase" 2>/dev/null && SUPABASE_CHK=true; status_line "$SUPABASE_CHK" "Supabase SDK" ""
+HTTPX_CHK=false; "$PYTHON_CMD" -c "import httpx" 2>/dev/null && HTTPX_CHK=true; status_line "$HTTPX_CHK" "httpx" ""
 
 # LLM CLI
 if [[ -n "$LLM_CLI_TOOL" ]]; then
@@ -1322,13 +1324,13 @@ fi
 
 # LLM SDKs
 if [[ "$L1_PROV" == "anthropic" || "$L2_PROV" == "anthropic" ]]; then
-  status_line "$PYTHON_CMD -c 'import anthropic' 2>/dev/null" "Anthropic SDK" ""
+  ANTHROPIC_CHK=false; "$PYTHON_CMD" -c "import anthropic" 2>/dev/null && ANTHROPIC_CHK=true; status_line "$ANTHROPIC_CHK" "Anthropic SDK" ""
 fi
 if [[ "$L1_PROV" == "openai" || "$L2_PROV" == "openai" ]]; then
-  status_line "$PYTHON_CMD -c 'import openai' 2>/dev/null" "OpenAI SDK" ""
+  OPENAI_CHK=false; "$PYTHON_CMD" -c "import openai" 2>/dev/null && OPENAI_CHK=true; status_line "$OPENAI_CHK" "OpenAI SDK" ""
 fi
 if [[ "$L1_PROV" == "google" || "$L2_PROV" == "google" ]]; then
-  status_line "$PYTHON_CMD -c 'import google.generativeai' 2>/dev/null" "Google AI SDK" ""
+  GOOGLE_CHK=false; "$PYTHON_CMD" -c "import google" 2>/dev/null && GOOGLE_CHK=true; status_line "$GOOGLE_CHK" "Google AI SDK" ""
 fi
 if [[ "$L1_PROV" == "ollama" || "$L2_PROV" == "ollama" ]]; then
   status_line "check_command ollama" "Ollama" ""
@@ -1428,7 +1430,7 @@ elif ! (openclaw status 2>&1 | grep -qi "pro\|active\|licensed" 2>/dev/null); th
 fi
 
 if ! [[ -f "$INSTALL_DIR/packages/worker/worker.py" ]]; then
-  print_todo "(required) Clone the ApplyLoop repo (private — ask admin for access)"
+  print_todo "(required) Clone the repo: git clone https://github.com/snehitvaddi/AutoApply.git $INSTALL_DIR/repo"
 fi
 
 if [[ "$LLM_PROVIDER" == "none" && "$LLM_BACKEND_PROVIDER" == "none" ]]; then

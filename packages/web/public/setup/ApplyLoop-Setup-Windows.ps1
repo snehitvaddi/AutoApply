@@ -1081,6 +1081,7 @@ function Get-EnvStatusLine($key, $label) {
                 ForEach-Object { $_.Matches[0].Groups[1].Value })
     }
     if ($val) { return "  [SET]     $label" }
+    elseif ($label -match "not needed|optional") { return "  [SKIP]    $label" }
     else { return "  [NOT SET] $label  <-- action needed" }
 }
 
