@@ -340,8 +340,10 @@ async def pty_status():
 
 @app.post("/api/pty/start")
 async def pty_start():
-    ok = session_manager.pty.start()
-    return {"ok": ok, **session_manager.pty.status()}
+    if session_manager.pty.is_alive:
+        return {"ok": True, **session_manager.pty.status()}
+    result = session_manager.new_session()
+    return {"ok": True, **result}
 
 
 @app.post("/api/pty/stop")

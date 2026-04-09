@@ -271,21 +271,21 @@ async def chat_websocket(ws: WebSocket):
     await ws.accept()
 
     # Import PTY session
-    from .pty_terminal import pty_session
+    from .pty_terminal import session_manager
 
     # Auto-start PTY if not running
-    if not pty_session.is_alive:
-        pty_session.start()
+    if not session_manager.pty.is_alive:
+        session_manager.new_session()
         await asyncio.sleep(3)  # Wait for Claude to initialize
 
     await ws.send_json({
         "type": "session_status",
-        "alive": pty_session.is_alive,
-        "state": "running" if pty_session.is_alive else "dead",
+        "alive": session_manager.pty.is_alive,
+        "state": "running" if session_manager.pty.is_alive else "dead",
     })
 
     # Subscribe to PTY output
-    queue = pty_session.subscribe()
+    queue = session_manager.pty.subscribe()
 
     # Buffer to accumulate PTY output into coherent messages
     _ansi_escape = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b[^[\]()]|\r')
@@ -322,26 +322,26 @@ async def chat_websocket(ws: WebSocket):
             if action == "message":
                 user_input = msg.get("message", "").strip()
                 if user_input:
-                    if not pty_session.is_alive:
-                        pty_session.start()
+                    if not session_manager.pty.is_alive:
+                        session_manager.new_session()
                         await asyncio.sleep(3)
                     # Write to PTY stdin (same as typing in Terminal)
-                    pty_session.write((user_input + "\n").encode("utf-8"))
+                    session_manager.pty.write((user_input + "\n").encode("utf-8"))
                     await ws.send_json({"type": "status", "data": "thinking"})
 
             elif action == "restart":
-                pty_session.restart()
+                session_manager.pty.restart()
                 await ws.send_json({"type": "system", "data": "Session restarted"})
 
             elif action == "stop":
-                pty_session.stop()
+                session_manager.pty.stop()
                 await ws.send_json({"type": "session_ended", "data": "Session stopped"})
 
             elif action == "status":
                 await ws.send_json({
                     "type": "session_status",
-                    "alive": pty_session.is_alive,
-                    "state": "running" if pty_session.is_alive else "dead",
+                    "alive": session_manager.pty.is_alive,
+                    "state": "running" if session_manager.pty.is_alive else "dead",
                 })
 
     except WebSocketDisconnect:
@@ -350,4 +350,4 @@ async def chat_websocket(ws: WebSocket):
         logger.debug(f"Chat WS closed: {e}")
     finally:
         relay_task.cancel()
-        pty_session.unsubscribe(queue)
+        session_manager.pty.unsubscribe(queue)

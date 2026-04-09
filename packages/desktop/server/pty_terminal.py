@@ -386,19 +386,19 @@ async def pty_terminal_websocket(ws: WebSocket):
     """
     await ws.accept()
 
-    # Auto-start if not running
-    if not pty_session.is_alive:
-        pty_session.start()
+    # Auto-start if not running (go through manager so it's registered)
+    if not session_manager.pty.is_alive:
+        session_manager.new_session()
 
     # Send status
-    await ws.send_json({"type": "status", **pty_session.status()})
+    await ws.send_json({"type": "status", **session_manager.pty.status()})
 
     # Backfill — send buffered output
-    for chunk in pty_session.output_buffer:
+    for chunk in session_manager.pty.output_buffer:
         await ws.send_bytes(chunk)
 
     # Subscribe to live output
-    queue = pty_session.subscribe()
+    queue = session_manager.pty.subscribe()
 
     async def _relay_output():
         """Forward PTY output to WebSocket."""
@@ -421,19 +421,19 @@ async def pty_terminal_websocket(ws: WebSocket):
                 msg_type = parsed.get("type", "")
 
                 if msg_type == "input":
-                    pty_session.write(parsed["data"].encode("utf-8"))
+                    session_manager.pty.write(parsed["data"].encode("utf-8"))
                 elif msg_type == "resize":
-                    pty_session.resize(parsed.get("cols", 80), parsed.get("rows", 24))
+                    session_manager.pty.resize(parsed.get("cols", 80), parsed.get("rows", 24))
                 elif msg_type == "start":
-                    pty_session.restart()
-                    await ws.send_json({"type": "status", **pty_session.status()})
+                    session_manager.pty.restart()
+                    await ws.send_json({"type": "status", **session_manager.pty.status()})
                 elif msg_type == "stop":
-                    pty_session.stop()
-                    await ws.send_json({"type": "status", **pty_session.status()})
+                    session_manager.pty.stop()
+                    await ws.send_json({"type": "status", **session_manager.pty.status()})
 
             elif "bytes" in msg:
                 # Raw binary input from xterm.js
-                pty_session.write(msg["bytes"])
+                session_manager.pty.write(msg["bytes"])
 
     except WebSocketDisconnect:
         pass
@@ -441,4 +441,4 @@ async def pty_terminal_websocket(ws: WebSocket):
         logger.debug(f"PTY WS closed: {e}")
     finally:
         relay_task.cancel()
-        pty_session.unsubscribe(queue)
+        session_manager.pty.unsubscribe(queue)
