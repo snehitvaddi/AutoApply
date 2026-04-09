@@ -28,7 +28,7 @@ for _candidate in [
         break
 from .process_manager import worker
 from .terminal_stream import terminal_websocket
-from .chat_bridge import chat_websocket, session as cli_session
+from .chat_bridge import chat_websocket
 from . import stats
 
 logging.basicConfig(
@@ -47,10 +47,10 @@ async def lifespan(app: FastAPI):
         logger.warning("No API token found — set AUTOAPPLY_TOKEN or create ~/.autoapply/workspace/.api-token")
     logger.info(f"Remote API: {APP_URL}")
     yield
-    # Cleanup: stop worker and CLI session
-    if cli_session.is_alive:
-        logger.info("Shutting down CLI session...")
-        await cli_session.stop()
+    # Cleanup: stop PTY session and worker
+    if session_manager.pty.is_alive:
+        logger.info("Shutting down PTY session...")
+        session_manager.pty.stop()
     if worker.is_running:
         logger.info("Shutting down worker...")
         await worker.stop()
@@ -245,29 +245,8 @@ async def put_preferences(body: dict):
         return {"ok": False, "error": str(e)}
 
 
-# ── CLI Session Control ──────────────────────────────────────────────────────
 
-@app.get("/api/session/status")
-async def session_status():
-    return cli_session.status()
-
-
-@app.post("/api/session/start")
-async def session_start():
-    ok = await cli_session.start()
-    return {"ok": ok, **cli_session.status()}
-
-
-@app.post("/api/session/stop")
-async def session_stop():
-    await cli_session.stop()
-    return {"ok": True}
-
-
-@app.post("/api/session/restart")
-async def session_restart():
-    await cli_session.restart()
-    return {"ok": True, **cli_session.status()}
+# (CLI Session endpoints removed — Chat now uses /btw via PTY)
 
 
 # ── Background Jobs ──────────────────────────────────────────────────────────
@@ -289,16 +268,16 @@ async def background_jobs():
         "uptime": ws["uptime"],
     })
 
-    # CLI session
-    ss = cli_session.status()
+    # PTY session (Claude Code)
+    ps = session_manager.pty.status()
     processes.append({
-        "id": "cli_session",
-        "name": f"{ss['cli'] or 'Claude'} Session",
-        "description": "AI assistant for managing applications",
+        "id": "pty_session",
+        "name": "Claude Code Session",
+        "description": "AI agent scouting and applying for jobs",
         "type": "session",
-        "running": ss["alive"],
-        "uptime": ss["uptime"],
-        "state": ss["state"],
+        "running": ps["alive"],
+        "uptime": ps.get("uptime", 0),
+        "state": "running" if ps["alive"] else "stopped",
     })
 
     # Scout cycle (inferred from worker heartbeat)
