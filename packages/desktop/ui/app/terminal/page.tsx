@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { AppShell } from "@/components/app-shell"
-import { SessionDropdown } from "@/components/session-dropdown"
-import { getPTYSessions, createNewPTYSession, deletePTYSession, type PTYSessionRecord } from "@/lib/api"
 import { Play, Square, RotateCcw, Wifi, WifiOff } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -15,34 +13,10 @@ const WS_URL = typeof window !== "undefined"
 export default function TerminalPage() {
   const [connected, setConnected] = useState(false)
   const [sessionAlive, setSessionAlive] = useState(false)
-  const [sessions, setSessions] = useState<PTYSessionRecord[]>([])
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const termRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const xtermRef = useRef<unknown>(null)
   const fitAddonRef = useRef<unknown>(null)
-
-  const refreshSessions = useCallback(async () => {
-    try {
-      const data = await getPTYSessions()
-      setSessions(data.history)
-      setActiveSessionId(data.active_session_id)
-    } catch { /* ignore */ }
-  }, [])
-
-  const handleNewSession = async () => {
-    await createNewPTYSession()
-    const term = xtermRef.current as { clear: () => void } | null
-    if (term) term.clear()
-    refreshSessions()
-  }
-
-  const handleDeleteSession = async (id: string) => {
-    await deletePTYSession(id)
-    const term = xtermRef.current as { clear: () => void } | null
-    if (term) term.clear()
-    refreshSessions()
-  }
 
   const connectWs = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -155,7 +129,6 @@ export default function TerminalPage() {
 
       // Connect WebSocket after terminal is ready
       connectWs()
-      refreshSessions()
     }
 
     initTerm()
@@ -240,27 +213,19 @@ export default function TerminalPage() {
               Restart
             </button>
           </div>
-          <div className="flex items-center gap-3 text-sm">
-            <SessionDropdown
-              sessions={sessions}
-              activeSessionId={activeSessionId}
-              onNewSession={handleNewSession}
-              onDeleteSession={handleDeleteSession}
-            />
-            <div className="flex items-center gap-2">
-              {connected ? (
-                <Wifi className="h-4 w-4 text-success" />
-              ) : (
-                <WifiOff className="h-4 w-4 text-destructive" />
-              )}
-              <span className="text-xs text-muted-foreground">
-                {connected
-                  ? sessionAlive
-                    ? "Active"
-                    : "Click Start"
-                  : "Connecting..."}
-              </span>
-            </div>
+          <div className="flex items-center gap-2 text-sm">
+            {connected ? (
+              <Wifi className="h-4 w-4 text-success" />
+            ) : (
+              <WifiOff className="h-4 w-4 text-destructive" />
+            )}
+            <span className="text-xs text-muted-foreground">
+              {connected
+                ? sessionAlive
+                  ? "Session active"
+                  : "Click Start Session"
+                : "Connecting..."}
+            </span>
           </div>
         </div>
 
