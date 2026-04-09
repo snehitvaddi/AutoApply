@@ -217,6 +217,37 @@ def clear_queue() -> int:
         conn.close()
 
 
+def get_recent_activity(since: str | None = None, limit: int = 50) -> list[dict]:
+    """
+    Get recent activity for the Chat status feed.
+    Returns newest entries first, optionally since a timestamp.
+    """
+    if since:
+        rows = _query("""
+            SELECT id, company, role as title, ats, status, applied_at, notes
+            FROM applications
+            WHERE applied_at > ? AND status IN ('submitted','failed','queued','scouted')
+            ORDER BY applied_at DESC LIMIT ?
+        """, (since, limit))
+    else:
+        rows = _query("""
+            SELECT id, company, role as title, ats, status, applied_at, notes
+            FROM applications
+            WHERE status IN ('submitted','failed','queued','scouted')
+            ORDER BY applied_at DESC LIMIT ?
+        """, (limit,))
+
+    for r in rows:
+        r["ats"] = _normalize_ats(r.get("ats", ""))
+    return rows
+
+
+def get_queue_count() -> int:
+    """Get current queue size."""
+    result = _query("SELECT COUNT(*) as c FROM applications WHERE status IN ('queued','scouted')")
+    return result[0]["c"] if result else 0
+
+
 def _normalize_ats(raw: str | None) -> str:
     """Normalize ATS names for display."""
     if not raw:

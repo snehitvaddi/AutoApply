@@ -1,408 +1,110 @@
 """
-Persistent PTY bridge between the Chat UI and Claude Code / Codex CLI.
+Smart Chat Bridge — "Dumb Display" + /btw Questions.
 
 Architecture:
-  - One long-running CLI process per app session (singleton)
-  - User messages are written to the PTY stdin
-  - All output streams back to all connected WebSocket clients
-  - Session persists across page reloads (reconnect gets buffer backfill)
-  - Auto-restarts if the CLI process dies
+  1. STATUS FEED: Polls SQLite every 5s for new applications/queue changes.
+     Shows Telegram-style notifications in the chat.
+  2. USER QUESTIONS: Sends /btw <message> to the Terminal PTY session.
+     /btw is instant, doesn't interrupt Claude's work, doesn't add to history.
+
+No ANSI parsing. No raw terminal output. Clean, human-friendly chat.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
-import shutil
 import time
-from collections import deque
-from enum import Enum
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .config import load_token, WORKSPACE_DIR, WORKER_DIR
+from . import local_data
 
 logger = logging.getLogger(__name__)
 
-MAX_BUFFER = 2000  # lines of output to keep for backfill
-
-
-class SessionState(str, Enum):
-    IDLE = "idle"
-    THINKING = "thinking"
-    STREAMING = "streaming"
-    ERROR = "error"
-    DEAD = "dead"
-
-
-class CLISession:
-    """
-    Persistent Claude Code / Codex CLI session.
-
-    Maintains a single long-running process with PTY I/O.
-    All chat WebSocket clients share this one session.
-    """
-
-    def __init__(self):
-        self.process: asyncio.subprocess.Process | None = None
-        self.output_buffer: deque[str] = deque(maxlen=MAX_BUFFER)
-        self.state: SessionState = SessionState.DEAD
-        self.cli_name: str = ""
-        self.started_at: float = 0
-        self._subscribers: list[asyncio.Queue] = []
-        self._read_task: asyncio.Task | None = None
-        self._lock = asyncio.Lock()
-
-    @property
-    def is_alive(self) -> bool:
-        return self.process is not None and self.process.returncode is None
-
-    @property
-    def uptime(self) -> float:
-        return time.time() - self.started_at if self.is_alive else 0
-
-    def status(self) -> dict:
-        return {
-            "alive": self.is_alive,
-            "state": self.state.value,
-            "cli": self.cli_name,
-            "uptime": self.uptime,
-            "buffer_lines": len(self.output_buffer),
-            "subscribers": len(self._subscribers),
-        }
-
-    def subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=500)
-        self._subscribers.append(q)
-        return q
-
-    def unsubscribe(self, q: asyncio.Queue):
-        if q in self._subscribers:
-            self._subscribers.remove(q)
-
-    def _broadcast(self, msg: dict):
-        dead = []
-        for q in self._subscribers:
-            try:
-                q.put_nowait(msg)
-            except asyncio.QueueFull:
-                dead.append(q)
-        for q in dead:
-            self._subscribers.remove(q)
-
-    @staticmethod
-    def _find_cli() -> tuple[str, list[str]] | None:
-        """Find available CLI and return (name, base_args).
-
-        Checks shutil.which first, then common global install paths
-        since the venv Python's PATH may not include them.
-        """
-        # Try standard PATH lookup first
-        claude = shutil.which("claude")
-        if not claude:
-            # Check common installation locations for Claude Code
-            common_paths = [
-                os.path.expanduser("~/.local/bin/claude"),
-                "/usr/local/bin/claude",
-                os.path.expanduser("~/.npm-global/bin/claude"),
-                "/opt/homebrew/bin/claude",
-            ]
-            for p in common_paths:
-                if os.path.isfile(p) and os.access(p, os.X_OK):
-                    claude = p
-                    break
-        if claude:
-            return ("claude", [claude, "--dangerously-skip-permissions"])
-
-        codex = shutil.which("codex")
-        if codex:
-            return ("codex", [codex])
-        return None
-
-    async def start(self) -> bool:
-        """Start the CLI session. Returns True on success."""
-        async with self._lock:
-            if self.is_alive:
-                return True
-
-            cli = self._find_cli()
-            if not cli:
-                self.state = SessionState.ERROR
-                self._broadcast({"type": "error", "data": "No CLI found. Install Claude Code (`npm i -g @anthropic-ai/claude-code`) or Codex CLI."})
-                return False
-
-            self.cli_name, base_cmd = cli
-
-            env = {**os.environ}
-            token = load_token()
-            if token:
-                env["AUTOAPPLY_TOKEN"] = token
-                env["WORKER_TOKEN"] = token
-
-            cwd = str(WORKSPACE_DIR) if WORKSPACE_DIR.exists() else str(WORKER_DIR)
-
-            try:
-                # Launch via login shell to get full user PATH/env
-                shell_cmd = " ".join(base_cmd)
-                self.process = await asyncio.create_subprocess_exec(
-                    "/bin/bash", "-l", "-c", f"cd {cwd} && {shell_cmd}",
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                    env=env,
-                )
-                self.started_at = time.time()
-                self.state = SessionState.IDLE
-
-                # Start reading output in background
-                self._read_task = asyncio.create_task(self._read_loop())
-
-                logger.info(f"CLI session started: {self.cli_name} (PID {self.process.pid})")
-                self._broadcast({"type": "system", "data": f"Session started with {self.cli_name}"})
-                return True
-
-            except Exception as e:
-                self.state = SessionState.ERROR
-                logger.error(f"Failed to start CLI: {e}")
-                self._broadcast({"type": "error", "data": f"Failed to start {self.cli_name}: {e}"})
-                return False
-
-    async def _read_loop(self):
-        """Continuously read stdout and broadcast to subscribers."""
-        try:
-            while self.is_alive:
-                line = await self.process.stdout.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip("\n\r")
-                if not text:
-                    continue
-
-                self.output_buffer.append(text)
-
-                # Detect state transitions from output patterns
-                if self.state == SessionState.THINKING and text.strip():
-                    self.state = SessionState.STREAMING
-
-                self._broadcast({"type": "stream", "data": text})
-
-        except Exception as e:
-            logger.debug(f"Read loop ended: {e}")
-        finally:
-            self.state = SessionState.DEAD
-            self._broadcast({"type": "session_ended", "data": "CLI session ended"})
-            logger.info("CLI session ended")
-
-    async def send_message(self, text: str) -> bool:
-        """Send a user message to the CLI stdin."""
-        if not self.is_alive:
-            # Auto-restart on send
-            started = await self.start()
-            if not started:
-                return False
-            # Give the CLI a moment to initialize
-            await asyncio.sleep(1)
-
-        if not self.process or not self.process.stdin:
-            return False
-
-        try:
-            self.state = SessionState.THINKING
-            self._broadcast({"type": "status", "data": "thinking"})
-
-            # Write message + newline to stdin
-            self.process.stdin.write((text + "\n").encode("utf-8"))
-            await self.process.stdin.drain()
-            return True
-        except Exception as e:
-            self.state = SessionState.ERROR
-            self._broadcast({"type": "error", "data": f"Send failed: {e}"})
-            return False
-
-    async def stop(self):
-        """Gracefully stop the CLI session."""
-        async with self._lock:
-            if self.process and self.is_alive:
-                try:
-                    self.process.stdin.write(b"/exit\n")
-                    await self.process.stdin.drain()
-                except Exception:
-                    pass
-
-                try:
-                    await asyncio.wait_for(self.process.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    self.process.terminate()
-                    try:
-                        await asyncio.wait_for(self.process.wait(), timeout=3)
-                    except asyncio.TimeoutError:
-                        self.process.kill()
-
-            if self._read_task:
-                self._read_task.cancel()
-                self._read_task = None
-
-            self.state = SessionState.DEAD
-            self._broadcast({"type": "session_ended", "data": "Session stopped"})
-
-    async def restart(self):
-        """Stop and restart the session."""
-        await self.stop()
-        await asyncio.sleep(0.5)
-        await self.start()
-
-
-# ── Singleton session (kept for backward compat, but Chat now uses PTY) ──────
-
-session = CLISession()
-
-
-# ── WebSocket handler — pipes Chat through the PTY terminal session ──────────
 
 async def chat_websocket(ws: WebSocket):
     """
-    Chat WebSocket that connects to the SAME PTY session as the Terminal tab.
+    Chat WebSocket handler.
 
-    User messages are written to the PTY stdin.
-    PTY output is streamed back as clean text (ANSI codes stripped).
-    This gives a VS Code extension-like chat experience over the real terminal.
+    Sends two types of messages:
+    - {"type": "activity", "entries": [...]} — status feed from SQLite
+    - {"type": "btw_response", "data": "..."} — response to /btw question
+    - {"type": "system", "data": "..."} — system messages
     """
     await ws.accept()
 
-    # Import PTY session
     from .pty_terminal import session_manager
 
-    # Check if PTY is running — don't auto-start, let user control via session dropdown
-    if not session_manager.pty.is_alive:
-        await ws.send_json({
-            "type": "system",
-            "data": "No active session. Start one from the session dropdown (top right) or Terminal tab.",
-        })
-        # Wait for a session to become available
-        while not session_manager.pty.is_alive:
-            try:
-                msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
-                if msg.get("action") == "message":
-                    # User sent a message — auto-start session for them
-                    session_manager.new_session()
-                    await asyncio.sleep(3)
-                    break
-            except asyncio.TimeoutError:
-                continue
-            except Exception:
-                return
+    # Track what we've already sent
+    last_check_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 300))
+    last_queue_count = local_data.get_queue_count()
 
+    # Send initial status
     await ws.send_json({
-        "type": "session_status",
-        "alive": session_manager.pty.is_alive,
-        "state": "running" if session_manager.pty.is_alive else "dead",
+        "type": "system",
+        "data": "Connected to ApplyLoop. You'll see live status updates here.",
     })
 
-    # Subscribe to PTY output
-    queue = session_manager.pty.subscribe()
+    # Send recent activity (last 20)
+    recent = local_data.get_recent_activity(limit=20)
+    if recent:
+        await ws.send_json({"type": "activity", "entries": recent})
 
-    # ANSI escape code stripper
+    # ANSI stripper for /btw responses
     _ansi_re = re.compile(
-        r'\x1b\[[0-9;?]*[a-zA-Z]'   # CSI
-        r'|\x1b\][^\x07]*\x07'       # OSC
-        r'|\x1b\([A-Z]'              # Charset
-        r'|\x1b[=><=<>]'             # Other ESC
-        r'|\x1b'                     # Bare ESC
+        r'\x1b\[[0-9;?]*[a-zA-Z]'
+        r'|\x1b\][^\x07]*\x07'
+        r'|\x1b\([A-Z]'
+        r'|\x1b[=><=<>]'
+        r'|\x1b'
     )
 
-    # Patterns to detect Claude Code activity (for status indicators)
-    _activity_patterns = [
-        (re.compile(r'Bash\(([^)]+)\)'), lambda m: f"Running: {m.group(1)[:60]}"),
-        (re.compile(r'Running[.…]+'), lambda m: None),  # skip raw "Running..."
-        (re.compile(r'(Shimmy|Swoop|Imagin|Think|Comput)[a-z]*[.…]+\s*\((?:thought for )?(\d+\w*)\s*'), lambda m: f"Thinking... ({m.group(2)})"),
-        (re.compile(r'(\d+) tool uses?\s*[·•]\s*([0-9.]+[km]?) tokens'), lambda m: f"Done ({m.group(1)} tools, {m.group(2)} tokens)"),
-        (re.compile(r'Searching for \d+ pattern'), lambda m: "Searching files..."),
-        (re.compile(r'[Rr]eading? (\d+) files?'), lambda m: f"Reading {m.group(1)} files..."),
-        (re.compile(r'Read \d+ files?'), lambda m: None),  # skip verbose
-        (re.compile(r'bypass permissions'), lambda m: None),  # skip UI chrome
-        (re.compile(r'ctrl\+[a-z]'), lambda m: None),  # skip keyboard hints
-        (re.compile(r'shift\+tab'), lambda m: None),
-        (re.compile(r'esc to interrupt'), lambda m: None),
-    ]
-
-    # Patterns for meaningful content to show as messages
-    _content_re = re.compile(r'[⏺●▶]\s*(.+)')  # Claude's output markers
-
-    async def _relay_output():
-        """
-        Intelligent PTY → Chat relay.
-
-        Instead of dumping raw terminal output, this:
-        1. Detects activity patterns → sends status updates (thinking, running, etc.)
-        2. Extracts meaningful text → sends as chat messages
-        3. Drops noise (spinners, control chars, keyboard hints)
-        """
-        raw_buffer = b""
-        last_status = ""
-
+    async def _status_feed():
+        """Poll SQLite every 5s and send new activity to chat."""
+        nonlocal last_check_time, last_queue_count
         try:
             while True:
-                try:
-                    data = await asyncio.wait_for(queue.get(), timeout=1.5)
-                    raw_buffer += data
-                except asyncio.TimeoutError:
-                    # Process accumulated buffer on pause
-                    if not raw_buffer:
-                        continue
+                await asyncio.sleep(5)
 
-                    text = raw_buffer.decode("utf-8", errors="replace")
-                    raw_buffer = b""
+                # Check for new applications
+                new_entries = local_data.get_recent_activity(since=last_check_time, limit=10)
+                if new_entries:
+                    last_check_time = new_entries[0].get("applied_at", last_check_time)
+                    await ws.send_json({"type": "activity", "entries": new_entries})
 
-                    # Strip ANSI
-                    clean = _ansi_re.sub("", text)
-                    clean = re.sub(r'[\r\x00-\x08\x0e-\x1f]', '', clean)
+                # Check queue count changes
+                current_queue = local_data.get_queue_count()
+                if current_queue != last_queue_count:
+                    diff = current_queue - last_queue_count
+                    if diff > 0:
+                        await ws.send_json({
+                            "type": "queue_update",
+                            "data": f"+{diff} jobs added to queue ({current_queue} total)",
+                            "count": current_queue,
+                        })
+                    elif diff < 0:
+                        await ws.send_json({
+                            "type": "queue_update",
+                            "data": f"{abs(diff)} jobs processed ({current_queue} remaining)",
+                            "count": current_queue,
+                        })
+                    last_queue_count = current_queue
 
-                    # Skip empty or whitespace-only
-                    if not clean.strip():
-                        continue
-
-                    # Check for activity patterns → send as status
-                    for pattern, formatter in _activity_patterns:
-                        match = pattern.search(clean)
-                        if match:
-                            result = formatter(match)
-                            if result and result != last_status:
-                                last_status = result
-                                await ws.send_json({"type": "activity", "data": result})
-                            break
-                    else:
-                        # Not an activity pattern — check for meaningful content
-                        lines = clean.split("\n")
-                        meaningful = []
-                        for line in lines:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            # Skip noise
-                            if len(line) < 3:
-                                continue
-                            if line in ('>', '❯', '●', '⏺', '*', '◆'):
-                                continue
-                            if 'bypass permissions' in line.lower():
-                                continue
-                            if 'ctrl+' in line.lower() or 'shift+tab' in line.lower():
-                                continue
-                            if 'esc to' in line.lower():
-                                continue
-                            # Keep meaningful text
-                            meaningful.append(line)
-
-                        if meaningful:
-                            content = "\n".join(meaningful)
-                            # Only send if it's substantial (not just fragments)
-                            if len(content) > 10:
-                                await ws.send_json({"type": "stream", "data": content})
+                # Check PTY session status
+                if session_manager.pty.is_alive:
+                    idle = time.time() - session_manager.pty.last_output_at if session_manager.pty.last_output_at else 0
+                    if idle > 900:  # 15 min
+                        await ws.send_json({
+                            "type": "session_idle",
+                            "data": f"Session idle for {int(idle/60)}m",
+                            "idle_minutes": int(idle / 60),
+                        })
 
         except Exception as e:
-            logger.debug(f"Chat relay ended: {e}")
+            logger.debug(f"Status feed ended: {e}")
 
-    relay_task = asyncio.create_task(_relay_output())
+    feed_task = asyncio.create_task(_status_feed())
 
     try:
         while True:
@@ -411,33 +113,84 @@ async def chat_websocket(ws: WebSocket):
 
             if action == "message":
                 user_input = msg.get("message", "").strip()
-                if user_input:
-                    if not session_manager.pty.is_alive:
-                        session_manager.new_session()
-                        await asyncio.sleep(3)
-                    # Write to PTY stdin (same as typing in Terminal)
-                    session_manager.pty.write((user_input + "\n").encode("utf-8"))
-                    await ws.send_json({"type": "status", "data": "thinking"})
+                if not user_input:
+                    continue
 
-            elif action == "restart":
-                session_manager.pty.restart()
-                await ws.send_json({"type": "system", "data": "Session restarted"})
+                # Check if PTY session is alive
+                if not session_manager.pty.is_alive:
+                    await ws.send_json({
+                        "type": "btw_response",
+                        "data": "No active session. Start one from the Terminal tab or session dropdown.",
+                    })
+                    continue
 
-            elif action == "stop":
-                session_manager.pty.stop()
-                await ws.send_json({"type": "session_ended", "data": "Session stopped"})
+                # Send /btw command to the PTY
+                btw_cmd = f"/btw {user_input}\n"
+                session_manager.pty.write(btw_cmd.encode("utf-8"))
+
+                # Wait briefly for response, then capture PTY output
+                await ws.send_json({"type": "thinking", "data": "Asking Claude..."})
+
+                # Subscribe to PTY output temporarily to capture /btw response
+                queue = session_manager.pty.subscribe()
+                response_chunks = []
+                try:
+                    # Collect output for up to 30 seconds
+                    deadline = time.time() + 30
+                    blank_count = 0
+                    while time.time() < deadline:
+                        try:
+                            data = await asyncio.wait_for(queue.get(), timeout=2.0)
+                            text = data.decode("utf-8", errors="replace")
+                            clean = _ansi_re.sub("", text)
+                            clean = re.sub(r'[\r\x00-\x08\x0e-\x1f]', '', clean)
+                            stripped = clean.strip()
+                            if stripped:
+                                response_chunks.append(stripped)
+                                blank_count = 0
+                            else:
+                                blank_count += 1
+                                # Two consecutive blanks after some content = response done
+                                if response_chunks and blank_count >= 2:
+                                    break
+                        except asyncio.TimeoutError:
+                            if response_chunks:
+                                break  # Got response, timeout means done
+                finally:
+                    session_manager.pty.unsubscribe(queue)
+
+                # Clean up the response
+                full_response = "\n".join(response_chunks)
+                # Remove /btw echo and noise
+                lines = full_response.split("\n")
+                clean_lines = []
+                for line in lines:
+                    if line.startswith("/btw"):
+                        continue
+                    if "bypass permissions" in line.lower():
+                        continue
+                    if "ctrl+" in line.lower() or "shift+tab" in line.lower():
+                        continue
+                    if "esc to" in line.lower():
+                        continue
+                    if len(line.strip()) < 2:
+                        continue
+                    clean_lines.append(line)
+
+                response = "\n".join(clean_lines).strip()
+                if not response:
+                    response = "Claude is busy. Your message was sent — check back shortly."
+
+                await ws.send_json({"type": "btw_response", "data": response})
 
             elif action == "status":
-                await ws.send_json({
-                    "type": "session_status",
-                    "alive": session_manager.pty.is_alive,
-                    "state": "running" if session_manager.pty.is_alive else "dead",
-                })
+                # Return current stats
+                stats = local_data.get_stats()
+                await ws.send_json({"type": "stats", "data": stats})
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
         logger.debug(f"Chat WS closed: {e}")
     finally:
-        relay_task.cancel()
-        session_manager.pty.unsubscribe(queue)
+        feed_task.cancel()

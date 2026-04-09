@@ -169,6 +169,14 @@ async def get_pipeline():
         return {"ok": False, "error": str(e)}
 
 
+@app.get("/api/activity")
+async def get_activity(since: str = "", limit: int = 20):
+    try:
+        return {"ok": True, "data": local_data.get_recent_activity(since or None, limit)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.delete("/api/queue/{job_id}")
 async def delete_queue_item(job_id: int):
     try:
