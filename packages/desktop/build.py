@@ -95,7 +95,7 @@ def build_mac_app():
     subprocess.check_call(["arch", "-arm64", sys.executable, "-m", "venv", str(venv_dir)])
     venv_pip = venv_dir / "bin" / "pip"
     subprocess.check_call(["arch", "-arm64", str(venv_pip), "install", "-q",
-                           "fastapi", "uvicorn", "httpx", "websockets"])
+                           "fastapi", "uvicorn", "httpx", "websockets", "pywebview"])
     print("[Build] Venv created with all deps")
 
     # Info.plist
@@ -129,11 +129,11 @@ def build_mac_app():
 </plist>
 """)
 
-    # Launcher script — force arm64 for Apple Silicon, all output to log
+    # Launcher script — uses system Python for pywebview (needs system pyobjc)
     launcher = macos / "launcher"
     launcher.write_text("""\
 #!/bin/bash
-# ApplyLoop Desktop — macOS Launcher
+# ApplyLoop Desktop — macOS Launcher (pywebview native window)
 
 RESOURCES="$(dirname "$0")/../Resources"
 cd "$RESOURCES"
@@ -142,25 +142,12 @@ LOG="$HOME/.autoapply/desktop.log"
 mkdir -p "$HOME/.autoapply"
 mkdir -p "$HOME/.autoapply/workspace"
 
-PYTHON="$RESOURCES/venv/bin/python3"
+# Use system Python (has working pyobjc for native window)
+# Install deps to user site-packages if missing
+arch -arm64 python3 -m pip install -q fastapi uvicorn httpx websockets pywebview 2>/dev/null
 
-# Create venv if missing — force arm64 for Apple Silicon
-if [ ! -f "$PYTHON" ]; then
-  arch -arm64 python3 -m venv "$RESOURCES/venv" >> "$LOG" 2>&1
-  arch -arm64 "$PYTHON" -m pip install -q fastapi uvicorn httpx websockets >> "$LOG" 2>&1
-fi
-
-# Open browser after server starts
-(sleep 4 && open "http://localhost:18790") &
-
-# Run server — force arm64, all output to log file
-exec arch -arm64 "$PYTHON" -c "
-import sys, os
-sys.path.insert(0, '.')
-os.environ.setdefault('APPLYLOOP_PORT', '18790')
-import uvicorn
-uvicorn.run('server.app:app', host='127.0.0.1', port=18790, log_level='warning')
-" >> "$LOG" 2>&1
+# Run the app — pywebview creates native window, server runs in thread
+exec arch -arm64 python3 launch.py >> "$LOG" 2>&1
 """)
     os.chmod(str(launcher), 0o755)
 
