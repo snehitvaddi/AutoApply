@@ -265,6 +265,163 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // ── Desktop Dashboard Stats (read-only) ──────────────────────────────
+
+      case "get_stats": {
+        const today = new Date().toISOString().split("T")[0];
+        const [todayRes, totalRes, queueRes, failedRes] = await Promise.all([
+          supabase
+            .from("applications")
+            .select("id", { count: "exact" })
+            .eq("user_id", userId)
+            .gte("applied_at", `${today}T00:00:00Z`),
+          supabase
+            .from("applications")
+            .select("id", { count: "exact" })
+            .eq("user_id", userId),
+          supabase
+            .from("application_queue")
+            .select("id", { count: "exact" })
+            .eq("user_id", userId)
+            .in("status", ["pending", "locked"]),
+          supabase
+            .from("applications")
+            .select("id", { count: "exact" })
+            .eq("user_id", userId)
+            .eq("status", "failed"),
+        ]);
+        const total = totalRes.count || 0;
+        const failed = failedRes.count || 0;
+        const rate = total > 0 ? Math.round(((total - failed) / total) * 100) : 0;
+        return apiSuccess({
+          applied_today: todayRes.count || 0,
+          total_applied: total,
+          in_queue: queueRes.count || 0,
+          success_rate: rate,
+        });
+      }
+
+      case "get_daily_breakdown": {
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const { data: apps } = await supabase
+          .from("applications")
+          .select("applied_at, status")
+          .eq("user_id", userId)
+          .gte("applied_at", thirtyDaysAgo)
+          .order("applied_at", { ascending: true });
+        // Group by date
+        const byDate: Record<string, { submitted: number; failed: number }> = {};
+        for (const app of apps || []) {
+          const d = new Date(app.applied_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+          if (!byDate[d]) byDate[d] = { submitted: 0, failed: 0 };
+          if (app.status === "failed") byDate[d].failed++;
+          else byDate[d].submitted++;
+        }
+        return apiSuccess(Object.entries(byDate).map(([date, counts]) => ({ date, ...counts })));
+      }
+
+      case "get_ats_breakdown": {
+        const { data: apps } = await supabase
+          .from("applications")
+          .select("ats")
+          .eq("user_id", userId);
+        const byAts: Record<string, number> = {};
+        for (const app of apps || []) {
+          const ats = app.ats || "unknown";
+          byAts[ats] = (byAts[ats] || 0) + 1;
+        }
+        const total = Object.values(byAts).reduce((a, b) => a + b, 0) || 1;
+        return apiSuccess(
+          Object.entries(byAts)
+            .map(([name, count]) => ({ name, value: Math.round((count / total) * 100) }))
+            .sort((a, b) => b.value - a.value)
+        );
+      }
+
+      case "get_pipeline": {
+        const { data: queue } = await supabase
+          .from("application_queue")
+          .select("id, job_id, status, company, apply_url, error, created_at")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(200);
+
+        // Enrich with job details
+        const jobIds = [...new Set((queue || []).map((q: Record<string, unknown>) => q.job_id).filter(Boolean))];
+        const { data: jobs } = jobIds.length
+          ? await supabase.from("discovered_jobs").select("id, title, company, ats, posted_at").in("id", jobIds)
+          : { data: [] };
+        const jobMap = new Map((jobs || []).map((j: Record<string, unknown>) => [j.id, j]));
+
+        const pipeline: Record<string, unknown[]> = {
+          discovered: [],
+          queued: [],
+          applying: [],
+          submitted: [],
+          failed: [],
+        };
+
+        for (const q of queue || []) {
+          const job = jobMap.get(q.job_id) || {};
+          const item = {
+            id: q.id,
+            company: (job as Record<string, unknown>).company || q.company || "",
+            title: (job as Record<string, unknown>).title || "",
+            ats: (job as Record<string, unknown>).ats || "",
+            posted_at: (job as Record<string, unknown>).posted_at || q.created_at,
+            status: q.status,
+            error: q.error,
+          };
+          if (q.status === "pending") pipeline.queued.push(item);
+          else if (q.status === "locked" || q.status === "processing") pipeline.applying.push(item);
+          else if (q.status === "submitted") pipeline.submitted.push(item);
+          else if (q.status === "failed") pipeline.failed.push(item);
+        }
+
+        // Add recent discovered jobs not yet in queue
+        const { data: discovered } = await supabase
+          .from("discovered_jobs")
+          .select("id, title, company, ats, posted_at")
+          .order("discovered_at", { ascending: false })
+          .limit(50);
+
+        const queuedJobIds = new Set((queue || []).map((q: Record<string, unknown>) => q.job_id));
+        for (const d of discovered || []) {
+          if (!queuedJobIds.has(d.id)) {
+            pipeline.discovered.push({
+              id: d.id,
+              company: d.company,
+              title: d.title,
+              ats: d.ats,
+              posted_at: d.posted_at,
+              status: "discovered",
+            });
+          }
+        }
+
+        return apiSuccess(pipeline);
+      }
+
+      case "get_recent_applications": {
+        const limit = params.params?.limit || params.limit || 20;
+        const { data } = await supabase
+          .from("applications")
+          .select("company, title, ats, status, applied_at, error")
+          .eq("user_id", userId)
+          .order("applied_at", { ascending: false })
+          .limit(limit);
+        return apiSuccess(data || []);
+      }
+
+      case "heartbeat_status": {
+        const { data } = await supabase
+          .from("worker_heartbeats")
+          .select("*")
+          .eq("user_id", userId)
+          .single();
+        return apiSuccess(data || {});
+      }
+
       default:
         return apiError("validation_error", `Unknown action: ${action}`);
     }

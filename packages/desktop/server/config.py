@@ -1,0 +1,57 @@
+"""Configuration for the desktop backend server."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+# Paths
+WORKSPACE_DIR = Path.home() / ".autoapply" / "workspace"
+TOKEN_FILE = WORKSPACE_DIR / ".api-token"
+WORKER_PID_FILE = WORKSPACE_DIR / "worker.pid"
+# Find worker directory — could be in repo or relative to .app bundle
+_server_dir = Path(__file__).resolve().parent
+WORKER_DIR = None
+for _w in [
+    Path.home() / ".autoapply" / "worker",              # preferred: non-TCC-restricted location
+    _server_dir.parent.parent.parent / "worker",        # repo: packages/desktop/server -> packages/worker
+    _server_dir.parent / "worker",                      # .app bundle: Resources/server -> Resources/worker
+    Path.home() / "Downloads" / "Drive-D" / "AutoApply" / "packages" / "worker",
+]:
+    if (_w / "worker.py").exists():
+        WORKER_DIR = _w
+        break
+if WORKER_DIR is None:
+    WORKER_DIR = _server_dir.parent.parent.parent / "worker"  # default even if missing
+
+# Server
+HOST = os.environ.get("APPLYLOOP_HOST", "127.0.0.1")
+PORT = int(os.environ.get("APPLYLOOP_PORT", "18790"))
+UI_PORT = int(os.environ.get("APPLYLOOP_UI_PORT", "18791"))
+
+# Remote API
+APP_URL = os.environ.get(
+    "NEXT_PUBLIC_APP_URL",
+    os.environ.get("AUTOAPPLY_API", "https://applyloop.vercel.app"),
+)
+
+
+def load_token() -> str | None:
+    """Load the API/worker token from disk."""
+    if TOKEN_FILE.exists():
+        return TOKEN_FILE.read_text().strip()
+    # Also check env
+    return os.environ.get("AUTOAPPLY_TOKEN") or os.environ.get("WORKER_TOKEN")
+
+
+def get_worker_env() -> dict[str, str]:
+    """Build environment variables for the worker subprocess."""
+    token = load_token()
+    env = {
+        **os.environ,
+        "NEXT_PUBLIC_APP_URL": APP_URL,
+        "WORKER_ID": "desktop-1",
+    }
+    if token:
+        env["WORKER_TOKEN"] = token
+        env["AUTOAPPLY_TOKEN"] = token
+    return env

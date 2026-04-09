@@ -8,11 +8,14 @@ This ensures:
   - All writes are scoped to the authenticated user
   - Admin can monitor and revoke access via worker tokens
 """
+from __future__ import annotations
 
 import os
 import time
 import json
 import logging
+import sqlite3
+from datetime import datetime, timezone
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -20,6 +23,7 @@ logger = logging.getLogger(__name__)
 APP_URL = os.environ.get("NEXT_PUBLIC_APP_URL", "https://applyloop.vercel.app")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
 RESUME_DIR = os.environ.get("RESUME_DIR", "/tmp/autoapply/resumes")
+LOCAL_DB_PATH = os.environ.get("APPLYLOOP_DB", os.path.expanduser("~/.autoapply/workspace/applications.db"))
 
 _http_client: httpx.Client | None = None
 
@@ -88,7 +92,7 @@ def update_queue_status(queue_id: str, status: str, error: str | None = None):
 # ── Application logging ───────────────────────────────────────────────────
 
 def log_application(user_id: str, job: dict, result: dict):
-    """Log a submitted/failed application."""
+    """Log a submitted/failed application to remote API + local SQLite."""
     _api_call(
         "log_application",
         job_id=job.get("job_id"),
@@ -101,6 +105,57 @@ def log_application(user_id: str, job: dict, result: dict):
         screenshot_url=result.get("screenshot_url"),
         error=result.get("error"),
     )
+    # Dual-write to local SQLite for desktop dashboard
+    _log_to_local_db(job, result)
+
+
+def _log_to_local_db(job: dict, result: dict):
+    """Write application to local SQLite database for desktop UI."""
+    try:
+        os.makedirs(os.path.dirname(LOCAL_DB_PATH), exist_ok=True)
+        conn = sqlite3.connect(LOCAL_DB_PATH)
+        _ensure_local_schema(conn)
+        now = datetime.now(timezone.utc).isoformat()
+        company = job.get("company", "")
+        job_id = job.get("job_id") or job.get("external_id") or ""
+        conn.execute("""
+            INSERT INTO applications (company, role, url, ats, source, location, posted_at, applied_at, updated_at, status, notes, screenshot, dedup_token)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(dedup_token) DO UPDATE SET
+                status=excluded.status, applied_at=excluded.applied_at,
+                updated_at=excluded.updated_at, screenshot=excluded.screenshot,
+                notes=excluded.notes
+        """, (
+            company, job.get("title", ""), job.get("apply_url", ""),
+            job.get("ats", ""), job.get("source", ""), job.get("location", ""),
+            job.get("posted_at"), now, now,
+            result.get("status", "submitted"), result.get("error"),
+            result.get("screenshot_url"),
+            f"{company.lower().replace(' ', '-')}|{job_id}",
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Local DB write failed (non-fatal): {e}")
+
+
+def _ensure_local_schema(conn: sqlite3.Connection):
+    """Create the applications table if it doesn't exist."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS applications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company TEXT NOT NULL, role TEXT NOT NULL, url TEXT, ats TEXT,
+            source TEXT, location TEXT, posted_at TEXT, scouted_at TEXT,
+            applied_at TEXT, updated_at TEXT,
+            status TEXT NOT NULL DEFAULT 'scouted'
+                CHECK(status IN ('scouted','queued','applying','submitted','failed','skipped','blocked','interview','rejected','offer')),
+            notes TEXT, screenshot TEXT, dedup_token TEXT UNIQUE
+        );
+        CREATE INDEX IF NOT EXISTS idx_status ON applications(status);
+        CREATE INDEX IF NOT EXISTS idx_company ON applications(company);
+        CREATE INDEX IF NOT EXISTS idx_applied_at ON applications(applied_at);
+        CREATE INDEX IF NOT EXISTS idx_dedup ON applications(dedup_token);
+    """)
 
 
 # ── User profile ──────────────────────────────────────────────────────────

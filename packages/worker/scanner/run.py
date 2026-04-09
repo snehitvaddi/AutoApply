@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Scanner entry point — discovers jobs from public ATS APIs.
 
 Usage:
