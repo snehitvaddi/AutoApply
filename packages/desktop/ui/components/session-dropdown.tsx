@@ -86,12 +86,12 @@ export function SessionDropdown({
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        if (isActive) {
-                          if (confirm("Delete active session? A new one will be created.")) {
-                            onDeleteSession(s.session_id)
-                          }
-                        } else {
+                        const msg = isActive
+                          ? "Stop and delete active session? Terminal will be cleared."
+                          : "Remove this session from history?"
+                        if (confirm(msg)) {
                           onDeleteSession(s.session_id)
+                          setOpen(false)
                         }
                       }}
                       className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"

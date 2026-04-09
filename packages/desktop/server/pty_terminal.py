@@ -175,12 +175,6 @@ class PTYSession:
             self.last_output_at = time.time()
             self._current_record = SessionRecord(child_pid)
             self.session_id = self._current_record.session_id
-            # Auto-register with session_manager if it exists
-            try:
-                if session_manager and self._current_record not in session_manager.sessions:
-                    session_manager.sessions.append(self._current_record)
-            except NameError:
-                pass  # session_manager not defined yet during init
 
             # Set terminal size (80x24 default, will be resized by client)
             self._set_size(80, 24)
@@ -304,7 +298,16 @@ class PTYSession:
 # ── Session Manager ──────────────────────────────────────────────────────────
 
 class SessionManager:
-    """Manages PTY sessions — one active at a time, with history."""
+    """
+    Manages PTY sessions — one active at a time, with history.
+
+    Rules:
+    - Only ONE session can be active at a time
+    - Dead sessions stay in history (viewable, deletable, not resumable)
+    - Deleting the active session stops it and does NOT auto-create a new one
+    - User must click "New Session" or "Start Session" to create a new one
+    - No duplicates in the session list
+    """
 
     def __init__(self):
         self.sessions: list[SessionRecord] = []
@@ -314,44 +317,59 @@ class SessionManager:
     def active_session_id(self) -> str | None:
         return self.pty.session_id if self.pty.is_alive else None
 
-    def get_sessions(self) -> list[dict]:
-        # Mark stale "running" records as stopped
+    def _sync(self):
+        """Ensure session list is consistent with PTY state."""
+        # Mark records as stopped if their PTY is dead
+        active_id = self.active_session_id
         for s in self.sessions:
-            if s.status == "running" and s.session_id != self.active_session_id:
+            if s.status == "running" and s.session_id != active_id:
                 s.stop()
+        # Deduplicate by session_id
+        seen = set()
+        unique = []
+        for s in self.sessions:
+            if s.session_id not in seen:
+                seen.add(s.session_id)
+                unique.append(s)
+        self.sessions = unique
+
+    def get_sessions(self) -> list[dict]:
+        self._sync()
         return [s.to_dict() for s in self.sessions]
 
     def new_session(self) -> dict:
+        """Stop current PTY, create a fresh one."""
         if self.pty.is_alive:
             self.pty.stop()
         self.pty = PTYSession()
         self.pty.start()
-        if hasattr(self.pty, '_current_record') and self.pty._current_record:
+        # Register in history (only if start succeeded)
+        if self.pty._current_record:
             self.sessions.append(self.pty._current_record)
+        self._sync()
         return self.pty.status()
 
     def delete_session(self, session_id: str) -> dict:
+        """Delete a session. If active, just stops it — does NOT auto-create."""
+        self._sync()
         record = next((s for s in self.sessions if s.session_id == session_id), None)
         if not record:
             return {"ok": False, "error": "Session not found"}
-        is_active = (self.pty.session_id == session_id and self.pty.is_alive)
-        if is_active:
+
+        is_active = (self.pty.session_id == session_id)
+        if is_active and self.pty.is_alive:
             self.pty.stop()
+
         self.sessions.remove(record)
-        # Always ensure an active session exists
-        if is_active:
-            self.pty = PTYSession()
-            self.pty.start()
-            if hasattr(self.pty, '_current_record') and self.pty._current_record:
-                self.sessions.append(self.pty._current_record)
-        return {"ok": True, "active_session_id": self.pty.session_id}
+        return {"ok": True, "active_session_id": self.active_session_id}
+
+    def clear_history(self):
+        """Remove all stopped sessions from history."""
+        self._sync()
+        self.sessions = [s for s in self.sessions if s.status == "running"]
 
 
 session_manager = SessionManager()
-
-# Backward compat alias
-pty_session = session_manager.pty
-session_history = session_manager.sessions
 
 
 async def pty_terminal_websocket(ws: WebSocket):
