@@ -133,31 +133,13 @@ export default function ChatPage() {
 
   return (
     <AppShell>
-      <div className="flex h-[calc(100vh-48px)] flex-col">
-        {/* Session status bar */}
-        <div className="mb-3 flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2 text-xs">
-            {connected ? (
-              <Wifi className="h-3.5 w-3.5 text-success" />
-            ) : (
-              <WifiOff className="h-3.5 w-3.5 text-destructive" />
-            )}
-            <span className="text-muted-foreground">
-              {!connected
-                ? "Connecting..."
-                : sessionAlive
-                ? "Session active — persistent context"
-                : "Session idle — will start on first message"}
-            </span>
+      <div className="flex h-[calc(100vh-90px)] flex-col">
+        {/* Connection indicator (small, non-intrusive) */}
+        {!connected && (
+          <div className="mb-2 rounded-lg bg-warning/10 px-3 py-1.5 text-center text-xs text-warning">
+            Connecting to session...
           </div>
-          <button
-            onClick={handleRestart}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            <RotateCcw className="h-3 w-3" />
-            Restart
-          </button>
-        </div>
+        )}
 
         {/* Chat messages */}
         <div className="flex-1 space-y-4 overflow-y-auto pb-4">
