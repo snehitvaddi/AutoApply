@@ -1,13 +1,16 @@
 """
-Smart Chat Bridge — "Dumb Display" + /btw Questions.
+Smart Chat Bridge — Telegram-first, SQLite fallback + /btw Questions.
 
 Architecture:
-  1. STATUS FEED: Polls SQLite every 5s for new applications/queue changes.
-     Shows Telegram-style notifications in the chat.
-  2. USER QUESTIONS: Sends /btw <message> to the Terminal PTY session.
-     /btw is instant, doesn't interrupt Claude's work, doesn't add to history.
+  IF Telegram configured:
+    - Fetch bot messages from Telegram Bot API (getUpdates)
+    - Show real Telegram conversation in chat
+    - User can send messages that go to both Telegram + PTY
+  ELSE (fallback):
+    - Poll SQLite for status updates
+    - Show Telegram-style notification cards
 
-No ANSI parsing. No raw terminal output. Clean, human-friendly chat.
+  USER QUESTIONS always go via /btw to the Terminal PTY session.
 """
 from __future__ import annotations
 
@@ -16,12 +19,83 @@ import logging
 import re
 import time
 
+import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 
 from . import local_data
+from .config import load_token, APP_URL
 
 logger = logging.getLogger(__name__)
 
+# ── Telegram integration ─────────────────────────────────────────────────────
+
+_telegram_config: dict | None = None
+
+
+async def _get_telegram_config() -> dict | None:
+    """Fetch Telegram bot token + chat_id from the worker proxy API."""
+    global _telegram_config
+    if _telegram_config is not None:
+        return _telegram_config if _telegram_config.get("bot_token") else None
+
+    token = load_token()
+    if not token:
+        _telegram_config = {}
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{APP_URL}/api/worker/proxy",
+                json={"action": "get_telegram_config"},
+                headers={"X-Worker-Token": token},
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            _telegram_config = {
+                "bot_token": data.get("bot_token"),
+                "chat_id": data.get("chat_id"),
+            }
+            if _telegram_config["bot_token"] and _telegram_config["chat_id"]:
+                logger.info("Telegram configured — using Telegram for chat feed")
+                return _telegram_config
+            _telegram_config = {}
+            return None
+    except Exception as e:
+        logger.debug(f"Telegram config fetch failed: {e}")
+        _telegram_config = {}
+        return None
+
+
+async def _fetch_telegram_messages(bot_token: str, chat_id: str, since_id: int = 0) -> list[dict]:
+    """Fetch recent bot messages from Telegram using getUpdates."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            # Use getUpdates to get recent messages the bot sent
+            resp = await client.get(
+                f"https://api.telegram.org/bot{bot_token}/getUpdates",
+                params={"offset": since_id + 1, "limit": 20, "timeout": 0},
+            )
+            resp.raise_for_status()
+            updates = resp.json().get("result", [])
+
+            messages = []
+            for update in updates:
+                msg = update.get("message", {})
+                if str(msg.get("chat", {}).get("id")) == str(chat_id):
+                    messages.append({
+                        "update_id": update.get("update_id", 0),
+                        "text": msg.get("text", ""),
+                        "date": msg.get("date", 0),
+                        "from_bot": msg.get("from", {}).get("is_bot", False),
+                    })
+            return messages
+    except Exception as e:
+        logger.debug(f"Telegram fetch failed: {e}")
+        return []
+
+
+# ── WebSocket handler ────────────────────────────────────────────────────────
 
 async def chat_websocket(ws: WebSocket):
     """
@@ -36,14 +110,20 @@ async def chat_websocket(ws: WebSocket):
 
     from .pty_terminal import session_manager
 
+    # Check if Telegram is configured
+    tg_config = await _get_telegram_config()
+    use_telegram = tg_config is not None
+    tg_last_update_id = 0
+
     # Track what we've already sent
     last_check_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 300))
     last_queue_count = local_data.get_queue_count()
 
     # Send initial status
+    source = "Telegram" if use_telegram else "local database"
     await ws.send_json({
         "type": "system",
-        "data": "Connected to ApplyLoop. You'll see live status updates here.",
+        "data": f"Connected to ApplyLoop. Status updates from {source}.",
     })
 
     # Send recent activity (last 20)
@@ -61,17 +141,33 @@ async def chat_websocket(ws: WebSocket):
     )
 
     async def _status_feed():
-        """Poll SQLite every 5s and send new activity to chat."""
-        nonlocal last_check_time, last_queue_count
+        """Poll for updates — Telegram if configured, otherwise SQLite."""
+        nonlocal last_check_time, last_queue_count, tg_last_update_id
         try:
             while True:
                 await asyncio.sleep(5)
 
-                # Check for new applications
-                new_entries = local_data.get_recent_activity(since=last_check_time, limit=10)
-                if new_entries:
-                    last_check_time = new_entries[0].get("applied_at", last_check_time)
-                    await ws.send_json({"type": "activity", "entries": new_entries})
+                if use_telegram and tg_config:
+                    # Fetch from Telegram Bot API
+                    messages = await _fetch_telegram_messages(
+                        tg_config["bot_token"], tg_config["chat_id"], tg_last_update_id
+                    )
+                    if messages:
+                        tg_last_update_id = max(m["update_id"] for m in messages)
+                        for msg in messages:
+                            if msg["text"]:
+                                await ws.send_json({
+                                    "type": "telegram",
+                                    "data": msg["text"],
+                                    "from_bot": msg["from_bot"],
+                                    "timestamp": msg["date"],
+                                })
+                else:
+                    # Fallback: poll SQLite
+                    new_entries = local_data.get_recent_activity(since=last_check_time, limit=10)
+                    if new_entries:
+                        last_check_time = new_entries[0].get("applied_at", last_check_time)
+                        await ws.send_json({"type": "activity", "entries": new_entries})
 
                 # Check queue count changes
                 current_queue = local_data.get_queue_count()

@@ -90,6 +90,11 @@ def build_mac_app():
     shutil.copy2(HERE / "requirements.txt", resources)
     shutil.copy2(HERE / "launch.py", resources)
 
+    # Copy app icon
+    icon_src = HERE / "AppIcon.icns"
+    if icon_src.exists():
+        shutil.copy2(icon_src, resources / "AppIcon.icns")
+
     # Create venv with all deps pre-installed (force arm64 for Apple Silicon)
     print("[Build] Creating Python venv inside .app (arm64)...")
     venv_dir = resources / "venv"
@@ -118,6 +123,8 @@ def build_mac_app():
     <string>{VERSION}</string>
     <key>CFBundleExecutable</key>
     <string>launcher</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>

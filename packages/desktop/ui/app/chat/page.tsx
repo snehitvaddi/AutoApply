@@ -71,6 +71,8 @@ export default function ChatPage() {
       data?: string
       entries?: StatusEntry[]
       count?: number
+      from_bot?: boolean
+      timestamp?: number
     }
 
     if (msg.type === "system") {
@@ -80,6 +82,15 @@ export default function ChatPage() {
       setItems((prev) => [
         ...prev,
         { type: "status", content: "", entries: msg.entries, timestamp: new Date().toISOString() },
+      ])
+    } else if (msg.type === "telegram") {
+      // Real Telegram message
+      setItems((prev) => [
+        ...prev,
+        {
+          type: msg.from_bot ? "response" : "user",
+          content: msg.data || "",
+        },
       ])
     } else if (msg.type === "queue_update") {
       setItems((prev) => [
