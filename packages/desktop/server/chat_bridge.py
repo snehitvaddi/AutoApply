@@ -273,10 +273,25 @@ async def chat_websocket(ws: WebSocket):
     # Import PTY session
     from .pty_terminal import session_manager
 
-    # Auto-start PTY if not running
+    # Check if PTY is running — don't auto-start, let user control via session dropdown
     if not session_manager.pty.is_alive:
-        session_manager.new_session()
-        await asyncio.sleep(3)  # Wait for Claude to initialize
+        await ws.send_json({
+            "type": "system",
+            "data": "No active session. Start one from the session dropdown (top right) or Terminal tab.",
+        })
+        # Wait for a session to become available
+        while not session_manager.pty.is_alive:
+            try:
+                msg = await asyncio.wait_for(ws.receive_json(), timeout=2.0)
+                if msg.get("action") == "message":
+                    # User sent a message — auto-start session for them
+                    session_manager.new_session()
+                    await asyncio.sleep(3)
+                    break
+            except asyncio.TimeoutError:
+                continue
+            except Exception:
+                return
 
     await ws.send_json({
         "type": "session_status",
@@ -287,30 +302,43 @@ async def chat_websocket(ws: WebSocket):
     # Subscribe to PTY output
     queue = session_manager.pty.subscribe()
 
-    # Buffer to accumulate PTY output into coherent messages
-    _ansi_escape = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b[^[\]()]|\r')
+    # ANSI escape code stripper
+    _ansi_re = re.compile(r'''
+        \x1b      # ESC
+        (?:
+            \[[0-9;?]*[a-zA-Z]   # CSI sequences [0m, [1;32m, etc
+            |\][^\x07]*\x07       # OSC sequences ]...BEL
+            |\([A-Z]              # Character set
+            |[=><=]               # Other ESC sequences
+            |>                    #
+        )
+    ''', re.VERBOSE)
 
     async def _relay_output():
-        """Forward PTY output to Chat WebSocket, stripping ANSI codes."""
+        """Forward PTY output to Chat, stripping ANSI codes, buffering into chunks."""
         buffer = ""
         try:
             while True:
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=0.5)
-                    # Strip ANSI escape codes for clean chat display
+                    data = await asyncio.wait_for(queue.get(), timeout=1.0)
                     text = data.decode("utf-8", errors="replace")
-                    clean = _ansi_escape.sub("", text)
-                    clean = clean.replace("\r", "")
+                    # Strip ANSI
+                    clean = _ansi_re.sub("", text)
+                    # Strip carriage returns and other control chars
+                    clean = re.sub(r'[\r\x00-\x08\x0e-\x1f]', '', clean)
                     if clean.strip():
                         buffer += clean
-                except asyncio.TimeoutError:
-                    # Flush buffer as a message after a pause in output
-                    if buffer.strip():
-                        await ws.send_json({"type": "stream", "data": buffer.strip()})
+                    # Flush if buffer is getting large
+                    if len(buffer) > 500:
+                        await ws.send_json({"type": "stream", "data": buffer})
                         buffer = ""
-                    continue
-        except Exception:
-            pass
+                except asyncio.TimeoutError:
+                    # Flush on pause
+                    if buffer.strip():
+                        await ws.send_json({"type": "stream", "data": buffer})
+                        buffer = ""
+        except Exception as e:
+            logger.debug(f"Chat relay ended: {e}")
 
     relay_task = asyncio.create_task(_relay_output())
 

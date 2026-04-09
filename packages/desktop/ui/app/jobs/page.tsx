@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { AppShell } from "@/components/app-shell"
-import { getRecentApplications, getPipeline, deleteFromQueue, clearQueue, type Application, type PipelineJob } from "@/lib/api"
+import { getRecentApplications, getPipeline, getStats, deleteFromQueue, clearQueue, type Application, type PipelineJob } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Check, X, Clock, Loader2, Filter, Trash2, XCircle } from "lucide-react"
 
@@ -64,15 +64,18 @@ type FilterType = "all" | "submitted" | "failed"
 export default function JobsListPage() {
   const [applied, setApplied] = useState<Application[]>([])
   const [queued, setQueued] = useState<Application[]>([])
+  const [totalApplied, setTotalApplied] = useState(0)
+  const [totalQueue, setTotalQueue] = useState(0)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<FilterType>("all")
   const appliedEndRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
     try {
-      const [recentRes, pipelineRes] = await Promise.allSettled([
-        getRecentApplications(500),
+      const [recentRes, pipelineRes, statsRes] = await Promise.allSettled([
+        getRecentApplications(2000),
         getPipeline(),
+        getStats(),
       ])
 
       if (recentRes.status === "fulfilled" && recentRes.value.ok) {
@@ -100,6 +103,12 @@ export default function JobsListPage() {
           })
         )
         setQueued(queuedJobs)
+        setTotalQueue(queuedJobs.length)
+      }
+
+      if (statsRes.status === "fulfilled" && statsRes.value.ok) {
+        setTotalApplied(statsRes.value.data.total_applied || 0)
+        setTotalQueue((prev: number) => statsRes.value.data.in_queue || prev)
       }
     } catch {
       /* ignore */
@@ -132,7 +141,7 @@ export default function JobsListPage() {
           <div>
             <h1 className="text-xl font-semibold text-foreground">Jobs List</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              {applied.length} applied &middot; {queued.length} in queue
+              {totalApplied || applied.length} applied &middot; {totalQueue || queued.length} in queue
             </p>
           </div>
 
