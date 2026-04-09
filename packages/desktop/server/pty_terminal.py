@@ -201,23 +201,6 @@ class PTYSession:
             except Exception:
                 pass
 
-    INITIAL_PROMPT = (
-        "Read @CLAUDE.md for your instructions. You are the ApplyLoop job application agent. "
-        "Start by reading SOUL.md and today's memory log, then begin scouting and applying for jobs. "
-        "Run: python3 scripts/auto_loop.py"
-    )
-
-    async def _send_initial_prompt(self):
-        """Wait for Claude to finish loading, then send the startup prompt."""
-        try:
-            # Wait for Claude to initialize (watch for output to settle)
-            await asyncio.sleep(8)
-            if self.is_alive:
-                logger.info("Sending initial prompt to Claude session")
-                self.write((self.INITIAL_PROMPT + "\n").encode("utf-8"))
-        except Exception as e:
-            logger.debug(f"Initial prompt failed: {e}")
-
     async def _read_loop(self):
         """Read PTY output and broadcast to subscribers."""
         loop = asyncio.get_event_loop()
