@@ -303,40 +303,102 @@ async def chat_websocket(ws: WebSocket):
     queue = session_manager.pty.subscribe()
 
     # ANSI escape code stripper
-    _ansi_re = re.compile(r'''
-        \x1b      # ESC
-        (?:
-            \[[0-9;?]*[a-zA-Z]   # CSI sequences [0m, [1;32m, etc
-            |\][^\x07]*\x07       # OSC sequences ]...BEL
-            |\([A-Z]              # Character set
-            |[=><=]               # Other ESC sequences
-            |>                    #
-        )
-    ''', re.VERBOSE)
+    _ansi_re = re.compile(
+        r'\x1b\[[0-9;?]*[a-zA-Z]'   # CSI
+        r'|\x1b\][^\x07]*\x07'       # OSC
+        r'|\x1b\([A-Z]'              # Charset
+        r'|\x1b[=><=<>]'             # Other ESC
+        r'|\x1b'                     # Bare ESC
+    )
+
+    # Patterns to detect Claude Code activity (for status indicators)
+    _activity_patterns = [
+        (re.compile(r'Bash\(([^)]+)\)'), lambda m: f"Running: {m.group(1)[:60]}"),
+        (re.compile(r'Running[.…]+'), lambda m: None),  # skip raw "Running..."
+        (re.compile(r'(Shimmy|Swoop|Imagin|Think|Comput)[a-z]*[.…]+\s*\((?:thought for )?(\d+\w*)\s*'), lambda m: f"Thinking... ({m.group(2)})"),
+        (re.compile(r'(\d+) tool uses?\s*[·•]\s*([0-9.]+[km]?) tokens'), lambda m: f"Done ({m.group(1)} tools, {m.group(2)} tokens)"),
+        (re.compile(r'Searching for \d+ pattern'), lambda m: "Searching files..."),
+        (re.compile(r'[Rr]eading? (\d+) files?'), lambda m: f"Reading {m.group(1)} files..."),
+        (re.compile(r'Read \d+ files?'), lambda m: None),  # skip verbose
+        (re.compile(r'bypass permissions'), lambda m: None),  # skip UI chrome
+        (re.compile(r'ctrl\+[a-z]'), lambda m: None),  # skip keyboard hints
+        (re.compile(r'shift\+tab'), lambda m: None),
+        (re.compile(r'esc to interrupt'), lambda m: None),
+    ]
+
+    # Patterns for meaningful content to show as messages
+    _content_re = re.compile(r'[⏺●▶]\s*(.+)')  # Claude's output markers
 
     async def _relay_output():
-        """Forward PTY output to Chat, stripping ANSI codes, buffering into chunks."""
-        buffer = ""
+        """
+        Intelligent PTY → Chat relay.
+
+        Instead of dumping raw terminal output, this:
+        1. Detects activity patterns → sends status updates (thinking, running, etc.)
+        2. Extracts meaningful text → sends as chat messages
+        3. Drops noise (spinners, control chars, keyboard hints)
+        """
+        raw_buffer = b""
+        last_status = ""
+
         try:
             while True:
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=1.0)
-                    text = data.decode("utf-8", errors="replace")
+                    data = await asyncio.wait_for(queue.get(), timeout=1.5)
+                    raw_buffer += data
+                except asyncio.TimeoutError:
+                    # Process accumulated buffer on pause
+                    if not raw_buffer:
+                        continue
+
+                    text = raw_buffer.decode("utf-8", errors="replace")
+                    raw_buffer = b""
+
                     # Strip ANSI
                     clean = _ansi_re.sub("", text)
-                    # Strip carriage returns and other control chars
                     clean = re.sub(r'[\r\x00-\x08\x0e-\x1f]', '', clean)
-                    if clean.strip():
-                        buffer += clean
-                    # Flush if buffer is getting large
-                    if len(buffer) > 500:
-                        await ws.send_json({"type": "stream", "data": buffer})
-                        buffer = ""
-                except asyncio.TimeoutError:
-                    # Flush on pause
-                    if buffer.strip():
-                        await ws.send_json({"type": "stream", "data": buffer})
-                        buffer = ""
+
+                    # Skip empty or whitespace-only
+                    if not clean.strip():
+                        continue
+
+                    # Check for activity patterns → send as status
+                    for pattern, formatter in _activity_patterns:
+                        match = pattern.search(clean)
+                        if match:
+                            result = formatter(match)
+                            if result and result != last_status:
+                                last_status = result
+                                await ws.send_json({"type": "activity", "data": result})
+                            break
+                    else:
+                        # Not an activity pattern — check for meaningful content
+                        lines = clean.split("\n")
+                        meaningful = []
+                        for line in lines:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            # Skip noise
+                            if len(line) < 3:
+                                continue
+                            if line in ('>', '❯', '●', '⏺', '*', '◆'):
+                                continue
+                            if 'bypass permissions' in line.lower():
+                                continue
+                            if 'ctrl+' in line.lower() or 'shift+tab' in line.lower():
+                                continue
+                            if 'esc to' in line.lower():
+                                continue
+                            # Keep meaningful text
+                            meaningful.append(line)
+
+                        if meaningful:
+                            content = "\n".join(meaningful)
+                            # Only send if it's substantial (not just fragments)
+                            if len(content) > 10:
+                                await ws.send_json({"type": "stream", "data": content})
+
         except Exception as e:
             logger.debug(f"Chat relay ended: {e}")
 

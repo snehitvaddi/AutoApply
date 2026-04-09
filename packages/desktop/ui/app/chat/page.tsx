@@ -48,6 +48,7 @@ export default function ChatPage() {
   const [input, setInput] = useState("")
   const [isThinking, setIsThinking] = useState(false)
   const [sessionAlive, setSessionAlive] = useState(false)
+  const [activity, setActivity] = useState("")
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const streamingRef = useRef("")
 
@@ -77,9 +78,14 @@ export default function ChatPage() {
       })
     } else if (msg.type === "backfill_done") {
       // Backfill complete
+    } else if (msg.type === "activity") {
+      // Live status from Claude — show as activity indicator
+      setActivity(msg.data)
+      setIsThinking(true)
     } else if (msg.type === "status" && msg.data === "thinking") {
       setIsThinking(true)
     } else if (msg.type === "stream") {
+      setActivity("")  // Clear activity when real content arrives
       setIsThinking(false)
       // Append to the last assistant message, or create a new one
       setMessages((prev) => {
@@ -165,21 +171,28 @@ export default function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Activity indicator — shows what Claude is doing */}
+        {activity && (
+          <div className="flex items-center gap-2 border-t border-border px-4 py-2">
+            <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+            <span className="text-xs text-muted-foreground">{activity}</span>
+          </div>
+        )}
+
         {/* Input area */}
-        <div className="border-t border-border pt-4">
+        <div className="border-t border-border pt-3">
           <div className="flex items-center gap-2 rounded-xl border border-border bg-card p-2">
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-              placeholder="Ask ApplyLoop anything..."
+              placeholder={isThinking ? "Claude is working..." : "Ask ApplyLoop anything..."}
               className="flex-1 bg-transparent px-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
-              disabled={isThinking}
             />
             <button
               onClick={handleSend}
-              disabled={isThinking || !input.trim()}
+              disabled={!input.trim()}
               className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
             >
               {isThinking ? (
