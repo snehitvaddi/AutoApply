@@ -86,8 +86,9 @@ def build_mac_app():
     else:
         print("[Build] WARNING: ui/out/ not found — run build_ui() first")
 
-    # Copy requirements
+    # Copy requirements and launcher
     shutil.copy2(HERE / "requirements.txt", resources)
+    shutil.copy2(HERE / "launch.py", resources)
 
     # Create venv with all deps pre-installed (force arm64 for Apple Silicon)
     print("[Build] Creating Python venv inside .app (arm64)...")
