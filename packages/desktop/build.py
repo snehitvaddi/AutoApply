@@ -124,7 +124,7 @@ def build_mac_app():
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>LSUIElement</key>
-    <true/>
+    <false/>
 </dict>
 </plist>
 """)
