@@ -79,31 +79,37 @@ export default function ChatPage() {
       // Backfill complete
     } else if (msg.type === "status" && msg.data === "thinking") {
       setIsThinking(true)
-      streamingRef.current = ""
-      setMessages((prev) => [...prev, { role: "assistant", content: "", streaming: true }])
     } else if (msg.type === "stream") {
       setIsThinking(false)
-      streamingRef.current += msg.data + "\n"
+      // Append to the last assistant message, or create a new one
       setMessages((prev) => {
-        const updated = [...prev]
-        const last = updated[updated.length - 1]
+        const last = prev[prev.length - 1]
         if (last?.role === "assistant" && last.streaming) {
-          updated[updated.length - 1] = { ...last, content: streamingRef.current.trim() }
-        } else {
-          // No streaming message yet — create one
-          return [...prev, { role: "assistant", content: msg.data, streaming: true }]
+          // Append to existing — but cap at 2000 chars per bubble, then start new
+          const newContent = last.content + msg.data
+          if (newContent.length > 2000) {
+            return [
+              ...prev.slice(0, -1),
+              { ...last, content: last.content, streaming: false },
+              { role: "assistant" as const, content: msg.data, streaming: true },
+            ]
+          }
+          return [
+            ...prev.slice(0, -1),
+            { ...last, content: newContent },
+          ]
         }
-        return updated
+        // New assistant message
+        return [...prev, { role: "assistant" as const, content: msg.data, streaming: true }]
       })
     } else if (msg.type === "done") {
       setIsThinking(false)
       setMessages((prev) => {
-        const updated = [...prev]
-        const last = updated[updated.length - 1]
+        const last = prev[prev.length - 1]
         if (last?.role === "assistant") {
-          updated[updated.length - 1] = { ...last, content: msg.data, streaming: false }
+          return [...prev.slice(0, -1), { ...last, streaming: false }]
         }
-        return updated
+        return prev
       })
     } else if (msg.type === "error") {
       setIsThinking(false)
