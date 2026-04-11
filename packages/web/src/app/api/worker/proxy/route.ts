@@ -170,6 +170,130 @@ export async function POST(request: NextRequest) {
         return apiSuccess({ updated: true });
       }
 
+      case "list_resumes": {
+        // Return the authenticated user's resumes so the desktop Settings
+        // tab can render a "current resume" widget with download link.
+        const { data, error } = await supabase
+          .from("user_resumes")
+          .select("id, storage_path, file_name, is_default, target_keywords, created_at")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false });
+        if (error) return apiError("internal_server_error", error.message);
+        return apiSuccess({ resumes: data || [] });
+      }
+
+      case "upload_resume": {
+        // Accept a base64-encoded PDF from the desktop and write it to
+        // Supabase Storage + user_resumes. Mirrors the validation in
+        // packages/web/src/app/api/onboarding/resume/route.ts (Agent B's
+        // fb23c2c fix): 10 MB cap, PDF magic-byte sniff, sanitized filename.
+        //
+        // Params:
+        //   content_base64   required   full PDF body, base64-encoded
+        //   file_name        required   user-supplied display name
+        //   target_keywords  optional   string[] for resume routing
+        //   is_default       optional   boolean — if true, clears other
+        //                               rows' is_default flag for this user
+        const MAX_BYTES = 10 * 1024 * 1024;
+        const contentB64 = params.content_base64 as string | undefined;
+        const rawName = (params.file_name as string | undefined) || "resume.pdf";
+        const targetKeywords = Array.isArray(params.target_keywords)
+          ? (params.target_keywords as string[]).slice(0, 20)
+          : [];
+        const makeDefault = params.is_default !== false; // default true
+
+        if (!contentB64 || typeof contentB64 !== "string") {
+          return apiError("validation_error", "content_base64 is required");
+        }
+
+        let buf: Buffer;
+        try {
+          buf = Buffer.from(contentB64, "base64");
+        } catch {
+          return apiError("validation_error", "content_base64 is not valid base64");
+        }
+
+        if (buf.length === 0) {
+          return apiError("validation_error", "resume is empty");
+        }
+        if (buf.length > MAX_BYTES) {
+          return apiError(
+            "validation_error",
+            `resume exceeds 10 MB cap (got ${buf.length} bytes)`
+          );
+        }
+        // PDF magic byte sniff — first 4 bytes must be "%PDF"
+        if (buf.slice(0, 4).toString("ascii") !== "%PDF") {
+          return apiError(
+            "validation_error",
+            "file does not look like a PDF (missing %PDF magic bytes)"
+          );
+        }
+
+        // Sanitize filename so it can't traverse paths or inject weird chars
+        // into the storage_path. Keep only [a-zA-Z0-9._-], collapse the rest.
+        const cleanName = rawName
+          .replace(/[^a-zA-Z0-9._-]/g, "_")
+          .replace(/^_+|_+$/g, "")
+          .slice(0, 120) || "resume.pdf";
+        // Guarantee .pdf suffix
+        const finalName = cleanName.toLowerCase().endsWith(".pdf")
+          ? cleanName
+          : `${cleanName}.pdf`;
+
+        // Storage path: resumes/{user_id}/{timestamp}_{filename}.pdf
+        // Timestamp prefix means re-uploads don't overwrite each other —
+        // the user keeps a history and can be routed between them via
+        // target_keywords.
+        const storagePath = `${userId}/${Date.now()}_${finalName}`;
+
+        const uploadRes = await supabase.storage
+          .from("resumes")
+          .upload(storagePath, buf, {
+            contentType: "application/pdf",
+            upsert: false,
+          });
+        if (uploadRes.error) {
+          return apiError(
+            "internal_server_error",
+            `storage upload failed: ${uploadRes.error.message}`
+          );
+        }
+
+        // If this upload is being flagged as the default, clear is_default
+        // on every other resume row for this user first (the client usually
+        // passes is_default=true — so single-resume users get the right row).
+        if (makeDefault) {
+          await supabase
+            .from("user_resumes")
+            .update({ is_default: false })
+            .eq("user_id", userId);
+        }
+
+        const { data: insertRow, error: insertErr } = await supabase
+          .from("user_resumes")
+          .insert({
+            user_id: userId,
+            storage_path: storagePath,
+            file_name: finalName,
+            is_default: makeDefault,
+            target_keywords: targetKeywords,
+          })
+          .select("id, storage_path, file_name, is_default, target_keywords, created_at")
+          .single();
+        if (insertErr) {
+          // Try to roll back the storage write — best effort, don't block
+          // the error return.
+          try { await supabase.storage.from("resumes").remove([storagePath]); } catch {}
+          return apiError("internal_server_error", insertErr.message);
+        }
+
+        return apiSuccess({
+          resume: insertRow,
+          size_bytes: buf.length,
+        });
+      }
+
       case "update_preferences": {
         // Upsert the authenticated user's job preferences. Same scoping +
         // allowlist pattern as update_profile.

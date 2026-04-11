@@ -232,6 +232,42 @@ export async function updatePreferences(data: Record<string, unknown>) {
   });
 }
 
+// ── Resumes ─────────────────────────────────────────────────────────────────
+
+export interface ResumeRow {
+  id: string;
+  storage_path: string;
+  file_name: string;
+  is_default: boolean;
+  target_keywords: string[];
+  created_at: string;
+}
+
+export async function listResumes() {
+  return apiFetch<{ ok: boolean; data: { resumes: ResumeRow[] } }>("/resumes");
+}
+
+export async function uploadResume(
+  file: File,
+  opts?: { isDefault?: boolean; targetKeywords?: string[] }
+): Promise<{ ok: boolean; data?: { resume: ResumeRow; size_bytes: number }; error?: string }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("is_default", String(opts?.isDefault !== false));
+  fd.append("target_keywords", (opts?.targetKeywords || []).join(","));
+  const res = await fetch(`${API_BASE}/resumes/upload`, {
+    method: "POST",
+    body: fd,
+  });
+  // Don't use apiFetch here — it forces application/json Content-Type,
+  // which breaks multipart boundary detection.
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    return { ok: false, error: `HTTP ${res.status}: ${txt.slice(0, 200)}` };
+  }
+  return res.json();
+}
+
 // ── Session Control ─────────────────────────────────────────────────────────
 
 export interface SessionStatus {
