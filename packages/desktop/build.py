@@ -7,6 +7,16 @@ Single-process architecture:
   - FastAPI serves the static UI + API + WebSocket
   - Everything bundles into ONE executable
 
+DEPRECATED as of v1.0.8 — the primary install path is now the curl
+script at `install.sh` in the repo root, which builds the .app bundle
+on the user's machine instead of shipping it pre-built. The local
+approach sidesteps macOS Gatekeeper entirely (locally-built bundles
+have no quarantine bit) and removes the need for codesigning or
+notarization. This file is kept around for power users who want a
+fully self-contained .dmg without an internet-dependent install, but
+new releases no longer cut .dmg artifacts. Gatekeeper-related issues
+should be reported against the install.sh path instead.
+
 Usage:
   python build.py          # Build for current platform
   python build.py --mac    # Build .app + .dmg installer

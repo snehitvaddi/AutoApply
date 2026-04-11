@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# ApplyLoop CLI shim — installed via symlink at ~/.local/bin/applyloop.
+#
+#   applyloop start      — open the .app (which execs the venv launcher)
+#   applyloop stop       — kill the running launch.py process
+#   applyloop status     — GET /api/health and pretty-print
+#   applyloop logs       — tail ~/.autoapply/desktop.log
+#   applyloop update     — git pull + pip reinstall + UI rebuild + regen .app
+#   applyloop uninstall  — remove ~/.applyloop, /Applications/ApplyLoop.app, the shim
+set -euo pipefail
+
+APPLYLOOP_HOME="${APPLYLOOP_HOME:-$HOME/.applyloop}"
+APPLYLOOP_APP="${APPLYLOOP_APP:-/Applications/ApplyLoop.app}"
+APPLYLOOP_BRANCH="${APPLYLOOP_BRANCH:-main}"
+PORT="${APPLYLOOP_PORT:-18790}"
+LOG="$HOME/.autoapply/desktop.log"
+
+log() { echo "[applyloop] $*"; }
+
+cmd_start() {
+  if [[ ! -d "$APPLYLOOP_APP" ]]; then
+    echo "ApplyLoop.app not found at $APPLYLOOP_APP — run the curl installer first." >&2
+    exit 1
+  fi
+  log "Opening $APPLYLOOP_APP"
+  open "$APPLYLOOP_APP"
+}
+
+cmd_stop() {
+  if pgrep -f "$APPLYLOOP_HOME/packages/desktop/launch.py" >/dev/null 2>&1; then
+    log "Stopping running launch.py under $APPLYLOOP_HOME"
+    pkill -f "$APPLYLOOP_HOME/packages/desktop/launch.py" 2>/dev/null || true
+    sleep 1
+    if pgrep -f "$APPLYLOOP_HOME/packages/desktop/launch.py" >/dev/null 2>&1; then
+      log "Graceful kill failed, sending SIGKILL"
+      pkill -9 -f "$APPLYLOOP_HOME/packages/desktop/launch.py" 2>/dev/null || true
+    fi
+    log "Stopped"
+  else
+    log "Not running"
+  fi
+}
+
+cmd_status() {
+  local out
+  if out="$(curl -sS --max-time 3 "http://localhost:$PORT/api/health" 2>/dev/null)"; then
+    if [[ -n "$out" ]]; then
+      echo "$out" | python3 -m json.tool 2>/dev/null || echo "$out"
+      return 0
+    fi
+  fi
+  echo "Not running (no response on http://localhost:$PORT/api/health)"
+  return 1
+}
+
+cmd_logs() {
+  if [[ ! -f "$LOG" ]]; then
+    echo "No log yet at $LOG — has ApplyLoop ever been started?"
+    exit 1
+  fi
+  tail -f "$LOG"
+}
+
+cmd_update() {
+  if [[ ! -d "$APPLYLOOP_HOME/.git" ]]; then
+    echo "No git repo at $APPLYLOOP_HOME — run the curl installer first." >&2
+    exit 1
+  fi
+  log "git fetch origin $APPLYLOOP_BRANCH"
+  git -C "$APPLYLOOP_HOME" fetch origin "$APPLYLOOP_BRANCH"
+  git -C "$APPLYLOOP_HOME" reset --hard "origin/$APPLYLOOP_BRANCH"
+
+  log "Reinstalling python deps (single-pass)"
+  "$APPLYLOOP_HOME/venv/bin/pip" install --quiet \
+    -r "$APPLYLOOP_HOME/packages/desktop/requirements.txt" \
+    -r "$APPLYLOOP_HOME/packages/worker/requirements.txt"
+
+  log "Rebuilding static UI"
+  (
+    cd "$APPLYLOOP_HOME/packages/desktop/ui"
+    npm install --silent
+    npm run build --silent
+  )
+
+  log "Regenerating $APPLYLOOP_APP"
+  APPLYLOOP_HOME="$APPLYLOOP_HOME" APPLYLOOP_APP="$APPLYLOOP_APP" \
+    bash "$APPLYLOOP_HOME/packages/desktop/scripts/build_local_app.sh"
+
+  cmd_stop || true
+
+  git -C "$APPLYLOOP_HOME" rev-parse HEAD > "$APPLYLOOP_HOME/.applyloop-version"
+  log "Done. Run: applyloop start"
+}
+
+cmd_uninstall() {
+  cmd_stop || true
+  log "Removing $APPLYLOOP_HOME"
+  rm -rf "$APPLYLOOP_HOME"
+  log "Removing $APPLYLOOP_APP"
+  rm -rf "$APPLYLOOP_APP"
+  log "Removing $HOME/.local/bin/applyloop"
+  rm -f "$HOME/.local/bin/applyloop"
+  echo
+  echo "Uninstalled. (Workspace at ~/.autoapply preserved — delete manually for a clean wipe.)"
+}
+
+usage() {
+  cat <<USAGE
+Usage: applyloop <command>
+
+Commands:
+  start       Open /Applications/ApplyLoop.app (launches the wizard)
+  stop        Kill the running launch.py server
+  status      GET /api/health and pretty-print JSON
+  logs        Tail ~/.autoapply/desktop.log
+  update      git pull + reinstall deps + rebuild UI + regen .app
+  uninstall   Remove ~/.applyloop, the .app bundle, and this shim
+
+Env:
+  APPLYLOOP_HOME    ($APPLYLOOP_HOME)
+  APPLYLOOP_APP     ($APPLYLOOP_APP)
+  APPLYLOOP_PORT    ($PORT)
+USAGE
+}
+
+case "${1:-}" in
+  start)     cmd_start ;;
+  stop)      cmd_stop ;;
+  status)    cmd_status ;;
+  logs)      cmd_logs ;;
+  update)    cmd_update ;;
+  uninstall) cmd_uninstall ;;
+  ""|-h|--help|help) usage ;;
+  *)         echo "Unknown command: $1" >&2; usage; exit 1 ;;
+esac

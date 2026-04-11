@@ -38,7 +38,6 @@ export default function SetupCompletePage() {
   const [activationLoading, setActivationLoading] = useState(true);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const [dmgSha256, setDmgSha256] = useState<string | null>(null);
   const [releaseTag, setReleaseTag] = useState<string>(FALLBACK_TAG);
   const [dmgName, setDmgName] = useState<string>(FALLBACK_DMG);
 
@@ -48,9 +47,9 @@ export default function SetupCompletePage() {
     else if (platform.includes("win")) setOs("windows");
   }, []);
 
-  // Fetch the latest release from GitHub on mount and extract the .dmg asset
-  // + sha256 sidecar. On any failure we keep the FALLBACK_* constants, which
-  // point at the last known-good release.
+  // Fetch the latest release from GitHub on mount — still used to label the
+  // deprecated .dmg fallback link with the actual latest version. On any
+  // failure we keep the FALLBACK_* constants.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -62,23 +61,10 @@ export default function SetupCompletePage() {
         type GhAsset = { name: string; browser_download_url: string };
         const assets: GhAsset[] = Array.isArray(body?.assets) ? body.assets : [];
         const dmg = assets.find((a) => a.name?.endsWith(".dmg"));
-        const shaAsset = assets.find((a) => a.name?.endsWith(".dmg.sha256"));
         if (cancelled || !tag || !dmg) return;
 
         setReleaseTag(tag);
         setDmgName(dmg.name);
-
-        if (shaAsset) {
-          const sr = await fetch(shaAsset.browser_download_url, {
-            cache: "no-store",
-          });
-          if (!sr.ok) return;
-          const text = await sr.text();
-          const hash = text.trim().split(/\s+/)[0];
-          if (!cancelled && hash && /^[a-f0-9]{64}$/.test(hash)) {
-            setDmgSha256(hash);
-          }
-        }
       } catch {
         /* best-effort — page still works with fallback values */
       }
@@ -89,7 +75,6 @@ export default function SetupCompletePage() {
   }, []);
 
   const dmgUrl = `${releaseBase(releaseTag)}/${dmgName}`;
-  const dmgSha256Url = `${releaseBase(releaseTag)}/${dmgName}.sha256`;
 
   // Fetch the authenticated user's current activation code so we can render
   // it inline. Falls back to a "contact admin" path if there isn't one yet.
@@ -124,10 +109,6 @@ export default function SetupCompletePage() {
       /* clipboard may be unavailable */
     }
   }
-
-  const verifyCommand = dmgSha256
-    ? `shasum -a 256 ~/Downloads/${dmgName}\n# expected: ${dmgSha256}`
-    : `shasum -a 256 ~/Downloads/${dmgName}\n# compare against the sha256 shown on the release page`;
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
@@ -221,65 +202,80 @@ export default function SetupCompletePage() {
                 : "border-gray-200"
             }`}
           >
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className="text-3xl">&#63743;</div>
-                <div>
-                  <p className="font-semibold">macOS</p>
-                  <p className="text-sm text-gray-500">
-                    Intel and Apple Silicon
-                  </p>
-                </div>
-                {os === "mac" && (
-                  <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">
-                    Detected
-                  </span>
-                )}
+            <div className="flex items-center gap-3 mb-4">
+              <div className="text-3xl">&#63743;</div>
+              <div className="flex-1">
+                <p className="font-semibold">macOS Install</p>
+                <p className="text-sm text-gray-500">
+                  Intel and Apple Silicon
+                </p>
               </div>
-              <a
-                href={dmgUrl}
-                download={dmgName}
-                className="px-5 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
-              >
-                Download {releaseTag}
-              </a>
+              {os === "mac" && (
+                <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">
+                  Detected
+                </span>
+              )}
             </div>
 
-            <ol className="text-sm text-gray-700 space-y-1 list-decimal list-inside mb-4">
-              <li>
-                Click <strong>Download {releaseTag}</strong> above (~15 MB)
-              </li>
-              <li>
-                Double-click the <code>.dmg</code> and drag{" "}
-                <strong>ApplyLoop.app</strong> to <strong>/Applications</strong>
-              </li>
-              <li>
-                First launch: right-click <strong>ApplyLoop.app</strong> →{" "}
-                <em>Open</em> (one-time Gatekeeper prompt — we&apos;re not
-                Apple-signed yet)
-              </li>
-              <li>
-                Paste your activation code in the setup wizard
-              </li>
-            </ol>
-
-            <div className="bg-gray-900 text-green-400 text-xs rounded-lg p-3 overflow-x-auto whitespace-pre font-mono">
-              {verifyCommand}
-            </div>
-            <p className="text-[11px] text-gray-500 mt-2 break-all">
-              SHA256:{" "}
-              <span className="font-mono">
-                {dmgSha256 ?? "loading…"}
-              </span>{" "}
-              <a
-                href={dmgSha256Url}
-                target="_blank"
-                rel="noopener"
-                className="underline"
-              >
-                sidecar
-              </a>
+            <p className="text-sm text-gray-700 mb-2">
+              Open Terminal and paste:
             </p>
+            <div className="flex items-center gap-2 mb-4">
+              <code className="flex-1 bg-gray-900 text-green-400 border border-gray-800 rounded-lg px-4 py-2 text-xs font-mono overflow-x-auto whitespace-nowrap select-all">
+                curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash
+              </code>
+              <button
+                onClick={() =>
+                  copy(
+                    "install",
+                    "curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash",
+                  )
+                }
+                className="px-3 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
+              >
+                {copied === "install" ? "Copied" : "Copy"}
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-700 mb-2">The installer will:</p>
+            <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside mb-4">
+              <li>Install Homebrew + Node + Claude + OpenClaw</li>
+              <li>
+                Clone the ApplyLoop source to{" "}
+                <code className="text-xs">~/.applyloop</code>
+              </li>
+              <li>
+                Build the UI locally (no Apple notarization or Gatekeeper
+                popups)
+              </li>
+              <li>
+                Generate <code className="text-xs">/Applications/ApplyLoop.app</code>
+              </li>
+            </ul>
+            <p className="text-sm text-gray-700">
+              Double-click <strong>ApplyLoop</strong> in{" "}
+              <strong>/Applications</strong> to launch the wizard.
+            </p>
+
+            <hr className="my-4 border-gray-200" />
+
+            <div className="text-xs text-gray-500">
+              <p className="font-medium text-gray-600 mb-1">Advanced</p>
+              <p>
+                Prefer the .dmg?{" "}
+                <a
+                  href={dmgUrl}
+                  download={dmgName}
+                  className="underline text-gray-600 hover:text-gray-800"
+                >
+                  Download {releaseTag}
+                </a>{" "}
+                <span className="text-gray-400">
+                  (deprecated — known Gatekeeper issues, use the install script
+                  instead)
+                </span>
+              </p>
+            </div>
           </div>
 
           {/* Windows — coming soon */}

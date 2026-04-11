@@ -2,7 +2,7 @@
 
 Automated job applications for AI/ML engineers — a hybrid SaaS that runs locally on your Mac and syncs to the cloud. Supports Greenhouse, Ashby, Lever, SmartRecruiters, and Workday.
 
-**Status:** private beta, invite-only. [Download v1.0.0](https://github.com/snehitvaddi/AutoApply/releases/latest).
+**Status:** private beta, invite-only. Install via the curl one-liner below — no .dmg download, no Gatekeeper popup.
 
 ---
 
@@ -97,19 +97,45 @@ Three processes, one cloud store, one local cache:
 
 ---
 
-## For users — install and run
+## Install (macOS)
 
-### Install the desktop app
+Paste this in Terminal:
 
-1. Go to [github.com/snehitvaddi/AutoApply/releases/latest](https://github.com/snehitvaddi/AutoApply/releases/latest)
-2. Download `ApplyLoop-1.0.0.dmg` (~15 MB, SHA256 sidecar published next to it)
-3. Verify the hash (recommended):
-   ```bash
-   shasum -a 256 ~/Downloads/ApplyLoop-1.0.0.dmg
-   # compare against the .sha256 file on the release page
-   ```
-4. Double-click the `.dmg`, drag `ApplyLoop.app` to `/Applications`
-5. First launch: right-click → **Open** (one-time Gatekeeper prompt; the app is not Apple-signed yet)
+```bash
+curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash
+```
+
+That's it. The installer takes ~3-5 minutes on a fresh Mac and:
+
+- Installs Homebrew, Node.js, Python 3.11, Claude Code, and OpenClaw if you don't have them
+- Clones AutoApply to `~/.applyloop`
+- Creates an isolated Python venv (no system Python pollution)
+- Builds the static UI bundle locally
+- Generates `/Applications/ApplyLoop.app` directly on your machine — no Gatekeeper popup, no codesigning, no `xattr -cr` workaround
+
+Then double-click **ApplyLoop** in `/Applications` (or Spotlight-search it) to launch the wizard.
+
+### Updating
+
+```bash
+applyloop update
+```
+
+Pulls latest from `main`, reinstalls Python deps if `requirements.txt` changed, rebuilds the UI, and regenerates the .app bundle.
+
+### Uninstalling
+
+```bash
+applyloop uninstall
+```
+
+(Your runtime workspace at `~/.autoapply` is preserved — delete manually if you want a clean wipe.)
+
+### Why this approach?
+
+Earlier releases (v1.0.4 → v1.0.7) shipped as a downloadable `.dmg`. Each release hit a new variant of the same problem: macOS Gatekeeper attaching a quarantine bit on the bundled venv's Python symlinks, App Translocation moving the app to a random temp folder, hardened runtime requirements, etc. The "real" fix is paying Apple $99/year for a Developer ID + notarization, which also requires re-signing every binary in the bundle.
+
+The local-build approach sidesteps this entirely: macOS only quarantines files **downloaded** via the browser. Files created locally by a script never get a quarantine bit. So the .app generated on your machine works on first double-click — no Gatekeeper popup, no fees, no friction.
 
 ### Activate
 
