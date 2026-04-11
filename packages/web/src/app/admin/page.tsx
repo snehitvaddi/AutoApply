@@ -65,6 +65,14 @@ export default function AdminPage() {
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [tokenUserId, setTokenUserId] = useState<string | null>(null);
   const [usersWithTokens, setUsersWithTokens] = useState<Set<string>>(new Set());
+  const [generatedCode, setGeneratedCode] = useState<{
+    code: string;
+    expires_at: string;
+    uses_remaining: number;
+    telegram_sent: boolean;
+    email?: string;
+  } | null>(null);
+  const [showLegacyTools, setShowLegacyTools] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -149,6 +157,34 @@ export default function AdminPage() {
       setUsersWithTokens((prev) => new Set([...prev, userId]));
     }
     setActionLoading(null);
+  }
+
+  async function generateActivationCode(userId: string) {
+    setActionLoading(`code-${userId}`);
+    try {
+      const res = await fetch("/api/admin/activation-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      const payload = await res.json();
+      if (payload.data?.code) {
+        const user = users.find((u) => u.id === userId);
+        setGeneratedCode({
+          code: payload.data.code,
+          expires_at: payload.data.expires_at,
+          uses_remaining: payload.data.uses_remaining,
+          telegram_sent: Boolean(payload.data.telegram_sent),
+          email: user?.email,
+        });
+      } else {
+        alert(`Failed to generate code: ${payload.message || "unknown error"}`);
+      }
+    } catch (err) {
+      alert(`Failed to generate code: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setActionLoading(null);
+    }
   }
 
   async function revokeWorkerToken(userId: string) {
@@ -262,7 +298,18 @@ export default function AdminPage() {
 
       {/* Approved Users */}
       <section className="bg-white rounded-xl border p-6 mb-6">
-        <h2 className="font-semibold mb-4">Approved Users ({approvedUsers.length})</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold">Approved Users ({approvedUsers.length})</h2>
+          <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showLegacyTools}
+              onChange={(e) => setShowLegacyTools(e.target.checked)}
+              className="rounded"
+            />
+            Show legacy tools
+          </label>
+        </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-500 border-b">
@@ -272,7 +319,7 @@ export default function AdminPage() {
               <th className="pb-2">Onboarded</th>
               <th className="pb-2">Apps</th>
               <th className="pb-2">Joined</th>
-              <th className="pb-2">Worker Token</th>
+              <th className="pb-2">Activation</th>
             </tr>
           </thead>
           <tbody>
@@ -285,14 +332,25 @@ export default function AdminPage() {
                 <td className="py-2">{u.application_count}</td>
                 <td className="py-2 text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
                 <td className="py-2">
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 flex-wrap">
                     <button
-                      onClick={() => generateWorkerToken(u.id)}
-                      disabled={actionLoading === `token-${u.id}`}
+                      onClick={() => generateActivationCode(u.id)}
+                      disabled={actionLoading === `code-${u.id}`}
                       className="px-2 py-1 bg-brand-600 text-white rounded text-xs font-medium hover:bg-brand-700 disabled:opacity-50"
+                      title="Create an activation code and DM it to the user via Telegram"
                     >
-                      {actionLoading === `token-${u.id}` ? "..." : "Generate Token"}
+                      {actionLoading === `code-${u.id}` ? "..." : "Generate Activation Code"}
                     </button>
+                    {showLegacyTools && (
+                      <button
+                        onClick={() => generateWorkerToken(u.id)}
+                        disabled={actionLoading === `token-${u.id}`}
+                        className="px-2 py-1 bg-gray-400 text-white rounded text-xs font-medium hover:bg-gray-500 disabled:opacity-50"
+                        title="Legacy: generate raw worker token (paste into terminal setup script)"
+                      >
+                        {actionLoading === `token-${u.id}` ? "..." : "Legacy Token"}
+                      </button>
+                    )}
                     {usersWithTokens.has(u.id) && (
                       <button
                         onClick={() => revokeWorkerToken(u.id)}
@@ -440,6 +498,59 @@ export default function AdminPage() {
             ))}
           </div>
         </section>
+      )}
+
+      {/* Activation Code Generated Modal */}
+      {generatedCode && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-lg w-full mx-4">
+            <h3 className="font-semibold text-lg mb-1">🔑 Activation Code Generated</h3>
+            {generatedCode.email && (
+              <p className="text-xs text-gray-500 mb-3">for {generatedCode.email}</p>
+            )}
+            <p className="text-sm text-gray-600 mb-4">
+              The user enters this code in the ApplyLoop desktop app&apos;s setup screen. No terminal, no raw token.
+            </p>
+            <div className="bg-gray-50 rounded-lg p-4 font-mono text-xl text-center tracking-widest mb-3 select-all">
+              {generatedCode.code}
+            </div>
+            <div className="text-xs text-gray-500 mb-4 space-y-1">
+              <p>
+                <strong>Expires:</strong>{" "}
+                {new Date(generatedCode.expires_at).toLocaleString()}
+              </p>
+              <p>
+                <strong>Uses remaining:</strong> {generatedCode.uses_remaining}
+              </p>
+              <p>
+                <strong>Telegram DM:</strong>{" "}
+                {generatedCode.telegram_sent ? (
+                  <span className="text-green-600">✓ sent to user automatically</span>
+                ) : (
+                  <span className="text-amber-600">
+                    ⚠ not sent (user has no telegram_chat_id) — copy manually
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(generatedCode.code);
+                }}
+                className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
+              >
+                Copy Code
+              </button>
+              <button
+                onClick={() => setGeneratedCode(null)}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Token Generated Modal */}
