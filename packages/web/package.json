@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/compute-setup-checksums.mjs && next dev",
+    "prebuild": "node scripts/compute-setup-checksums.mjs",
     "build": "node scripts/migrate.mjs && next build",
     "build:skip-migrate": "next build",
     "migrate": "node scripts/migrate.mjs",
