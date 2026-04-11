@@ -9,12 +9,19 @@ import { PlatformChart } from "@/components/dashboard/platform-chart"
 import { RecentApplications } from "@/components/dashboard/recent-applications"
 import { useStats } from "@/hooks/use-stats"
 import {
-  checkAuth,
+  getAuthState,
   getCurrentlyApplying,
   focusBrowser,
   type CurrentlyApplyingJob,
 } from "@/lib/api"
-import { Key, ArrowRight, Loader2, ExternalLink } from "lucide-react"
+import { Key, AlertTriangle, ArrowRight, Loader2, ExternalLink } from "lucide-react"
+
+// Banner state reflects /api/auth/state, which is the desktop server's
+// real view of whether the saved worker token still authenticates against
+// the remote ApplyLoop API. `/api/auth/status` is unreliable for this —
+// it returns authenticated:true whenever the token file exists on disk,
+// swallowing 401s from the upstream proxy.
+type AuthBanner = null | "no_token" | "revoked"
 
 function elapsedTime(dateStr?: string): string {
   if (!dateStr) return ""
@@ -26,13 +33,29 @@ function elapsedTime(dateStr?: string): string {
 
 export default function DashboardPage() {
   const { stats, daily, platforms, recent, loading, error } = useStats()
-  const [needsToken, setNeedsToken] = useState(false)
+  const [authBanner, setAuthBanner] = useState<AuthBanner>(null)
   const [current, setCurrent] = useState<CurrentlyApplyingJob | null>(null)
 
   useEffect(() => {
-    checkAuth().then((res) => {
-      if (!res.authenticated) setNeedsToken(true)
-    }).catch(() => setNeedsToken(true))
+    // Poll /auth/state rather than /auth/status — the status endpoint
+    // returns authenticated:true whenever a token file exists on disk,
+    // even if every upstream call is 401'ing. /auth/state is flipped to
+    // "revoked" the first time the desktop proxy actually sees a 401/403.
+    const check = () => {
+      getAuthState()
+        .then((res) => {
+          if (res.status === "no_token") setAuthBanner("no_token")
+          else if (res.status === "revoked") setAuthBanner("revoked")
+          else setAuthBanner(null)
+        })
+        .catch(() => {
+          // Transient fetch error — don't flip the banner state so we
+          // don't flash a misleading warning on every network blip.
+        })
+    }
+    check()
+    const interval = setInterval(check, 15000)
+    return () => clearInterval(interval)
   }, [])
 
   const refreshCurrent = useCallback(async () => {
@@ -62,17 +85,36 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <div className="space-y-6">
-        {/* Setup banner */}
-        {needsToken && (
+        {/* Auth banner — revoked token takes priority so the user never
+            sees an innocuous "token required" message while stats silently
+            zero out. app-shell also bounces to /setup on revoked state;
+            this banner is the fallback for the brief interval before the
+            redirect fires (and for users who race the check). */}
+        {authBanner === "revoked" && (
           <Link
-            href="/settings/"
+            href="/setup/"
+            className="flex items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 transition-colors hover:bg-destructive/10"
+          >
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">API Token Revoked</p>
+              <p className="text-xs text-muted-foreground">
+                Your worker token is no longer valid. Re-activate with a fresh code.
+              </p>
+            </div>
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+          </Link>
+        )}
+        {authBanner === "no_token" && (
+          <Link
+            href="/setup/"
             className="flex items-center gap-3 rounded-xl border border-warning/30 bg-warning/5 p-4 transition-colors hover:bg-warning/10"
           >
             <Key className="h-5 w-5 text-warning" />
             <div className="flex-1">
               <p className="text-sm font-medium text-foreground">API Token Required</p>
               <p className="text-xs text-muted-foreground">
-                Go to Settings &rarr; API Token to connect to your ApplyLoop account. All data will load once connected.
+                Redeem an activation code to connect this desktop to your ApplyLoop account.
               </p>
             </div>
             <ArrowRight className="h-4 w-4 text-muted-foreground" />
