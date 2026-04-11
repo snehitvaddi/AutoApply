@@ -19,7 +19,7 @@ export function generateRequestId(): string {
   return `req_${createId()}`;
 }
 
-export function apiSuccess<T extends Record<string, unknown>>(
+export function apiSuccess<T>(
   data: T,
   status: number = 200
 ): NextResponse {
