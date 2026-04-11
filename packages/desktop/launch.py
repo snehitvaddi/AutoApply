@@ -21,6 +21,10 @@ HERE = Path(__file__).resolve().parent
 
 HOST = os.environ.get("APPLYLOOP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("APPLYLOOP_PORT", "18790"))
+# Headless mode is used by CI / multi-tenant tests — skip pywebview entirely
+# and let the user hit the FastAPI server directly. Setting APPLYLOOP_HEADLESS=1
+# (or running without a GUI) avoids a pywebview crash spiral on dev machines.
+HEADLESS = os.environ.get("APPLYLOOP_HEADLESS", "").lower() in ("1", "true", "yes")
 
 
 def check_deps():
@@ -76,6 +80,15 @@ def main():
 
     url = f"http://localhost:{PORT}"
 
+    if HEADLESS:
+        print(f"[ApplyLoop] HEADLESS mode — server running at {url}")
+        print(f"[ApplyLoop] Press Ctrl+C to stop.")
+        try:
+            server_thread.join()
+        except KeyboardInterrupt:
+            pass
+        return
+
     # Try pywebview (native window), fall back to browser
     try:
         import webview
@@ -101,13 +114,19 @@ def main():
             private_mode=False,
         )
 
-    except ImportError:
-        # Fallback: open in browser
+    except (ImportError, ValueError, Exception) as e:
+        # Fallback: open in browser. pywebview can fail with ValueError on
+        # older Python/macOS combinations where base_uri() can't resolve the
+        # script path — don't crash the whole app, just fall back gracefully.
         import webbrowser
-        print(f"[ApplyLoop] pywebview not found — opening in browser")
+        reason = "not found" if isinstance(e, ImportError) else f"unavailable ({e})"
+        print(f"[ApplyLoop] pywebview {reason} — opening in browser")
         print(f"  Server: {url}")
         print(f"  Press Ctrl+C to stop.")
-        webbrowser.open(url)
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
         try:
             server_thread.join()
         except KeyboardInterrupt:

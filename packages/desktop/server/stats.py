@@ -196,15 +196,18 @@ async def get_settings_profile() -> dict:
 
 
 def _read_local_profile() -> dict:
-    """Parse PROFILE.md from local workspace to extract profile fields."""
-    from pathlib import Path
+    """Parse PROFILE.md from the current workspace only.
+
+    SECURITY: previously scanned ~/.openclaw/agents/job-bot/workspace/PROFILE.md
+    as a fallback. That file on developer machines contains real PII and was
+    being merged into every user's profile response regardless of which
+    workspace they booted with — a cross-tenant data leak. Now we only
+    read the PROFILE.md that lives inside the current WORKSPACE_DIR.
+    """
+    from .config import WORKSPACE_DIR
     import re
 
-    # Check both possible locations
-    for candidate in [
-        Path.home() / ".openclaw" / "agents" / "job-bot" / "workspace" / "PROFILE.md",
-        Path.home() / ".autoapply" / "workspace" / "PROFILE.md",
-    ]:
+    for candidate in [WORKSPACE_DIR / "PROFILE.md"]:
         if candidate.exists():
             try:
                 text = candidate.read_text()
