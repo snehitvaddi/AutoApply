@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import { AppShell } from "@/components/app-shell"
 import { getProfile, updateProfile, getPreferences, updatePreferences } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { Save, Loader2, Check, User, Briefcase, Target, Key } from "lucide-react"
+import { Save, Loader2, Check, User, Briefcase, Target, Key, AlertTriangle } from "lucide-react"
 
 type Tab = "personal" | "work" | "preferences" | "auth"
 
@@ -74,6 +74,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [profile, setProfile] = useState<Record<string, string>>({})
   const [prefs, setPrefs] = useState<Record<string, string>>({})
   const [token, setToken] = useState("")
@@ -134,6 +135,7 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     setSaving(true)
+    setSaveError(null)
     try {
       if (activeTab === "personal" || activeTab === "work") {
         await updateProfile(profile)
@@ -153,8 +155,13 @@ export default function SettingsPage() {
       }
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch { /* ignore */ }
-    finally { setSaving(false) }
+    } catch (e) {
+      // Surface the failure instead of silently flashing Saved. The
+      // most common case is a revoked token — the upstream proxy returns
+      // 401, apiFetch throws, and the user is left wondering why their
+      // changes didn't stick.
+      setSaveError(e instanceof Error ? e.message : "Failed to save — check your connection and token")
+    } finally { setSaving(false) }
   }
 
   const updateField = (field: string, value: string) => {
@@ -180,20 +187,28 @@ export default function SettingsPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold text-foreground">Settings</h1>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-          >
-            {saving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : saved ? (
-              <Check className="h-4 w-4" />
-            ) : (
-              <Save className="h-4 w-4" />
+          <div className="flex items-center gap-3">
+            {saveError && (
+              <div className="flex items-center gap-1.5 rounded-lg bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+                <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+                <span className="max-w-[260px] truncate" title={saveError}>{saveError}</span>
+              </div>
             )}
-            {saved ? "Saved!" : "Save Changes"}
-          </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : saved ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              {saved ? "Saved!" : "Save Changes"}
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}
