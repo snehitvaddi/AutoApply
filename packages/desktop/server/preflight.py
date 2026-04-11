@@ -772,6 +772,20 @@ def start_bootstrap() -> dict:
     activation and then polls bootstrap_status() for progress.
     """
     import time
+    # Headless mode (CI runners + multi-tenant tests) must not trigger
+    # the install chain. CI has no brew/node/openclaw/claude and the
+    # brew step would block forever waiting on Terminal.app — which
+    # doesn't exist on a headless runner. Short-circuit so the wizard
+    # falls through to the regular checklist render and the smoke
+    # tests can complete.
+    if os.environ.get("APPLYLOOP_HEADLESS"):
+        return {
+            "ok": True,
+            "plan": [],
+            "already_running": False,
+            "nothing_to_do": True,
+            "headless": True,
+        }
     with _BOOTSTRAP_LOCK:
         if _BOOTSTRAP_STATE["running"]:
             return {
