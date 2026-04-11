@@ -313,6 +313,28 @@ export async function updatePreferences(data: Record<string, unknown>) {
   });
 }
 
+// ── Integrations (Telegram/Gmail/AgentMail/Finetune API keys) ───────────────
+
+export interface IntegrationDisplayState {
+  [field: string]: { set: boolean; mask: string };
+}
+
+export async function getIntegrations() {
+  return apiFetch<{ ok: boolean; data: { integrations: IntegrationDisplayState } }>(
+    "/integrations"
+  );
+}
+
+export async function updateIntegrations(data: Record<string, string>) {
+  return apiFetch<{ ok: boolean; data: { updated: string[]; integrations: IntegrationDisplayState } }>(
+    "/integrations",
+    {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
 // ── Resumes ─────────────────────────────────────────────────────────────────
 
 export interface ResumeRow {

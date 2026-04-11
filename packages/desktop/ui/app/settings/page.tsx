@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import {
   getProfile, updateProfile, getPreferences, updatePreferences,
-  listResumes, uploadResume, getSetupStatus, type ResumeRow,
+  listResumes, uploadResume, getSetupStatus,
+  getIntegrations, updateIntegrations,
+  type ResumeRow,
 } from "@/lib/api"
 import { AI_PROFILE_PROMPT, parseAiResponseSafe } from "@/lib/profile-schema"
 import { cn } from "@/lib/utils"
@@ -14,7 +16,7 @@ import {
   AlertTriangle, Sparkles, FileText, Copy, Upload, Download, ArrowLeft,
 } from "lucide-react"
 
-type Tab = "ai" | "personal" | "work" | "preferences" | "resume" | "auth"
+type Tab = "ai" | "personal" | "work" | "preferences" | "resume" | "integrations" | "auth"
 
 const tabs: { id: Tab; label: string; icon: typeof User }[] = [
   { id: "ai", label: "AI Import", icon: Sparkles },
@@ -22,7 +24,63 @@ const tabs: { id: Tab; label: string; icon: typeof User }[] = [
   { id: "work", label: "Work & Education", icon: Briefcase },
   { id: "preferences", label: "Job Preferences", icon: Target },
   { id: "resume", label: "Resume", icon: FileText },
-  { id: "auth", label: "API Token", icon: Key },
+  { id: "integrations", label: "API Keys", icon: Key },
+  { id: "auth", label: "Worker Token", icon: Key },
+]
+
+// Integration field definitions — these match packages/web/src/lib/profile-schema.ts
+// INTEGRATION_FIELDS list. If you add a field here, also add it to the server-side
+// VALIDATORS in packages/web/src/app/api/settings/integrations/route.ts.
+interface DesktopIntegrationFieldDef {
+  key: "telegram_bot_token" | "telegram_chat_id" | "gmail_email" | "gmail_app_password" | "agentmail_api_key" | "finetune_resume_api_key"
+  label: string
+  sample: string
+  help: string
+  secret: boolean
+}
+const DESKTOP_INTEGRATION_FIELDS: DesktopIntegrationFieldDef[] = [
+  {
+    key: "telegram_bot_token",
+    label: "Telegram Bot Token",
+    sample: "1234567890:ABCdef-GhIJklMn-oPqRsTUv_WxYz",
+    help: "From @BotFather: /newbot → paste the full <bot_id>:<secret> line.",
+    secret: true,
+  },
+  {
+    key: "telegram_chat_id",
+    label: "Telegram Chat ID",
+    sample: "123456789 (or -1001234567890 for a group)",
+    help: "Send your bot any message, visit api.telegram.org/bot<token>/getUpdates, copy the chat.id number.",
+    secret: false,
+  },
+  {
+    key: "gmail_email",
+    label: "Gmail Address",
+    sample: "your.name@gmail.com",
+    help: "The Gmail address ApplyLoop reads job-reply emails from.",
+    secret: false,
+  },
+  {
+    key: "gmail_app_password",
+    label: "Gmail App Password",
+    sample: "abcd efgh ijkl mnop",
+    help: "16-char Google App Password (NOT your regular Gmail password). https://myaccount.google.com/apppasswords",
+    secret: true,
+  },
+  {
+    key: "agentmail_api_key",
+    label: "AgentMail API Key",
+    sample: "am_live_xxxxxxxxxxxxxxxxxxxx",
+    help: "Disposable inboxes for application verification. https://agentmail.to/dashboard",
+    secret: true,
+  },
+  {
+    key: "finetune_resume_api_key",
+    label: "Finetune Resume API Key",
+    sample: "fr_live_xxxxxxxxxxxxxxxxxxxx",
+    help: "Per-job tailored resume generation. Your base resume is already on the service from signup.",
+    secret: true,
+  },
 ]
 
 // AI_PROFILE_PROMPT now imported from @/lib/profile-schema (a byte-identical
@@ -123,6 +181,13 @@ export default function SettingsPage() {
   const [token, setToken] = useState("")
   const [maskedToken, setMaskedToken] = useState("")
 
+  // Integrations state (Telegram/Gmail/AgentMail/Finetune API keys)
+  const [integrationsState, setIntegrationsState] = useState<Record<string, { set: boolean; mask: string }>>({})
+  const [integrationsDraft, setIntegrationsDraft] = useState<Record<string, string>>({})
+  const [integrationsLoading, setIntegrationsLoading] = useState(false)
+  const [integrationsSaving, setIntegrationsSaving] = useState(false)
+  const [integrationsMsg, setIntegrationsMsg] = useState<{ text: string; type: "ok" | "err" } | null>(null)
+
   // AI Import state
   const [aiResponse, setAiResponse] = useState("")
   const [aiError, setAiError] = useState<string | null>(null)
@@ -194,7 +259,66 @@ export default function SettingsPage() {
     fetch("/api/auth/token-masked").then(r => r.json()).then(d => {
       if (d.has_token) setMaskedToken(d.masked)
     }).catch(() => {})
+    // Load integrations separately so a failure of /api/settings/integrations
+    // on the cloud (e.g. migration 010 not yet applied) doesn't break the
+    // entire Settings page.
+    setIntegrationsLoading(true)
+    getIntegrations()
+      .then((res) => {
+        const d = res?.data as { data?: { integrations?: Record<string, { set: boolean; mask: string }> } } | undefined
+        if (d?.data?.integrations) {
+          setIntegrationsState(d.data.integrations)
+        }
+      })
+      .catch(() => { /* silent */ })
+      .finally(() => setIntegrationsLoading(false))
   }, [loadData])
+
+  async function saveIntegrations() {
+    const dirty = Object.entries(integrationsDraft).filter(([, v]) => v && v.trim() !== "")
+    if (dirty.length === 0) {
+      setIntegrationsMsg({ text: "No changes to save.", type: "err" })
+      return
+    }
+    setIntegrationsSaving(true)
+    setIntegrationsMsg(null)
+    try {
+      const res = await updateIntegrations(Object.fromEntries(dirty))
+      const payload = res?.data as { data?: { updated?: string[]; integrations?: Record<string, { set: boolean; mask: string }> }; error?: string } | undefined
+      if (payload?.error) {
+        setIntegrationsMsg({ text: payload.error, type: "err" })
+      } else if (payload?.data?.integrations) {
+        setIntegrationsState(payload.data.integrations)
+        setIntegrationsDraft({})
+        setIntegrationsMsg({ text: `Saved: ${(payload.data.updated || []).join(", ")}`, type: "ok" })
+        setTimeout(() => setIntegrationsMsg(null), 3000)
+      }
+    } catch (e) {
+      setIntegrationsMsg({ text: e instanceof Error ? e.message : "Save failed", type: "err" })
+    } finally {
+      setIntegrationsSaving(false)
+    }
+  }
+
+  async function clearIntegrationField(key: string) {
+    setIntegrationsSaving(true)
+    try {
+      const res = await updateIntegrations({ [key]: "" })
+      const payload = res?.data as { data?: { integrations?: Record<string, { set: boolean; mask: string }> }; error?: string } | undefined
+      if (payload?.error) {
+        setIntegrationsMsg({ text: payload.error, type: "err" })
+      } else if (payload?.data?.integrations) {
+        setIntegrationsState(payload.data.integrations)
+        setIntegrationsDraft((d) => { const next = { ...d }; delete next[key]; return next })
+        setIntegrationsMsg({ text: `${key} cleared`, type: "ok" })
+        setTimeout(() => setIntegrationsMsg(null), 3000)
+      }
+    } catch (e) {
+      setIntegrationsMsg({ text: e instanceof Error ? e.message : "Clear failed", type: "err" })
+    } finally {
+      setIntegrationsSaving(false)
+    }
+  }
 
   // ── AI Import ────────────────────────────────────────────────────────────
 
@@ -721,6 +845,89 @@ export default function SettingsPage() {
                   </span>
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === "integrations" && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground mb-1">API Keys & Credentials</h2>
+                <p className="text-sm text-muted-foreground">
+                  Stored encrypted in your cloud profile. Synced across the web dashboard,
+                  this desktop app, and your running Claude session. Update any field any time.
+                </p>
+              </div>
+
+              {integrationsMsg && (
+                <div className={cn(
+                  "rounded-lg px-3 py-2 text-sm",
+                  integrationsMsg.type === "ok" ? "bg-success/10 text-success border border-success/20" : "bg-destructive/10 text-destructive border border-destructive/20"
+                )}>
+                  {integrationsMsg.text}
+                </div>
+              )}
+
+              {integrationsLoading && (
+                <p className="text-sm text-muted-foreground">Loading current values...</p>
+              )}
+
+              <div className="space-y-4">
+                {DESKTOP_INTEGRATION_FIELDS.map((def) => {
+                  const state = integrationsState[def.key]
+                  const draft = integrationsDraft[def.key] ?? ""
+                  const isSet = state?.set
+                  return (
+                    <div key={def.key}>
+                      <label className="mb-1.5 block text-sm font-medium text-card-foreground">
+                        {def.label}
+                        {isSet && (
+                          <span className="ml-2 text-xs font-normal text-success">
+                            ✓ saved ({state?.mask})
+                          </span>
+                        )}
+                        {!isSet && (
+                          <span className="ml-2 text-xs font-normal text-muted-foreground">(not set)</span>
+                        )}
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type={def.secret ? "password" : "text"}
+                          placeholder={def.sample}
+                          value={draft}
+                          onChange={(e) =>
+                            setIntegrationsDraft((d) => ({ ...d, [def.key]: e.target.value }))
+                          }
+                          className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                        {isSet && (
+                          <button
+                            type="button"
+                            onClick={() => clearIntegrationField(def.key)}
+                            disabled={integrationsSaving}
+                            className="px-3 py-2 text-sm border border-destructive/30 text-destructive rounded-lg hover:bg-destructive/10 disabled:opacity-50"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{def.help}</p>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="flex items-center gap-3 border-t border-border pt-4">
+                <button
+                  onClick={saveIntegrations}
+                  disabled={integrationsSaving || Object.keys(integrationsDraft).filter((k) => (integrationsDraft[k] || "").trim() !== "").length === 0}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {integrationsSaving ? "Saving..." : "Save changes"}
+                </button>
+                <span className="text-xs text-muted-foreground">
+                  {Object.keys(integrationsDraft).filter((k) => (integrationsDraft[k] || "").trim() !== "").length} pending
+                </span>
+              </div>
             </div>
           )}
 

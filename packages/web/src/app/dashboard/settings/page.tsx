@@ -10,7 +10,65 @@ const ROLE_PRESETS = [
   "ML Platform Engineer", "AI Infrastructure Engineer",
 ];
 
-type Tab = "ai-import" | "personal" | "work" | "preferences" | "resumes" | "telegram" | "email" | "worker" | "billing";
+type Tab = "ai-import" | "personal" | "work" | "preferences" | "resumes" | "integrations" | "telegram" | "email" | "worker" | "billing";
+
+// Integrations tab — Telegram bot token + chat ID, Gmail email + app
+// password, AgentMail API key, Finetune Resume API key. All stored
+// encrypted in user_profiles.integrations_encrypted via /api/settings/
+// integrations. Same fields are readable by the desktop session-start
+// sync loop, so changes here propagate to the running ApplyLoop app
+// within 5 minutes (or at next restart, whichever comes first).
+interface IntegrationFieldDef {
+  key: "telegram_bot_token" | "telegram_chat_id" | "gmail_email" | "gmail_app_password" | "agentmail_api_key" | "finetune_resume_api_key";
+  label: string;
+  sample: string;
+  help: string;
+  secret: boolean;
+}
+const INTEGRATION_FIELD_DEFS: IntegrationFieldDef[] = [
+  {
+    key: "telegram_bot_token",
+    label: "Telegram Bot Token",
+    sample: "1234567890:ABCdef-GhIJklMn-oPqRsTUv_WxYz",
+    help: "From @BotFather: Telegram → /newbot → paste the full <bot_id>:<secret> line.",
+    secret: true,
+  },
+  {
+    key: "telegram_chat_id",
+    label: "Telegram Chat ID",
+    sample: "123456789  (or -1001234567890 for a group)",
+    help: "Start a chat with your bot, send any message, visit https://api.telegram.org/bot<token>/getUpdates, look for 'chat':{'id': NUMBER.",
+    secret: false,
+  },
+  {
+    key: "gmail_email",
+    label: "Gmail Address",
+    sample: "your.name@gmail.com",
+    help: "The Gmail address ApplyLoop will read job-reply emails from.",
+    secret: false,
+  },
+  {
+    key: "gmail_app_password",
+    label: "Gmail App Password",
+    sample: "abcd efgh ijkl mnop",
+    help: "16-char Google App Password (NOT your regular Gmail password). Generate at https://myaccount.google.com/apppasswords after enabling 2FA.",
+    secret: true,
+  },
+  {
+    key: "agentmail_api_key",
+    label: "AgentMail API Key",
+    sample: "am_live_xxxxxxxxxxxxxxxxxxxx",
+    help: "For disposable inboxes used during application verification. Sign up at https://agentmail.to/dashboard.",
+    secret: true,
+  },
+  {
+    key: "finetune_resume_api_key",
+    label: "Finetune Resume API Key",
+    sample: "fr_live_xxxxxxxxxxxxxxxxxxxx",
+    help: "For per-job tailored resume generation. The service already has your base resume from signup.",
+    secret: true,
+  },
+];
 // AI_PROFILE_PROMPT now imported from @/lib/profile-schema above so there's
 // one source of truth. Previously this file had its own local copy that
 // drifted significantly from the onboarding copy — the settings one lacked
@@ -72,6 +130,14 @@ export default function SettingsPage() {
   // AI Import
   const [aiResponse, setAiResponse] = useState("");
   const [promptCopied, setPromptCopied] = useState(false);
+
+  // Integrations (Telegram bot + chat, Gmail email+app_password, AgentMail, Finetune)
+  // Two maps: `integrationsState` is what the server told us (masked + set flag),
+  // and `integrationsDraft` is what the user has typed but not yet saved.
+  const [integrationsState, setIntegrationsState] = useState<Record<string, { set: boolean; mask: string }>>({});
+  const [integrationsDraft, setIntegrationsDraft] = useState<Record<string, string>>({});
+  const [integrationsLoading, setIntegrationsLoading] = useState(false);
+  const [integrationsSaving, setIntegrationsSaving] = useState(false);
 
   // Telegram
   const [telegramChatId, setTelegramChatId] = useState("");
@@ -163,7 +229,75 @@ export default function SettingsPage() {
       setResumes(resumesData.data || []);
       setLoading(false);
     });
+
+    // Load integrations (masked) separately so the failure of this specific
+    // endpoint doesn't block the whole page from rendering. If the user's
+    // Supabase project hasn't run the 010_user_integrations migration, this
+    // returns a 500 with a helpful message — we surface it in the tab.
+    setIntegrationsLoading(true);
+    fetch("/api/settings/integrations")
+      .then((r) => r.json())
+      .then((body) => {
+        if (body?.data?.integrations) {
+          setIntegrationsState(body.data.integrations);
+        }
+      })
+      .catch(() => {
+        // silent — the tab renders with "(not set)" for everything
+      })
+      .finally(() => setIntegrationsLoading(false));
   }, []);
+
+  async function saveIntegrations() {
+    const dirty = Object.entries(integrationsDraft).filter(([, v]) => v && v.trim() !== "");
+    if (dirty.length === 0) {
+      showMessage("No changes to save.", "error");
+      return;
+    }
+    setIntegrationsSaving(true);
+    try {
+      const res = await fetch("/api/settings/integrations", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.fromEntries(dirty)),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        showMessage(body?.message || "Failed to save integrations", "error");
+      } else {
+        setIntegrationsState(body.data.integrations || {});
+        setIntegrationsDraft({});
+        showMessage(`Saved: ${(body.data.updated || []).join(", ")}`);
+      }
+    } catch (e) {
+      showMessage(e instanceof Error ? e.message : "Failed to save integrations", "error");
+    } finally {
+      setIntegrationsSaving(false);
+    }
+  }
+
+  async function clearIntegrationField(key: string) {
+    setIntegrationsSaving(true);
+    try {
+      const res = await fetch("/api/settings/integrations", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [key]: "" }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        showMessage(body?.message || "Failed to clear", "error");
+      } else {
+        setIntegrationsState(body.data.integrations || {});
+        setIntegrationsDraft((d) => { const next = { ...d }; delete next[key]; return next; });
+        showMessage(`${key} cleared`);
+      }
+    } catch (e) {
+      showMessage(e instanceof Error ? e.message : "Failed to clear", "error");
+    } finally {
+      setIntegrationsSaving(false);
+    }
+  }
 
   async function saveProfile() {
     setSaving(true);
@@ -485,6 +619,7 @@ export default function SettingsPage() {
     { key: "work", label: "Work & Education" },
     { key: "preferences", label: "Job Preferences" },
     { key: "resumes", label: "Resumes" },
+    { key: "integrations", label: "API Keys" },
     { key: "telegram", label: "Telegram" },
     { key: "email", label: "Email" },
     { key: "worker", label: "Worker & LLM" },
@@ -962,6 +1097,79 @@ export default function SettingsPage() {
                 {uploading ? "Uploading..." : "Upload Resume"}
               </button>
             </div>
+          </div>
+        </section>
+      )}
+
+      {/* Integrations Tab — API keys for Telegram bot, Gmail app password, AgentMail, Finetune Resume */}
+      {activeTab === "integrations" && (
+        <section className="bg-white rounded-xl border p-6">
+          <h2 className="font-semibold mb-2">API Keys & Credentials</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            These are stored encrypted in your profile and synced down to the desktop app automatically.
+            Edit any field to update; leave blank to skip. Changes propagate to your running desktop session within 5 minutes.
+          </p>
+
+          {integrationsLoading && (
+            <p className="text-sm text-gray-500 mb-4">Loading current values...</p>
+          )}
+
+          <div className="space-y-5">
+            {INTEGRATION_FIELD_DEFS.map((def) => {
+              const state = integrationsState[def.key];
+              const draft = integrationsDraft[def.key] ?? "";
+              const isSet = state?.set;
+              return (
+                <div key={def.key}>
+                  <label className="block text-sm font-medium text-gray-900 mb-1">
+                    {def.label}
+                    {isSet && (
+                      <span className="ml-2 text-xs font-normal text-green-700">
+                        ✓ saved ({state?.mask})
+                      </span>
+                    )}
+                    {!isSet && (
+                      <span className="ml-2 text-xs font-normal text-gray-400">(not set)</span>
+                    )}
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type={def.secret ? "password" : "text"}
+                      placeholder={def.sample}
+                      value={draft}
+                      onChange={(e) =>
+                        setIntegrationsDraft((d) => ({ ...d, [def.key]: e.target.value }))
+                      }
+                      className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
+                    />
+                    {isSet && (
+                      <button
+                        type="button"
+                        onClick={() => clearIntegrationField(def.key)}
+                        disabled={integrationsSaving}
+                        className="px-3 py-2 text-sm border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">{def.help}</p>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-6 flex items-center gap-3 border-t pt-4">
+            <button
+              onClick={saveIntegrations}
+              disabled={integrationsSaving || Object.keys(integrationsDraft).filter((k) => (integrationsDraft[k] || "").trim() !== "").length === 0}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {integrationsSaving ? "Saving..." : "Save changes"}
+            </button>
+            <span className="text-xs text-gray-500">
+              {Object.keys(integrationsDraft).filter((k) => (integrationsDraft[k] || "").trim() !== "").length} pending update(s)
+            </span>
           </div>
         </section>
       )}
