@@ -67,6 +67,11 @@ export default function JobsListPage() {
   const [totalQueue, setTotalQueue] = useState(0)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<FilterType>("all")
+  // Track the last successful refresh so we can show a staleness indicator
+  // when the backend stops responding. Without this the page silently
+  // displays whatever data it had when the server last answered.
+  const [lastFetch, setLastFetch] = useState<number | null>(null)
+  const [backendReachable, setBackendReachable] = useState<boolean>(true)
   const appliedEndRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
@@ -76,6 +81,14 @@ export default function JobsListPage() {
         getPipeline(),
         getStats(),
       ])
+
+      // If every single call rejected we consider the backend down.
+      const allRejected =
+        recentRes.status === "rejected" &&
+        pipelineRes.status === "rejected" &&
+        statsRes.status === "rejected"
+      setBackendReachable(!allRejected)
+      if (!allRejected) setLastFetch(Date.now())
 
       if (recentRes.status === "fulfilled" && recentRes.value.ok) {
         const all = recentRes.value.data
@@ -141,6 +154,11 @@ export default function JobsListPage() {
             <h1 className="text-xl font-semibold text-foreground">Jobs List</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
               {totalApplied || applied.length} applied &middot; {totalQueue || queued.length} in queue
+              {!backendReachable && lastFetch && (
+                <span className="ml-2 inline-flex items-center gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning" title={`Last fetch at ${new Date(lastFetch).toLocaleTimeString()}`}>
+                  stale &middot; backend unreachable
+                </span>
+              )}
             </p>
           </div>
 

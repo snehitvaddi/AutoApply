@@ -13,8 +13,6 @@ interface ApplicationRow {
   error?: string
 }
 
-const MOCK_APPLICATIONS: ApplicationRow[] = []
-
 function timeAgo(dateStr?: string): string {
   if (!dateStr) return ""
   const diff = Date.now() - new Date(dateStr).getTime()
@@ -51,7 +49,7 @@ interface RecentApplicationsProps {
 }
 
 export function RecentApplications({ applications: propApps }: RecentApplicationsProps) {
-  const applications = propApps?.length ? propApps : MOCK_APPLICATIONS
+  const applications = propApps ?? []
 
   if (applications.length === 0) {
     return (
