@@ -10,13 +10,30 @@ function getAppBaseUrl(request: NextRequest): string {
   return request.nextUrl.origin;
 }
 
+function loginWithError(appBaseUrl: string, reason: string, description?: string | null) {
+  const url = new URL("/auth/login", appBaseUrl);
+  url.searchParams.set("auth_error", reason);
+  if (description) url.searchParams.set("auth_error_description", description.slice(0, 200));
+  return NextResponse.redirect(url);
+}
+
 export async function GET(request: NextRequest) {
   const appBaseUrl = getAppBaseUrl(request);
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
+  const providerError = searchParams.get("error");
+  const providerErrorDescription = searchParams.get("error_description");
+
+  // User cancelled Google consent (or the provider returned any other OAuth
+  // error). Surface it back on the login page instead of silently bouncing
+  // them into the unauthenticated /auth/login and leaving them confused
+  // about why they're staring at the sign-in button again.
+  if (providerError) {
+    return loginWithError(appBaseUrl, providerError, providerErrorDescription);
+  }
 
   if (!code) {
-    return NextResponse.redirect(new URL("/auth/login", appBaseUrl));
+    return loginWithError(appBaseUrl, "missing_code");
   }
 
   // We don't know the final redirect yet, so start with a placeholder.
@@ -44,7 +61,11 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error || !data.user) {
-    return NextResponse.redirect(new URL("/auth/login", appBaseUrl));
+    return loginWithError(
+      appBaseUrl,
+      "exchange_failed",
+      error?.message || "Could not complete sign-in"
+    );
   }
 
   // Service-role client for admin operations (bypasses RLS)

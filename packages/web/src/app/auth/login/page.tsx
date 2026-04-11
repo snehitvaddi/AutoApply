@@ -1,11 +1,36 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 
-export default function LoginPage() {
+// Human-readable copy for the `auth_error` query param set by /auth/callback
+// when Google (or our exchange step) rejects the sign-in. Keep this map in
+// sync with the reasons emitted from packages/web/src/app/auth/callback/route.ts.
+const AUTH_ERROR_COPY: Record<string, string> = {
+  access_denied: "Sign-in was cancelled. Click the button below to try again.",
+  exchange_failed: "We couldn't complete your sign-in. Please try again.",
+  missing_code: "The sign-in link was incomplete. Please try again.",
+  server_error: "Google reported a server error. Please try again in a moment.",
+};
+
+function LoginPageInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const searchParams = useSearchParams();
+
+  // Surface any auth_error passed in by /auth/callback. Description is
+  // optional and falls back to a canned message if we don't have one.
+  useEffect(() => {
+    const reason = searchParams.get("auth_error");
+    if (!reason) return;
+    const description = searchParams.get("auth_error_description");
+    setError(
+      AUTH_ERROR_COPY[reason] ||
+        description ||
+        "We couldn't complete your sign-in. Please try again."
+    );
+  }, [searchParams]);
 
   async function handleGoogleSignIn() {
     setLoading(true);
@@ -111,5 +136,23 @@ export default function LoginPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// useSearchParams requires a Suspense boundary under the App Router.
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-100">
+          <div className="max-w-md w-full bg-white rounded-xl shadow-sm border p-8">
+            <h1 className="text-3xl font-bold text-center mb-2 text-gray-900">ApplyLoop</h1>
+            <p className="text-gray-500 text-center">Loading...</p>
+          </div>
+        </div>
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
   );
 }
