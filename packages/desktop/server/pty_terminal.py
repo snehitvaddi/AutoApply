@@ -133,6 +133,79 @@ class PTYSession:
         return None
 
     @staticmethod
+    def _extract_resume_server_side(env: dict) -> bool:
+        """Trigger the server-side resume parser when we detect the profile
+        is 'stub-only' — i.e. work_experience is either empty or has the
+        single-entry synthesis fallback from cli-config. Calling this
+        endpoint reads the user's default resume PDF from Supabase Storage,
+        sends it to OpenAI for structured extraction, and upserts the
+        result into user_profiles. The next _pull_profile_from_cloud will
+        then see the multi-entry data.
+
+        Best-effort: never blocks session start. Logs outcome and returns
+        True on HTTP 200, False otherwise."""
+        import urllib.request
+        token = (env.get("WORKER_TOKEN") or "").strip().strip('"').strip("'")
+        if not token:
+            return False
+        app_url = os.environ.get("APPLYLOOP_APP_URL", "https://applyloop.vercel.app")
+        try:
+            req = urllib.request.Request(
+                f"{app_url}/api/profile/extract-resume",
+                data=b"",
+                method="POST",
+                headers={"X-Worker-Token": token, "Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=55) as resp:
+                body = resp.read()
+                logger.info(f"Resume extraction succeeded: {body[:200].decode('utf-8', errors='replace')}")
+                return True
+        except Exception as e:
+            logger.warning(f"Resume extraction failed: {e}")
+            return False
+
+    @staticmethod
+    def _profile_is_stub(profile: dict) -> bool:
+        """True when the profile looks like it came from the cli-config
+        synthesis fallback alone (one work_experience entry with empty
+        achievements and empty skills[]) — i.e. the onboarding form
+        captured only the flat fields and the PDF was never parsed."""
+        exp = profile.get("experience") or []
+        if not exp:
+            return True
+        if len(exp) == 1:
+            e0 = exp[0] or {}
+            if not (e0.get("achievements") or []):
+                return True
+        skills = profile.get("skills") or []
+        if not skills:
+            return True
+        return False
+
+    @staticmethod
+    def _load_sync_meta(cwd: str) -> dict:
+        """Sibling file that records when we last pulled/pushed and which
+        fields failed to push. Lives next to profile.json so it survives
+        across sessions."""
+        path = os.path.join(cwd, ".profile-sync.meta.json")
+        if not os.path.isfile(path):
+            return {"last_pull_at": 0, "last_push_at": 0, "last_cloud_updated_at": "", "failed_push_fields": []}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f) or {}
+        except Exception:
+            return {"last_pull_at": 0, "last_push_at": 0, "last_cloud_updated_at": "", "failed_push_fields": []}
+
+    @staticmethod
+    def _save_sync_meta(cwd: str, meta: dict) -> None:
+        path = os.path.join(cwd, ".profile-sync.meta.json")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not write sync meta: {e}")
+
+    @staticmethod
     def _pull_profile_from_cloud(cwd: str, env: dict) -> bool:
         """Sync profile.json FROM the cloud on every session start.
 
@@ -175,6 +248,25 @@ class PTYSession:
                 local = json.load(f) or {}
         except Exception:
             local = {}
+
+        # Sync metadata for conflict detection. If the cloud row's
+        # updated_at advanced AND we have local-only changes pending,
+        # we'd be overwriting someone else's edit. Log it loudly — we
+        # still apply cloud-wins semantics, but the warning tells us
+        # sync is contested so we can act on it upstream.
+        meta = PTYSession._load_sync_meta(cwd)
+        cloud_updated_at = cloud_profile.get("updated_at") or ""
+        if (
+            meta.get("last_cloud_updated_at")
+            and cloud_updated_at
+            and cloud_updated_at > meta["last_cloud_updated_at"]
+            and meta.get("failed_push_fields")
+        ):
+            logger.warning(
+                f"Sync conflict: cloud advanced from {meta['last_cloud_updated_at']} to "
+                f"{cloud_updated_at} while local had pending unpushed fields "
+                f"{meta['failed_push_fields']}. Cloud wins; retrying push after merge."
+            )
 
         # Push-delta: any field where local has non-empty data but cloud
         # doesn't. This catches data Claude collected in a previous session
@@ -269,14 +361,24 @@ class PTYSession:
         # Push-delta: ship local-only data up to the cloud so future pulls
         # will have it. This is what reconciles prior sessions where Claude
         # wrote to local but failed the curl PUT.
+        import time as _time_mod
+        now = _time_mod.time()
+        pushed_ok = True
         if push_delta:
-            pushed = PTYSession._push_profile_to_cloud(cwd, env, push_delta)
-            if pushed:
+            pushed_ok = PTYSession._push_profile_to_cloud(cwd, env, push_delta)
+            if pushed_ok:
                 logger.info(f"Synced profile: pulled cloud, pushed local delta ({len(push_delta)} fields: {', '.join(push_delta.keys())})")
+                meta["failed_push_fields"] = []
+                meta["last_push_at"] = now
             else:
                 logger.warning(f"Pulled cloud but delta push failed for {len(push_delta)} fields")
+                meta["failed_push_fields"] = list(push_delta.keys())
         else:
             logger.info("Pulled profile from cloud (local already in sync)")
+            meta["failed_push_fields"] = []
+        meta["last_pull_at"] = now
+        meta["last_cloud_updated_at"] = cloud_updated_at
+        PTYSession._save_sync_meta(cwd, meta)
         return True
 
     @staticmethod
@@ -328,8 +430,56 @@ class PTYSession:
             (mirrors the server-side synthesis in /api/settings/cli-config).
         """
         populated: list[str] = []
-        edu_str = profile.get("education") if isinstance(profile.get("education"), str) else ""
+
+        # `education` can be one of three shapes in the wild:
+        #   (a) a plain string   — "MS in Computer & Information Science"
+        #       (legacy, produced by the install-time cli-config scalar fallback)
+        #   (b) a JSONB array    — [{"school": "...", "degree": "MS", "field": "..."}]
+        #       (what the PDF parser writes and what migration 005 intended)
+        #   (c) missing / empty
+        #
+        # Normalize to the string form for downstream regex inference, but
+        # also feed education_summary from the structured entry when we have
+        # one — it's strictly richer than regex parsing.
+        edu_raw = profile.get("education")
+        edu_str = ""
+        edu_entry: dict = {}
+        if isinstance(edu_raw, str):
+            edu_str = edu_raw
+        elif isinstance(edu_raw, list) and edu_raw:
+            first = edu_raw[0] if isinstance(edu_raw[0], dict) else {}
+            edu_entry = first
+            # Synthesize a display string for any reader that still wants one.
+            degree_part = first.get("degree") or ""
+            field_part = first.get("field") or ""
+            if degree_part and field_part:
+                edu_str = f"{degree_part} in {field_part}"
+            elif degree_part:
+                edu_str = degree_part
+            elif field_part:
+                edu_str = field_part
+
         edu_summary = profile.setdefault("education_summary", {})
+
+        # Structured entry wins over regex inference.
+        if edu_entry and isinstance(edu_summary, dict):
+            if not edu_summary.get("school_name") and edu_entry.get("school"):
+                edu_summary["school_name"] = edu_entry["school"]
+                populated.append(f"education_summary.school_name={edu_entry['school'][:40]}")
+            if not edu_summary.get("degree") and edu_entry.get("degree"):
+                edu_summary["degree"] = edu_entry["degree"]
+                populated.append(f"education_summary.degree={edu_entry['degree']}")
+            if not edu_summary.get("field") and edu_entry.get("field"):
+                edu_summary["field"] = edu_entry["field"]
+                populated.append(f"education_summary.field={edu_entry['field'][:40]}")
+            # graduation_year: try end_date → parse trailing 4-digit year
+            if not edu_summary.get("graduation_year"):
+                import re as _re_grad
+                end_date = edu_entry.get("end_date") or ""
+                m_year = _re_grad.search(r"(19|20)\d{2}", str(end_date))
+                if m_year:
+                    edu_summary["graduation_year"] = m_year.group(0)
+                    populated.append(f"education_summary.graduation_year={m_year.group(0)}")
 
         if edu_str and isinstance(edu_summary, dict):
             import re
@@ -411,6 +561,30 @@ class PTYSession:
             if os.path.isfile(profile_path):
                 with open(profile_path, "r", encoding="utf-8") as f:
                     out["profile"] = json.load(f) or {}
+
+            # Step 3.5: stub-detection. If the profile looks like it came
+            # only from the flat-field cli-config synthesis (1 experience
+            # entry with no achievements, empty skills[]), fire the
+            # server-side PDF parser once. This populates the user_profiles
+            # row from their actual resume file in Supabase Storage. After
+            # the parse lands, re-pull so the session boots with the
+            # multi-entry data. Guarded so it only runs once per install
+            # (marker file prevents thrashing on every session start).
+            if PTYSession._profile_is_stub(out["profile"]):
+                marker = os.path.join(cwd, ".resume-extracted.marker")
+                if not os.path.isfile(marker):
+                    logger.info("Profile looks stub-only — calling /api/profile/extract-resume")
+                    if PTYSession._extract_resume_server_side(out["env"]):
+                        try:
+                            with open(marker, "w") as f:
+                                f.write("ok\n")
+                        except Exception:
+                            pass
+                        # Re-pull to pick up the newly-parsed fields.
+                        PTYSession._pull_profile_from_cloud(cwd, out["env"])
+                        if os.path.isfile(profile_path):
+                            with open(profile_path, "r", encoding="utf-8") as f:
+                                out["profile"] = json.load(f) or {}
         except Exception as e:
             logger.warning(f"profile snapshot read failed: {e}")
             return out
@@ -508,7 +682,31 @@ class PTYSession:
         tg_chat = (env.get("TELEGRAM_CHAT_ID") or "").strip()
         tg_bot_real = len(tg_bot_raw) >= 30 and ":" in tg_bot_raw
         tg_bot = tg_bot_raw if tg_bot_real else ""
-        tg_available = bool(tg_bot and tg_chat)
+        # Live probe: only flag tg_available after verifying the bot token
+        # and chat_id actually work against api.telegram.org. This catches
+        # revoked tokens, banned bots, or chat_ids the user pasted from
+        # another account. Best-effort; the probe has a 3s timeout so a
+        # flaky network never blocks session start.
+        tg_available = False
+        if tg_bot and tg_chat:
+            try:
+                import urllib.request, urllib.parse
+                test_body = urllib.parse.urlencode({
+                    "chat_id": tg_chat,
+                    "text": "[ApplyLoop] Session starting…",
+                }).encode()
+                req = urllib.request.Request(
+                    f"https://api.telegram.org/bot{tg_bot}/sendMessage",
+                    data=test_body,
+                    method="POST",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    if resp.status == 200:
+                        tg_available = True
+                        logger.info("Telegram probe ok — sendMessage returned 200")
+            except Exception as e:
+                logger.info(f"Telegram probe failed — disabling telegram announce this session: {e}")
 
         missing = snapshot.get("missing", [])
         is_complete = snapshot.get("complete", False)

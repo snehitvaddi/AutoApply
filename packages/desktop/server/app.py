@@ -1,6 +1,7 @@
 """ApplyLoop Desktop — FastAPI backend server."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -138,9 +139,70 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"PTY auto-start failed: {e}")
 
+    # Background profile sync: every N seconds, re-pull profile.json from
+    # /api/settings/cli-config so edits made on applyloop.vercel.app propagate
+    # into the running desktop session without a manual restart. Also retries
+    # any failed push_delta from the previous pull cycle.
+    #
+    # The sync uses the same _pull_profile_from_cloud + _push_profile_to_cloud
+    # helpers the PTY session start uses, so "cloud is source of truth"
+    # semantics stay consistent across entry points.
+    from .pty_terminal import PTYSession as _PTYSession
+    _SYNC_INTERVAL = int(_os.environ.get("APPLYLOOP_PROFILE_SYNC_SECS", "300"))
+    _APPLYLOOP_HOME = _os.environ.get("APPLYLOOP_HOME") or _os.path.expanduser("~/.applyloop")
+    _sync_stop = asyncio.Event()
+
+    async def _profile_sync_loop() -> None:
+        # Small initial delay so we don't fight the PTY auto-start above
+        # for the same file lock.
+        try:
+            await asyncio.wait_for(_sync_stop.wait(), timeout=30)
+            return
+        except asyncio.TimeoutError:
+            pass
+        while not _sync_stop.is_set():
+            try:
+                # Re-read .env each tick so rotated worker tokens are
+                # picked up without a restart.
+                env_path = _os.path.join(_APPLYLOOP_HOME, ".env")
+                env_pairs: dict = {}
+                if _os.path.isfile(env_path):
+                    with open(env_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line or line.startswith("#") or "=" not in line:
+                                continue
+                            k, v = line.split("=", 1)
+                            env_pairs[k.strip()] = v.strip().strip('"').strip("'")
+                # Offload the blocking urllib + file I/O onto a thread so
+                # we don't stall the event loop.
+                await asyncio.to_thread(
+                    _PTYSession._pull_profile_from_cloud, _APPLYLOOP_HOME, env_pairs
+                )
+            except Exception as e:
+                logger.warning(f"Background profile sync tick failed: {e}")
+            try:
+                await asyncio.wait_for(_sync_stop.wait(), timeout=_SYNC_INTERVAL)
+                return
+            except asyncio.TimeoutError:
+                continue
+
+    _sync_task: asyncio.Task | None = None
+    try:
+        _sync_task = asyncio.create_task(_profile_sync_loop())
+        logger.info(f"Started background profile sync loop (interval={_SYNC_INTERVAL}s)")
+    except Exception as e:
+        logger.warning(f"Could not start profile sync loop: {e}")
+
     yield
 
-    # Cleanup: stop gateway, router, PTY, worker
+    # Cleanup: stop gateway, router, PTY, worker, sync loop
+    _sync_stop.set()
+    if _sync_task is not None:
+        try:
+            await asyncio.wait_for(_sync_task, timeout=2)
+        except Exception:
+            _sync_task.cancel()
     try:
         await telegram_gateway.stop()
     except Exception as e:
