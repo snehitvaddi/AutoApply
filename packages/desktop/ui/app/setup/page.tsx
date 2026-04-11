@@ -32,7 +32,7 @@ import {
 } from "lucide-react"
 import {
   activateWithCode, getSetupStatus, installTool, getInstallProgress,
-  startBootstrap, getBootstrapStatus,
+  startBootstrap, getBootstrapStatus, createNewPTYSession,
   type PreflightCheck, type SetupStatus, type InstallProgress,
   type BootstrapState,
 } from "@/lib/api"
@@ -430,7 +430,21 @@ export default function SetupPage() {
                 )}
               </div>
               <button
-                onClick={() => router.push("/")}
+                onClick={async () => {
+                  // Spawn the Claude Code PTY session if it isn't already
+                  // alive. The lifespan auto-start only fires at app boot,
+                  // and on a fresh install the user hasn't activated yet
+                  // when lifespan runs — so without this trigger the
+                  // Terminal tab is empty after Start ApplyLoop. The
+                  // server endpoint is idempotent (returns existing
+                  // session if alive), so it's safe to always call.
+                  try {
+                    await createNewPTYSession()
+                  } catch {
+                    /* worst case the user can hit Start Session manually */
+                  }
+                  router.push("/")
+                }}
                 disabled={!allReady}
                 className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
               >

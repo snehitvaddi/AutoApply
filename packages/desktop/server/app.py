@@ -705,6 +705,41 @@ async def setup_activate(body: dict):
     except Exception as e:
         logger.debug(f"Could not persist profile.json: {e}")
 
+    # Auto-spawn the Claude Code PTY session now that the user is
+    # activated. The lifespan PTY auto-start only fires at app boot,
+    # and on a fresh install the user hasn't activated yet at that
+    # moment — so without this trigger the Terminal tab stays empty
+    # after activation. Idempotent: if a session is already alive,
+    # this is a no-op. Same headless gate as the lifespan path.
+    import os as _os
+    if not _os.environ.get("APPLYLOOP_HEADLESS"):
+        try:
+            if not session_manager.pty.is_alive:
+                pf = await preflight.run_preflight()
+                if pf.get("ready"):
+                    result_session = session_manager.new_session()
+                    if result_session.get("alive"):
+                        logger.info(
+                            f"Auto-started Claude Code PTY session after activation "
+                            f"(pid={result_session.get('pid')})"
+                        )
+                    else:
+                        logger.warning(
+                            "Post-activation PTY auto-start did not bring the session up — "
+                            "user can click Start Session on the Terminal tab"
+                        )
+                else:
+                    missing = [
+                        c["id"] for c in pf.get("checks", [])
+                        if not c["ok"] and not c.get("optional")
+                    ]
+                    logger.info(
+                        f"Activation succeeded but preflight not yet ready — "
+                        f"PTY auto-start deferred. Missing: {missing}"
+                    )
+        except Exception as e:
+            logger.debug(f"Post-activation PTY auto-start failed: {e}")
+
     return {
         "ok": True,
         "user": {
