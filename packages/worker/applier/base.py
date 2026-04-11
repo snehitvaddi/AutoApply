@@ -1,3 +1,4 @@
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
@@ -11,11 +12,29 @@ class ApplyResult:
     retriable: bool = False
 
 
+class MissingResumeError(FileNotFoundError):
+    """Raised when the configured resume_path doesn't exist on disk.
+
+    The worker catches this and marks the application as failed with a
+    clean "resume file missing" reason instead of letting the browser
+    automation crash halfway through the form.
+    """
+
+
 class BaseApplier(ABC):
     def __init__(self, profile: dict, answer_key: dict, resume_path: str):
         self.profile = profile
         self.answer_key = answer_key
         self.resume_path = resume_path
+        # Fail fast: no resume means no upload, and every ATS applier
+        # eventually hits `page.set_input_files(...)` with this path. We
+        # check now so we error before any browser automation starts.
+        if not resume_path:
+            raise MissingResumeError("resume_path is empty")
+        if not os.path.isfile(resume_path):
+            raise MissingResumeError(f"resume file not found: {resume_path}")
+        if os.path.getsize(resume_path) == 0:
+            raise MissingResumeError(f"resume file is empty: {resume_path}")
 
     @abstractmethod
     def apply(self, apply_url: str) -> ApplyResult:

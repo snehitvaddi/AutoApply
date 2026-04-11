@@ -22,6 +22,7 @@ from db import (
     fetch_user_job_preferences, enqueue_discovered_jobs, update_heartbeat as db_heartbeat,
     check_company_rate as db_check_company_rate,
     update_local_status,
+    WorkerAuthError,
 )
 from notifier import send_application_result, send_failure
 from knowledge import build_answer_key, load_global_template
@@ -30,6 +31,7 @@ from scanner.indeed import scan_indeed
 from scanner.himalayas import scan_himalayas
 from scanner.jsearch import scan_jsearch
 from scanner.ziprecruiter import scan_ziprecruiter
+from applier.base import MissingResumeError
 from applier.greenhouse import GreenhouseApplier
 from applier.lever import LeverApplier
 from applier.ashby import AshbyApplier
@@ -533,7 +535,12 @@ def main():
             time.sleep(60)
             continue
 
-        job = claim_next_job(WORKER_ID)
+        try:
+            job = claim_next_job(WORKER_ID)
+        except WorkerAuthError as e:
+            logger.error(f"Authentication failed — exiting worker loop: {e}")
+            running = False
+            break
         if not job:
             time.sleep(idle_backoff)
             # Exponential backoff: 10s → 20s → 40s → 80s → 160s → 300s (cap)
@@ -607,7 +614,15 @@ def main():
                 update_queue_status(job['id'], 'failed', error=f'Unknown ATS: {ats}')
                 continue
 
-            applier = ApplierClass(profile, answer_key, resume_path)
+            try:
+                applier = ApplierClass(profile, answer_key, resume_path)
+            except MissingResumeError as e:
+                logger.error(f"Resume missing for job {job['id']}: {e}")
+                update_queue_status(job['id'], 'failed', error=f"resume file missing: {e}")
+                update_local_status(job, 'failed', f"resume missing: {e}")
+                log_application(user_id, job, {'status': 'failed', 'error': f"resume missing: {e}"})
+                update_heartbeat(user_id, "failed", f"{company} — resume missing")
+                continue
             result = applier.apply(apply_url)
 
             if result.success:

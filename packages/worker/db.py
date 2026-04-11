@@ -35,14 +35,52 @@ def _get_client() -> httpx.Client:
     return _http_client
 
 
+class WorkerAuthError(RuntimeError):
+    """Raised when the remote API rejects the worker token (401/403).
+
+    The worker's main loop catches this and exits loudly instead of
+    continuing to poll with dead credentials. A reauth marker file is
+    written into the workspace so the desktop UI can detect the state
+    even if it didn't see the crash directly.
+    """
+
+
+# Marker file the desktop UI (server/app.py::setup_status) reads to
+# surface "needs reauth" without having to watch the worker's stdout.
+_REAUTH_MARKER = os.path.expanduser(os.environ.get(
+    "APPLYLOOP_REAUTH_MARKER",
+    os.path.join(os.path.dirname(LOCAL_DB_PATH), ".needs-reauth"),
+))
+
+
+def _write_reauth_marker(reason: str) -> None:
+    try:
+        os.makedirs(os.path.dirname(_REAUTH_MARKER), exist_ok=True)
+        with open(_REAUTH_MARKER, "w") as f:
+            f.write(reason)
+    except Exception as e:
+        logger.debug(f"Failed to write reauth marker: {e}")
+
+
 def _api_call(action: str, **params) -> dict:
-    """Make an authenticated call to the worker proxy API."""
+    """Make an authenticated call to the worker proxy API.
+
+    Raises WorkerAuthError on 401/403 so the worker main loop can
+    terminate cleanly instead of burning through the queue with a dead
+    token. All other non-200 responses still degrade to {} for
+    compatibility with existing callers.
+    """
     client = _get_client()
     resp = client.post(
         f"{APP_URL}/api/worker/proxy",
         json={"action": action, **params},
         headers={"X-Worker-Token": WORKER_TOKEN, "Content-Type": "application/json"},
     )
+    if resp.status_code in (401, 403):
+        msg = f"HTTP {resp.status_code} from /api/worker/proxy ({action}): worker token revoked or invalid"
+        logger.error(msg)
+        _write_reauth_marker(msg)
+        raise WorkerAuthError(msg)
     if resp.status_code != 200:
         logger.error(f"API call {action} failed: HTTP {resp.status_code} — {resp.text[:200]}")
         return {}
