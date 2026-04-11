@@ -15,20 +15,53 @@ WORKER_PID_FILE = WORKSPACE_DIR / "worker.pid"
 # the worker + desktop modules agree on a single source of truth per instance.
 if "APPLYLOOP_DB" not in os.environ:
     os.environ["APPLYLOOP_DB"] = str(WORKSPACE_DIR / "applications.db")
-# Find worker directory — could be in repo or relative to .app bundle
+# Find worker directory. Fallback chain, in priority order:
+#
+#   1. $APPLYLOOP_WORKER_DIR env var — explicit override for tests / CI
+#   2. $APPLYLOOP_HOME/packages/worker — what install.sh produces on
+#      a client machine (~/.applyloop/packages/worker)
+#   3. Dev repo layout — traversing two parents up from this file
+#      (packages/desktop/server/config.py → packages/desktop → packages,
+#      then + worker) lands at the sibling packages/worker
+#   4. Legacy ~/.autoapply/worker — older convention, kept for older installs
+#   5. Old .dmg bundle layout — Resources/server → Resources/worker
+#
+# The old chain had a math bug (`.parent.parent.parent / "worker"` from
+# server/config.py landed at <repo_root>/worker instead of packages/worker)
+# that was masked on the admin's dev box by a hardcoded absolute-path
+# fallback. Both the buggy chain and the hardcoded path are gone now —
+# client installs resolve via option 2 ($APPLYLOOP_HOME), dev runs
+# resolve via option 3.
 _server_dir = Path(__file__).resolve().parent
+_candidates = []
+_env_worker_dir = os.environ.get("APPLYLOOP_WORKER_DIR")
+if _env_worker_dir:
+    _candidates.append(Path(_env_worker_dir).expanduser())
+_env_applyloop_home = os.environ.get("APPLYLOOP_HOME")
+if _env_applyloop_home:
+    _candidates.append(Path(_env_applyloop_home).expanduser() / "packages" / "worker")
+_candidates.extend([
+    _server_dir.parent.parent / "worker",     # dev: packages/desktop/server -> packages/worker
+    Path.home() / ".autoapply" / "worker",    # legacy: ~/.autoapply/worker
+    _server_dir.parent / "worker",            # old .app bundle: Resources/server -> Resources/worker
+])
+
 WORKER_DIR = None
-for _w in [
-    Path.home() / ".autoapply" / "worker",              # preferred: non-TCC-restricted location
-    _server_dir.parent.parent.parent / "worker",        # repo: packages/desktop/server -> packages/worker
-    _server_dir.parent / "worker",                      # .app bundle: Resources/server -> Resources/worker
-    Path.home() / "Downloads" / "Drive-D" / "AutoApply" / "packages" / "worker",
-]:
+for _w in _candidates:
     if (_w / "worker.py").exists():
         WORKER_DIR = _w
         break
+
 if WORKER_DIR is None:
-    WORKER_DIR = _server_dir.parent.parent.parent / "worker"  # default even if missing
+    # No existing worker.py found. Default to the install.sh layout if
+    # APPLYLOOP_HOME is set, otherwise the dev layout. Either way, the
+    # default path is honest about where we expect the worker to live,
+    # so any downstream "worker.py not found" error points at the right
+    # spot instead of a stale admin path.
+    if _env_applyloop_home:
+        WORKER_DIR = Path(_env_applyloop_home).expanduser() / "packages" / "worker"
+    else:
+        WORKER_DIR = _server_dir.parent.parent / "worker"
 
 # Server
 HOST = os.environ.get("APPLYLOOP_HOST", "127.0.0.1")

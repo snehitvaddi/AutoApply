@@ -210,7 +210,7 @@ reuse_or_prompt() {
 # ------------------------------------------------------------------ guards
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  die "Only macOS is supported right now. Linux/Windows: ping vsneh."
+  die "Only macOS is supported right now. Linux + Windows support is tracked at https://github.com/snehitvaddi/AutoApply/issues - open or comment on an issue to request it."
 fi
 
 ARCH="$(uname -m)"
