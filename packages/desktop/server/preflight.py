@@ -268,6 +268,15 @@ def _check_openclaw_cli() -> dict:
     }
 
 
+# Module-level cache for the gateway check result. Pujith's machine was
+# taking ~3.5s on every /api/setup/status call because the openclaw
+# gateway status subprocess is synchronous and slow. AppShell polls
+# setup status every 15s AND each page-tab mount can re-fire it, so
+# every tab switch felt sluggish. Caching the gateway result kills the
+# lag without affecting correctness — gateway state rarely changes.
+_GATEWAY_CACHE: dict = {"result": None, "expires_at": 0.0}
+
+
 def _check_openclaw_gateway() -> dict:
     """7. `openclaw gateway status` — checks whether the local OpenClaw
     gateway daemon (a WebSocket service that brokers between the CLI and
@@ -279,12 +288,26 @@ def _check_openclaw_gateway() -> dict:
     The worker can spawn a transient gateway on demand if the launchd
     service isn't installed, so this check is OPTIONAL — failure shows
     a hint, not a blocker.
+
+    Result is cached for 30s (on success) or 5s (on failure) to keep
+    tab-switching fast. The full subprocess call takes ~3s on real
+    machines which adds up across preflight polls.
     """
+    import time as _time
+    now = _time.time()
+    if _GATEWAY_CACHE["result"] is not None and now < _GATEWAY_CACHE["expires_at"]:
+        return _GATEWAY_CACHE["result"]
+
+    def _cache_and_return(result: dict, ttl: float) -> dict:
+        _GATEWAY_CACHE["result"] = result
+        _GATEWAY_CACHE["expires_at"] = now + ttl
+        return result
+
     openclaw = _find_binary("openclaw", _OPENCLAW_FALLBACK_PATHS)
     if not openclaw:
         # Covered by _check_openclaw_cli — hide so the wizard doesn't show
         # two consecutive rows about the same missing tool.
-        return {
+        return _cache_and_return({
             "id": "openclaw_gateway",
             "ok": False,
             "hidden": True,
@@ -292,27 +315,27 @@ def _check_openclaw_gateway() -> dict:
             "label": "OpenClaw gateway",
             "detail": "Pending OpenClaw CLI install",
             "remediation": {"type": "install", "target": "openclaw"},
-        }
+        }, ttl=30)
     try:
         r = subprocess.run(
             [openclaw, "gateway", "status"],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, timeout=3,
         )
     except subprocess.TimeoutExpired:
-        return {
+        return _cache_and_return({
             "id": "openclaw_gateway",
             "ok": False,
             "optional": True,
             "label": "OpenClaw gateway",
-            "detail": "gateway status check timed out after 8s",
+            "detail": "gateway status check timed out after 3s",
             "remediation": {
                 "type": "install",
                 "target": "openclaw_gateway",
                 "command": "openclaw gateway install && openclaw gateway start",
             },
-        }
+        }, ttl=5)
     except Exception as e:
-        return {
+        return _cache_and_return({
             "id": "openclaw_gateway",
             "ok": False,
             "optional": True,
@@ -323,7 +346,7 @@ def _check_openclaw_gateway() -> dict:
                 "target": "openclaw_gateway",
                 "command": "openclaw gateway install && openclaw gateway start",
             },
-        }
+        }, ttl=5)
 
     stdout = (r.stdout or "").strip()
     stderr = (r.stderr or "").strip()
@@ -335,25 +358,25 @@ def _check_openclaw_gateway() -> dict:
 
     if r.returncode == 0 and (rpc_ok or service_loaded):
         first_line = next((ln for ln in stdout.splitlines() if ln.strip()), "gateway reachable")
-        return {
+        return _cache_and_return({
             "id": "openclaw_gateway",
             "ok": True,
             "optional": True,
             "label": "OpenClaw gateway",
             "detail": first_line[:100],
-        }
-    return {
+        }, ttl=30)
+    return _cache_and_return({
         "id": "openclaw_gateway",
         "ok": False,
         "optional": True,
         "label": "OpenClaw gateway",
-        "detail": "Gateway service not running — auto-installable, the worker will spawn one on demand if missing",
+        "detail": "Gateway service not running - auto-installable, the worker will spawn one on demand if missing",
         "remediation": {
             "type": "install",
             "target": "openclaw_gateway",
             "command": "openclaw gateway install && openclaw gateway start",
         },
-    }
+    }, ttl=5)
 
 
 def _check_git() -> dict:
