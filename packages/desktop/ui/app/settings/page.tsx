@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { useSearchParams } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import {
   getProfile, updateProfile, getPreferences, updatePreferences,
@@ -124,14 +123,21 @@ function TextArea({
 }
 
 export default function SettingsPage() {
-  const searchParams = useSearchParams()
+  const [activeTab, setActiveTab] = useState<Tab>("ai")
+
   // Honor ?tab=<id> so the /setup wizard can deep-link to the right tab.
-  // Validated against the known tab list so a typo in the query string
-  // can't put us in an undefined state.
-  const tabParam = searchParams?.get("tab") as Tab | null
-  const initialTab: Tab =
-    tabParam && tabs.some((t) => t.id === tabParam) ? tabParam : "ai"
-  const [activeTab, setActiveTab] = useState<Tab>(initialTab)
+  // Reading from window.location.search in a useEffect (instead of
+  // next/navigation's useSearchParams hook) keeps this component
+  // statically prerenderable — Next.js 15 fails the build if the hook
+  // is used without a Suspense boundary in a static export.
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    const tabParam = params.get("tab") as Tab | null
+    if (tabParam && tabs.some((t) => t.id === tabParam)) {
+      setActiveTab(tabParam)
+    }
+  }, [])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)

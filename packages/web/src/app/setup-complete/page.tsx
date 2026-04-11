@@ -19,8 +19,8 @@ type ActivationCode = {
 // When cutting a new release, update RELEASE_TAG and DMG_NAME in lockstep.
 // The SHA256 is fetched at runtime from the sidecar file on the release, so
 // the hash is always in sync without having to edit this file per release.
-const RELEASE_TAG = "v1.0.3";
-const DMG_NAME = "ApplyLoop-1.0.3.dmg";
+const RELEASE_TAG = "v1.0.4";
+const DMG_NAME = "ApplyLoop-1.0.4.dmg";
 const RELEASE_BASE = `https://github.com/snehitvaddi/AutoApply/releases/download/${RELEASE_TAG}`;
 const DMG_URL = `${RELEASE_BASE}/${DMG_NAME}`;
 const DMG_SHA256_URL = `${RELEASE_BASE}/${DMG_NAME}.sha256`;
