@@ -21,6 +21,7 @@ from db import (
     check_daily_limit, get_answer_key, download_resume, upload_screenshot,
     fetch_user_job_preferences, enqueue_discovered_jobs, update_heartbeat as db_heartbeat,
     check_company_rate as db_check_company_rate,
+    update_local_status,
 )
 from notifier import send_application_result, send_failure
 from knowledge import build_answer_key, load_global_template
@@ -547,16 +548,20 @@ def main():
         apply_url = job.get('apply_url', '')
         logger.info(f"Processing job {job['id']} for user {user_id}: {company}")
         update_heartbeat(user_id, "applying", f"{company} — {job.get('title', '')}")
+        # Sync to local SQLite so desktop Kanban shows "Applying" column
+        update_local_status(job, 'applying')
 
         # Pre-flight checks: blocked URL, paused/blocked company
         if is_blocked_url(apply_url):
             logger.info(f"Skipping blocked aggregator URL: {apply_url}")
             update_queue_status(job['id'], 'cancelled', error='blocked aggregator domain')
+            update_local_status(job, 'skipped', 'blocked aggregator domain')
             continue
 
         if is_blocked_company(company):
             logger.info(f"Skipping blocked company: {company}")
             update_queue_status(job['id'], 'cancelled', error='blocked company (defense/clearance)')
+            update_local_status(job, 'skipped', 'blocked company')
             continue
 
         # Staffing agency check
@@ -564,12 +569,14 @@ def main():
         if any(s in company_lower for s in BLOCKED_STAFFING):
             logger.info(f"Skipping staffing agency: {company}")
             update_queue_status(job['id'], 'cancelled', error='staffing agency')
+            update_local_status(job, 'skipped', 'staffing agency')
             continue
 
         # Company rate limit (max 5 per 30 days)
         if not check_company_rate(user_id, company):
             logger.info(f"Company rate limit reached for {company}, skipping")
             update_queue_status(job['id'], 'cancelled', error='company rate limit (5/30d)')
+            update_local_status(job, 'skipped', 'company rate limit')
             continue
 
         if is_paused_company(company):

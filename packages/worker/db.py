@@ -109,12 +109,18 @@ def log_application(user_id: str, job: dict, result: dict):
     _log_to_local_db(job, result)
 
 
+def _get_local_conn() -> sqlite3.Connection:
+    """Open (and auto-create) the local SQLite database."""
+    os.makedirs(os.path.dirname(LOCAL_DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(LOCAL_DB_PATH)
+    _ensure_local_schema(conn)
+    return conn
+
+
 def _log_to_local_db(job: dict, result: dict):
     """Write application to local SQLite database for desktop UI."""
     try:
-        os.makedirs(os.path.dirname(LOCAL_DB_PATH), exist_ok=True)
-        conn = sqlite3.connect(LOCAL_DB_PATH)
-        _ensure_local_schema(conn)
+        conn = _get_local_conn()
         now = datetime.now(timezone.utc).isoformat()
         company = job.get("company", "")
         job_id = job.get("job_id") or job.get("external_id") or ""
@@ -137,6 +143,76 @@ def _log_to_local_db(job: dict, result: dict):
         conn.close()
     except Exception as e:
         logger.warning(f"Local DB write failed (non-fatal): {e}")
+
+
+def enqueue_to_local_db(jobs: list[dict]) -> int:
+    """Write discovered/scouted jobs to local SQLite as 'queued' for the desktop Kanban.
+
+    This is called alongside the remote API enqueue so the desktop UI sees
+    queued jobs in real-time without needing a remote round-trip.
+    """
+    if not jobs:
+        return 0
+    try:
+        conn = _get_local_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        inserted = 0
+        for job in jobs:
+            company = job.get("company", "")
+            job_id = job.get("external_id") or job.get("job_id") or ""
+            dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else f"{company.lower().replace(' ', '-')}|{(job.get('title', '')).lower().replace(' ', '-')}"
+            try:
+                conn.execute("""
+                    INSERT INTO applications (company, role, url, ats, source, location, posted_at, scouted_at, updated_at, status, dedup_token)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+                    ON CONFLICT(dedup_token) DO NOTHING
+                """, (
+                    company, job.get("title", ""), job.get("apply_url", ""),
+                    job.get("ats", ""), job.get("source", ""), job.get("location", ""),
+                    job.get("posted_at"), now, now, dedup_token,
+                ))
+                inserted += conn.total_changes  # approximate
+            except sqlite3.IntegrityError:
+                pass  # duplicate, skip
+        conn.commit()
+        conn.close()
+        return inserted
+    except Exception as e:
+        logger.warning(f"Local DB enqueue failed (non-fatal): {e}")
+        return 0
+
+
+def update_local_status(job: dict, status: str, error: str | None = None):
+    """Update a job's status in local SQLite (for applying/cancelled/pending transitions).
+
+    This keeps the desktop Kanban in sync with every status change, not just submit/fail.
+    """
+    try:
+        conn = _get_local_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        company = job.get("company", "")
+        job_id = job.get("job_id") or job.get("external_id") or ""
+        dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else None
+
+        if dedup_token:
+            conn.execute("""
+                UPDATE applications SET status = ?, updated_at = ?, notes = ?
+                WHERE dedup_token = ?
+            """, (status, now, error, dedup_token))
+        else:
+            # Fallback: match by company + title (pick most recent non-terminal row)
+            conn.execute("""
+                UPDATE applications SET status = ?, updated_at = ?, notes = ?
+                WHERE id = (
+                    SELECT id FROM applications
+                    WHERE company = ? AND role = ? AND status NOT IN ('submitted', 'failed')
+                    ORDER BY updated_at DESC LIMIT 1
+                )
+            """, (status, now, error, company, job.get("title", "")))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Local DB status update failed (non-fatal): {e}")
 
 
 def _ensure_local_schema(conn: sqlite3.Connection):
@@ -239,10 +315,13 @@ def upload_screenshot(user_id: str, screenshot_path: str) -> str | None:
 # ── Job enqueuing ─────────────────────────────────────────────────────────
 
 def enqueue_discovered_jobs(user_id: str, jobs: list[dict]) -> int:
-    """Insert discovered jobs via API proxy (dedup + rate limit handled server-side)."""
+    """Insert discovered jobs via API proxy + local SQLite for desktop Kanban."""
     if not jobs:
         return 0
+    # Write to remote API (server-side dedup + rate limit)
     result = _api_call("enqueue_jobs", jobs=jobs)
+    # Also write to local SQLite so the desktop UI sees queued jobs immediately
+    enqueue_to_local_db(jobs)
     return result.get("enqueued", 0)
 
 

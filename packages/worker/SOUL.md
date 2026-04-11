@@ -73,7 +73,7 @@ Board slugs and API URLs → see `packages/worker/config.py`
 - Not blocked: staffing agencies, defense contractors, user's excluded list
 - Skip titles: staff, principal, director, vp, manager, intern, sales, legal, recruiter, designer
 - Senior at FAANG → skip. Senior at startups → keep.
-- Dedup: check /tmp/applied-dedup.json
+- Dedup: check local applications.db (SQLite) before applying
 - Rate limit: 2/day/company, 5/15days/company
 - AI keyword word-boundary for short words (ai, ml, nlp, llm, genai)
 
@@ -148,7 +148,7 @@ If empty → ask user to message bot → /start → copy Chat ID.
 Send test notification on first startup.
 
 ## APPLICATION LOGGING (all 4 required)
-1. Local dedup: /tmp/applied-dedup.json
+1. Local SQLite: `~/.autoapply/workspace/applications.db` (auto-created by worker on first write)
 2. Remote API: POST /api/worker/proxy with action=log_application
 3. Telegram screenshot
 4. Heartbeat: POST /api/worker/proxy with action=heartbeat
@@ -171,7 +171,7 @@ User gives new info → update profile.json + call API to sync back to web dashb
 - `packages/worker/knowledge/learnings.md` — ATS patterns (1000+ lines)
 - `packages/worker/knowledge/answer-key-template.json` — form field mappings
 - `packages/worker/config.py` — board slugs, filter rules, blocked companies
-- `/tmp/applied-dedup.json` — local dedup DB
+- `~/.autoapply/workspace/applications.db` — local SQLite database (dedup + stats + pipeline)
 - `/tmp/applyloop-progress.json` — session resume state
 - `/tmp/openclaw/uploads/resume.pdf` — staged resume
 
