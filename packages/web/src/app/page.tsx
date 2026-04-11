@@ -371,7 +371,7 @@ export default function LandingPage() {
           <div className="text-center mb-14 animate-on-scroll">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-[0.25em] mb-3">Pricing</p>
             <h2 className="font-display text-3xl md:text-4xl font-extrabold text-gray-900">
-              Start free. Scale when ready.
+              Pick a plan. We handle setup.
             </h2>
           </div>
 
@@ -424,7 +424,7 @@ export default function LandingPage() {
             Join job seekers who went from 200 applications with 3 responses to 80 applications with 12 interviews.
           </p>
           <Link href="/auth/login" className="mt-8 inline-block px-8 py-3.5 bg-gray-900 text-white font-semibold rounded-lg text-sm hover:bg-black transition-colors">
-            Get Started Free
+            Get Started
           </Link>
         </div>
       </section>
