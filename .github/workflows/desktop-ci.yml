@@ -1,0 +1,163 @@
+name: Desktop CI
+
+# Smoke-tests the packaged ApplyLoop macOS .dmg on every push that touches
+# the desktop or worker packages. Builds from scratch, mounts, launches
+# headlessly, drives the setup wizard via Playwright, asserts the happy
+# path + three failure modes. Optional interactive debug via tmate.
+#
+# Free for public repos on all runners including macos-14. No secrets
+# required for the smoke test itself — the "valid activation code" test
+# uses a long-lived CI user (AL-CICI-TEST) provisioned via Supabase MCP.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/desktop/**'
+      - 'packages/worker/**'
+      - '.github/workflows/desktop-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/desktop/**'
+      - 'packages/worker/**'
+      - '.github/workflows/desktop-ci.yml'
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Drop into tmate SSH before running tests (for interactive debugging)'
+        type: boolean
+        default: false
+
+jobs:
+  test-macos:
+    name: Smoke test (macos-14)
+    runs-on: macos-14
+    timeout-minutes: 25
+
+    env:
+      APPLYLOOP_WORKSPACE: /tmp/applyloop-ci
+      APPLYLOOP_PORT: '18790'
+      APPLYLOOP_HEADLESS: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: packages/desktop/requirements.txt
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python deps
+        run: pip install -r packages/desktop/requirements.txt
+
+      - name: Build UI + .dmg
+        working-directory: packages/desktop
+        run: python3 build.py --mac
+
+      - name: Capture built artifact metadata
+        working-directory: packages/desktop/dist
+        run: |
+          ls -lh
+          shasum -a 256 *.dmg
+
+      - name: Mount + install .app
+        run: |
+          DMG_PATH=$(ls packages/desktop/dist/ApplyLoop-*.dmg | head -1)
+          echo "DMG_PATH=$DMG_PATH"
+          MOUNT_DIR=$(hdiutil attach -nobrowse -readonly "$DMG_PATH" | tail -1 | awk '{print $NF}')
+          echo "MOUNT_DIR=$MOUNT_DIR"
+          cp -R "$MOUNT_DIR/ApplyLoop.app" /tmp/ApplyLoop.app
+          hdiutil detach "$MOUNT_DIR"
+          ls /tmp/ApplyLoop.app/Contents/
+
+      - name: Tmate debug (pre-launch, on request)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.debug == 'true'
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+          timeout-minutes: 30
+
+      - name: Launch app (headless)
+        run: |
+          mkdir -p "$APPLYLOOP_WORKSPACE"
+          # The .app's MacOS entry is a shell script that execs launch.py.
+          /tmp/ApplyLoop.app/Contents/MacOS/ApplyLoop > /tmp/applyloop-launch.log 2>&1 &
+          echo $! > /tmp/applyloop.pid
+          echo "Launcher PID: $(cat /tmp/applyloop.pid)"
+          # Wait up to 60s for the ready.ok marker Phase 2 writes
+          for i in $(seq 1 120); do
+            if [ -f "$APPLYLOOP_WORKSPACE/ready.ok" ]; then
+              echo "ready.ok found at iteration $i"
+              cat "$APPLYLOOP_WORKSPACE/ready.ok"
+              break
+            fi
+            sleep 0.5
+          done
+          if [ ! -f "$APPLYLOOP_WORKSPACE/ready.ok" ]; then
+            echo "ERROR: app never wrote ready.ok"
+            cat /tmp/applyloop-launch.log
+            exit 1
+          fi
+          # Double-check /api/health responds
+          curl -sf "http://localhost:$APPLYLOOP_PORT/api/health" || {
+            echo "ERROR: /api/health not responding"
+            exit 1
+          }
+          echo "App is up"
+
+      - name: Install Playwright deps + browsers
+        working-directory: packages/desktop/ci
+        run: |
+          npm ci || npm install
+          npx playwright install --with-deps chromium
+
+      - name: Run Playwright smoke tests
+        working-directory: packages/desktop/ci
+        env:
+          CI_ACTIVATION_CODE: ${{ secrets.CI_ACTIVATION_CODE }}
+          BASE_URL: http://localhost:18790
+        run: npx playwright test --reporter=list,html
+
+      - name: Stop app (graceful SIGTERM)
+        if: always()
+        run: |
+          if [ -f /tmp/applyloop.pid ]; then
+            kill -TERM $(cat /tmp/applyloop.pid) 2>/dev/null || true
+            sleep 2
+            if [ -f "$APPLYLOOP_WORKSPACE/shutdown.ok" ]; then
+              echo "Graceful shutdown confirmed"
+              cat "$APPLYLOOP_WORKSPACE/shutdown.ok"
+            fi
+          fi
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-${{ github.run_id }}
+          path: |
+            /tmp/applyloop-ci/server.log
+            /tmp/applyloop-ci/applications.db
+            /tmp/applyloop-ci/shutdown.ok
+            /tmp/applyloop-ci/ready.ok
+            /tmp/applyloop-launch.log
+            packages/desktop/ci/test-results/
+            packages/desktop/ci/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Tmate debug (post-failure, on request)
+        if: failure() && github.event_name == 'workflow_dispatch' && github.event.inputs.debug == 'true'
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+          timeout-minutes: 30
