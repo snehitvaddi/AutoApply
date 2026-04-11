@@ -89,8 +89,12 @@ jobs:
       - name: Launch app (headless)
         run: |
           mkdir -p "$APPLYLOOP_WORKSPACE"
-          # The .app's MacOS entry is a shell script that execs launch.py.
-          /tmp/ApplyLoop.app/Contents/MacOS/ApplyLoop > /tmp/applyloop-launch.log 2>&1 &
+          # The .app's CFBundleExecutable is "launcher" (not "ApplyLoop").
+          # See packages/desktop/build.py — it writes a bash launcher to
+          # Contents/MacOS/launcher that cds into ../Resources and execs
+          # python3 launch.py. CI must call the same path a Finder
+          # double-click would resolve via Info.plist.
+          /tmp/ApplyLoop.app/Contents/MacOS/launcher > /tmp/applyloop-launch.log 2>&1 &
           echo $! > /tmp/applyloop.pid
           echo "Launcher PID: $(cat /tmp/applyloop.pid)"
           # Wait up to 60s for the ready.ok marker Phase 2 writes
@@ -150,6 +154,7 @@ jobs:
             /tmp/applyloop-ci/shutdown.ok
             /tmp/applyloop-ci/ready.ok
             /tmp/applyloop-launch.log
+            /Users/runner/.autoapply/desktop.log
             packages/desktop/ci/test-results/
             packages/desktop/ci/playwright-report/
           retention-days: 7
