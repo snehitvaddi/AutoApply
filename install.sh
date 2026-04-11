@@ -9,6 +9,32 @@
 #   APPLYLOOP_REPO    git URL or local path (default https://github.com/snehitvaddi/AutoApply.git)
 #   APPLYLOOP_BRANCH  branch to clone/update (default main)
 #   APPLYLOOP_APP     .app bundle path (default /Applications/ApplyLoop.app — passed through to build_local_app.sh)
+
+# ------------------------------------------------------------------ self-reexec
+#
+# When invoked via `curl | bash`, child processes can consume the rest of
+# our script from stdin and corrupt the install. The known offender:
+# `brew install python@3.11` runs `python3.11 -Im pip install -v -` as
+# part of bottle setup, where the trailing `-` means pip reads from
+# stdin. Pip inherits stdin from bash, which is the curl pipe — so pip
+# eats the remainder of install.sh trying to parse it as a requirements
+# file. After that bash has nothing left to execute and the install dies
+# halfway through.
+#
+# Fix: detect we're being piped (stdin is not a tty) and re-fetch the
+# script to a tmpfile, then re-exec with stdin=/dev/null. The APPLYLOOP_REEXEC
+# env var breaks the loop on the second pass. Pujith hit this on his
+# Mac during v1.0.8.
+if [[ -z "${APPLYLOOP_REEXEC:-}" ]] && [[ ! -t 0 ]]; then
+  REEXEC_URL="${APPLYLOOP_INSTALL_URL:-https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh}"
+  REEXEC_TMP="$(mktemp -t applyloop-install.XXXXXX)" || REEXEC_TMP="/tmp/applyloop-install.$$.sh"
+  if curl -fsSL "$REEXEC_URL" -o "$REEXEC_TMP" 2>/dev/null && [[ -s "$REEXEC_TMP" ]]; then
+    chmod +x "$REEXEC_TMP"
+    APPLYLOOP_REEXEC=1 exec bash "$REEXEC_TMP" </dev/null
+  fi
+  echo "WARNING: could not re-fetch install.sh for safe re-exec. If the install dies after 'Installing python@3.11', re-run as: curl -fsSL $REEXEC_URL -o /tmp/applyloop-install.sh && bash /tmp/applyloop-install.sh" >&2
+fi
+
 set -euo pipefail
 
 APPLYLOOP_HOME="${APPLYLOOP_HOME:-$HOME/.applyloop}"
@@ -65,7 +91,8 @@ ensure_python_311() {
     log "python@3.11 already installed"
   else
     log "Installing python@3.11"
-    brew install python@3.11
+    # </dev/null protects against the pip-stdin bug — see self-reexec block
+    brew install python@3.11 </dev/null
   fi
 }
 
@@ -74,7 +101,7 @@ ensure_node() {
     log "node already installed"
   else
     log "Installing node"
-    brew install node
+    brew install node </dev/null
   fi
 }
 
@@ -85,7 +112,7 @@ ensure_git() {
     log "git already available on PATH — skipping brew install"
   else
     log "Installing git"
-    brew install git
+    brew install git </dev/null
   fi
 }
 
@@ -96,7 +123,7 @@ ensure_claude() {
     log "claude already installed (brew)"
   else
     log "Installing claude"
-    brew install claude || warn "brew install claude failed — the in-app wizard will retry later"
+    brew install claude </dev/null || warn "brew install claude failed — the in-app wizard will retry later"
   fi
 }
 
