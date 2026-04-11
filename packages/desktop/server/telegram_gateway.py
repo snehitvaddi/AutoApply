@@ -30,9 +30,10 @@ from .message_router import message_router  # legacy — kept for rollback
 
 logger = logging.getLogger(__name__)
 
-# Hardcoded fallback (matches auto_loop.py) — only used if no env var or remote config
-_FALLBACK_TOKEN = "8347366791:AAFOBcAk15lHOJAiyiGwAfZA093wTz6kcsQ"
-_FALLBACK_CHAT_ID = "8343267124"
+# No hardcoded credentials — Telegram integration is opt-in per user. If neither
+# env vars nor the cloud config are set, the gateway fails closed (does not start).
+# This prevents any possibility of a non-developer user's messages being routed
+# to somebody else's bot via leftover developer credentials.
 
 OFFSET_FILE = WORKSPACE_DIR / "telegram-offset.json"
 POLL_TIMEOUT_SEC = 30  # long-poll; Telegram holds the connection until a message arrives or timeout
@@ -132,8 +133,12 @@ async def _resolve_credentials() -> tuple[str, str] | None:
 
     Priority:
       1. Environment vars TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
-      2. Remote worker proxy `get_telegram_config` action
-      3. Hardcoded fallback (matches auto_loop.py)
+      2. Remote worker proxy `get_telegram_config` action (user-specific config)
+
+    If neither source returns valid credentials, return None. The caller
+    MUST fail closed — do not start the gateway. Never fall back to
+    hardcoded credentials: a non-developer user's messages would leak to
+    somebody else's Telegram bot.
     """
     env_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     env_chat = os.environ.get("TELEGRAM_CHAT_ID")
@@ -157,9 +162,9 @@ async def _resolve_credentials() -> tuple[str, str] | None:
                 if bot_token and chat_id:
                     return bot_token, str(chat_id)
         except Exception as e:
-            logger.debug(f"Remote Telegram config fetch failed, using fallback: {e}")
+            logger.debug(f"Remote Telegram config fetch failed: {e}")
 
-    return _FALLBACK_TOKEN, _FALLBACK_CHAT_ID
+    return None
 
 
 class TelegramGateway:
@@ -186,7 +191,12 @@ class TelegramGateway:
     async def start(self) -> None:
         creds = await _resolve_credentials()
         if not creds:
-            logger.warning("Telegram gateway: no credentials, not starting")
+            logger.warning(
+                "Telegram gateway: no credentials configured "
+                "(set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env vars, "
+                "or configure via cloud). Gateway will NOT start — this is "
+                "the correct behaviour for users who haven't opted in."
+            )
             return
         token, chat_id = creds
         self.client = TelegramClient(token)
