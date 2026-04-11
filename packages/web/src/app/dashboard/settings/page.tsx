@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { AI_PROFILE_PROMPT } from "@/lib/profile-schema";
 
 const ROLE_PRESETS = [
   "AI Engineer", "ML Engineer", "Data Scientist", "Data Engineer",
@@ -10,41 +11,12 @@ const ROLE_PRESETS = [
 ];
 
 type Tab = "ai-import" | "personal" | "work" | "preferences" | "resumes" | "telegram" | "email" | "worker" | "billing";
-
-const AI_PROFILE_PROMPT = `I'm updating my automated job application profile. I need you to extract my professional details in JSON format. Use everything you know about me from our past conversations, my resume, or anything I've shared before.
-
-Please respond with ONLY this JSON (fill in what you know, leave empty string "" for unknown):
-
-{
-  "first_name": "",
-  "last_name": "",
-  "phone": "",
-  "linkedin_url": "",
-  "github_url": "",
-  "portfolio_url": "",
-  "current_company": "",
-  "current_title": "",
-  "years_experience": 0,
-  "education_level": "bachelors",
-  "school_name": "",
-  "degree": "",
-  "graduation_year": 0,
-  "work_authorization": "",
-  "requires_sponsorship": false,
-  "gender": "",
-  "race_ethnicity": "",
-  "target_titles": ["AI Engineer", "ML Engineer"],
-  "excluded_companies": [],
-  "salary_min": 120000,
-  "remote_only": false,
-  "auto_apply": true
-}
-
-Valid values:
-- education_level: "bachelors", "masters", "phd", "other"
-- work_authorization: "us_citizen", "green_card", "h1b", "opt", "tn", "other"
-- gender: "male", "female", "non_binary", "decline"
-- race_ethnicity: "asian", "black", "hispanic", "white", "native_american", "pacific_islander", "two_or_more", "decline"`;
+// AI_PROFILE_PROMPT now imported from @/lib/profile-schema above so there's
+// one source of truth. Previously this file had its own local copy that
+// drifted significantly from the onboarding copy — the settings one lacked
+// the "extract ALL work_experience / education / skills" rules entirely,
+// so even when users pasted a rich AI response here, the importer dropped
+// the arrays on the floor.
 
 interface Resume {
   id: string;
@@ -391,31 +363,54 @@ export default function SettingsPage() {
       if (data.remote_only !== undefined) setRemoteOnly(data.remote_only);
       if (data.auto_apply !== undefined) setAutoApply(data.auto_apply);
 
-      // Save profile + preferences to backend
+      // Save profile + preferences to backend. This includes the array
+      // fields (work_experience, skills, education, answer_key_json) that
+      // the old whitelist silently dropped — they're now accepted by the
+      // /api/settings/profile PUT handler.
       setSaving(true);
+      const profileBody: Record<string, unknown> = {
+        first_name: data.first_name || firstName,
+        last_name: data.last_name || lastName,
+        phone: data.phone || phone,
+        linkedin_url: data.linkedin_url || linkedinUrl,
+        github_url: data.github_url || githubUrl,
+        portfolio_url: data.portfolio_url || portfolioUrl,
+        current_company: data.current_company || currentCompany,
+        current_title: data.current_title || currentTitle,
+        years_experience: data.years_experience ? parseInt(String(data.years_experience)) : null,
+        education_level: data.education_level || educationLevel,
+        school_name: data.school_name || schoolName,
+        degree: data.degree || degree,
+        graduation_year: data.graduation_year ? parseInt(String(data.graduation_year)) : null,
+        work_authorization: data.work_authorization || workAuthorization,
+        requires_sponsorship: data.requires_sponsorship ?? requiresSponsorship,
+        gender: data.gender || gender,
+        race_ethnicity: data.race_ethnicity || raceEthnicity,
+      };
+      // Only include array fields in the PUT if the AI response had them;
+      // otherwise we'd overwrite existing cloud data with []s.
+      if (Array.isArray(data.work_experience) && data.work_experience.length > 0) {
+        profileBody.work_experience = data.work_experience;
+      }
+      if (Array.isArray(data.skills) && data.skills.length > 0) {
+        profileBody.skills = data.skills;
+      }
+      if (Array.isArray(data.education) && data.education.length > 0) {
+        profileBody.education = data.education;
+      }
+      if (data.standard_answers && typeof data.standard_answers === "object") {
+        profileBody.answer_key_json = data.standard_answers;
+      }
+      // EEO parity with the onboarding form (the AI prompt schema asks
+      // for these, but this page never persisted them).
+      if (data.veteran_status) profileBody.veteran_status = data.veteran_status;
+      if (data.disability_status) profileBody.disability_status = data.disability_status;
+
       const [profileRes, prefsRes] = await Promise.all([
         fetch("/api/settings/profile", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            first_name: data.first_name || firstName,
-            last_name: data.last_name || lastName,
-            phone: data.phone || phone,
-            linkedin_url: data.linkedin_url || linkedinUrl,
-            github_url: data.github_url || githubUrl,
-            portfolio_url: data.portfolio_url || portfolioUrl,
-            current_company: data.current_company || currentCompany,
-            current_title: data.current_title || currentTitle,
-            years_experience: data.years_experience ? parseInt(String(data.years_experience)) : null,
-            education_level: data.education_level || educationLevel,
-            school_name: data.school_name || schoolName,
-            degree: data.degree || degree,
-            graduation_year: data.graduation_year ? parseInt(String(data.graduation_year)) : null,
-            work_authorization: data.work_authorization || workAuthorization,
-            requires_sponsorship: data.requires_sponsorship ?? requiresSponsorship,
-            gender: data.gender || gender,
-            race_ethnicity: data.race_ethnicity || raceEthnicity,
-          }),
+          body: JSON.stringify(profileBody),
         }),
         fetch("/api/settings/preferences", {
           method: "PUT",
