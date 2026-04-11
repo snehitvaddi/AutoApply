@@ -85,6 +85,46 @@ log()  { echo "${C_BLUE}[install]${C_RESET} $*"; }
 warn() { echo "${C_YELLOW}[install]${C_RESET} $*"; }
 die()  { echo "${C_RED}[install] ERROR:${C_RESET} $*" >&2; exit 1; }
 
+# ── Validation helper ───────────────────────────────────────────────
+#
+# Prompts the user on /dev/tty, validates against a regex, and retries
+# until the input is valid OR the user presses Enter with no value
+# (which skips the field cleanly). Max 5 attempts before auto-skip so
+# we can't get stuck in an infinite loop on a bad paste.
+#
+# Usage:
+#   VAL="$(prompt_validated "Gmail: " '^[^@]+@[^@]+\.[^@]+$' "not a valid email")"
+#
+# The prompt text goes directly to /dev/tty (not stderr) so it's visible
+# across bash 3.2 (macOS default) and bash 5.x regardless of `read -p`
+# behavior. stdout carries ONLY the validated value so callers can
+# capture it via $(...).
+prompt_validated() {
+  local prompt_text="$1" regex="$2" errmsg="$3"
+  local max_attempts=5
+  local attempt=0
+  local val=""
+  while [[ "$attempt" -lt "$max_attempts" ]]; do
+    printf "%s" "$prompt_text" > /dev/tty
+    if ! IFS= read -r val < /dev/tty; then
+      echo ""
+      return 0
+    fi
+    if [[ -z "$val" ]]; then
+      echo ""
+      return 0
+    fi
+    if [[ "$val" =~ $regex ]]; then
+      echo "$val"
+      return 0
+    fi
+    printf "  ${C_YELLOW}Invalid:${C_RESET} %s. Try again or press Enter to skip.\n" "$errmsg" > /dev/tty
+    attempt=$((attempt + 1))
+  done
+  printf "  ${C_YELLOW}Max attempts reached — skipping.${C_RESET}\n" > /dev/tty
+  echo ""
+}
+
 # ------------------------------------------------------------------ guards
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -598,14 +638,19 @@ else
   echo "${C_BOLD}Optional integrations${C_RESET} — press Enter to skip any field."
   echo ""
 
-  # 1) Telegram chat ID (skip if already in profile)
+  # 1) Telegram chat ID (skip if already in profile).
+  # Chat IDs are integers; group chats can be negative (e.g. -1001234567890),
+  # so the regex allows an optional leading minus.
   if [[ -z "$ACTIVATION_TELEGRAM_CHAT_ID" ]] && [[ -z "${APPLYLOOP_TELEGRAM_CHAT_ID:-}" ]]; then
     echo "${C_BOLD}  Telegram notifications${C_RESET}"
     echo "    1. Open Telegram, find @ApplyLoopBot"
     echo "    2. Send /start to the bot"
     echo "    3. Bot replies with your Chat ID"
     echo "    4. Paste the number below (or Enter to skip)"
-    read -r -p "  Telegram Chat ID: " ACTIVATION_TELEGRAM_CHAT_ID < /dev/tty || true
+    ACTIVATION_TELEGRAM_CHAT_ID="$(prompt_validated \
+      "  Telegram Chat ID: " \
+      '^-?[0-9]+$' \
+      "not a valid chat ID (digits only, may start with - for group chats)")"
     echo ""
   elif [[ -z "$ACTIVATION_TELEGRAM_CHAT_ID" && -n "${APPLYLOOP_TELEGRAM_CHAT_ID:-}" ]]; then
     ACTIVATION_TELEGRAM_CHAT_ID="$APPLYLOOP_TELEGRAM_CHAT_ID"
@@ -645,11 +690,45 @@ else
     echo "    Used to read 6-digit confirmation codes from job applications."
     echo "    Requires: 2FA enabled + App Password from"
     echo "    https://myaccount.google.com/apppasswords"
-    read -r -p "  Gmail address (Enter to skip): " GMAIL_EMAIL_VAL < /dev/tty || true
+
+    # Validated email: basic shape `anything@anything.anything`. We avoid
+    # strict RFC5322 on purpose (bash regex can't express it). This catches
+    # the common typos — forgot @, forgot .com, pasted a name instead.
+    GMAIL_EMAIL_VAL="$(prompt_validated \
+      "  Gmail address (Enter to skip): " \
+      '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' \
+      "not a valid email (expected name@domain.tld)")"
+
     if [[ -n "$GMAIL_EMAIL_VAL" ]]; then
-      read -r -p "  Gmail app password (16 chars, spaces OK): " GMAIL_APP_PW_VAL < /dev/tty || true
-      # Strip spaces (Google displays as "abcd efgh ijkl mnop")
-      GMAIL_APP_PW_VAL="$(echo "$GMAIL_APP_PW_VAL" | tr -d ' ')"
+      # App passwords are displayed by Google as "abcd efgh ijkl mnop" —
+      # four groups of four, space-separated. We strip ALL whitespace
+      # before validating length. Google app passwords are exactly 16
+      # characters after stripping.
+      GMAIL_PW_ATTEMPTS=0
+      while [[ "$GMAIL_PW_ATTEMPTS" -lt 5 ]]; do
+        printf "  Gmail app password (16 chars, paste with spaces is fine, Enter to skip): " > /dev/tty
+        if ! IFS= read -r GMAIL_APP_PW_VAL < /dev/tty; then
+          GMAIL_APP_PW_VAL=""
+          break
+        fi
+        GMAIL_APP_PW_VAL="$(echo "$GMAIL_APP_PW_VAL" | tr -d '[:space:]')"
+        if [[ -z "$GMAIL_APP_PW_VAL" ]]; then
+          # Empty Enter = skip. Clear the email too so we don't end up
+          # with a half-configured Gmail block in .env.
+          GMAIL_EMAIL_VAL=""
+          break
+        fi
+        if [[ ${#GMAIL_APP_PW_VAL} -eq 16 ]]; then
+          break
+        fi
+        printf "  ${C_YELLOW}Invalid:${C_RESET} expected 16 characters after stripping spaces, got %d. Try again or press Enter to skip.\n" "${#GMAIL_APP_PW_VAL}" > /dev/tty
+        GMAIL_APP_PW_VAL=""
+        GMAIL_PW_ATTEMPTS=$((GMAIL_PW_ATTEMPTS + 1))
+      done
+      if [[ -z "$GMAIL_APP_PW_VAL" && -n "$GMAIL_EMAIL_VAL" ]]; then
+        printf "  ${C_YELLOW}Skipping Gmail — no valid app password provided.${C_RESET}\n" > /dev/tty
+        GMAIL_EMAIL_VAL=""
+      fi
     fi
     echo ""
   fi
