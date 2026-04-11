@@ -27,6 +27,34 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// IP-scoped rate limiter. Protects against brute-force sweeps of the 32^8
+// activation-code alphabet. In-process Map means it's per-lambda-container,
+// so a sufficiently distributed attacker could still make progress — but it
+// blocks single-container sprays and buys us time. For stronger guarantees
+// we'd need a shared backend (Upstash Redis / Vercel KV).
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 10;
+type RateRecord = { count: number; resetAt: number };
+const ipRateMap: Map<string, RateRecord> = new Map();
+
+function clientIp(request: NextRequest): string {
+  const fwd = request.headers.get("x-forwarded-for");
+  if (fwd) return fwd.split(",")[0].trim();
+  return request.headers.get("x-real-ip") || "unknown";
+}
+
+function checkIpRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const rec = ipRateMap.get(ip);
+  if (!rec || rec.resetAt < now) {
+    ipRateMap.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return true;
+  }
+  if (rec.count >= RATE_MAX) return false;
+  rec.count += 1;
+  return true;
+}
+
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
@@ -39,6 +67,16 @@ function generateWorkerToken(): string {
 }
 
 export async function POST(request: NextRequest) {
+  // IP-based rate limit — runs before any DB work so a brute-forcer can't
+  // exhaust Supabase quota even if they somehow bypass the alphabet entropy.
+  const ip = clientIp(request);
+  if (!checkIpRateLimit(ip)) {
+    return apiError(
+      "rate_limit_exceeded",
+      "Too many activation attempts. Wait a minute and try again."
+    );
+  }
+
   const body = await request.json().catch(() => ({}));
   const rawCode: string = (body.code || "").toString().trim().toUpperCase();
   const install_id: string | null = body.install_id ? String(body.install_id) : null;
