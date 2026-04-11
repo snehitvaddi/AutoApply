@@ -16,7 +16,48 @@
  */
 export const AI_PROFILE_PROMPT = `I'm setting up ApplyLoop — an automated job application bot. I need my COMPLETE professional profile extracted as JSON. Use my resume (paste it below or reference from our past conversations).
 
-IMPORTANT: Include ALL work experiences, ALL education entries, skills, and generate professional answers for common application questions.
+CRITICAL — you MUST extract ALL of the following, not a summary:
+
+  1. EVERY work experience, from most recent to oldest:
+     - Full legal company name (e.g. "Modernizing Medicine, Inc.", not "ModMed")
+     - Exact job title as written on the resume
+     - City/state location, even if only one of the two is given
+     - Start and end dates in "Mon YYYY" format ("Present" if current)
+     - At minimum 3 achievement bullets per role, verbatim from the resume
+       (use the exact phrasing — do NOT paraphrase or shorten)
+
+  2. EVERY education entry, undergraduate AND graduate AND doctoral:
+     - School name (full legal name, e.g. "University of Florida", not "UF")
+     - Full degree (e.g. "Master of Science", "Bachelor of Engineering")
+     - Field of study (e.g. "Computer & Information Science & Engineering")
+     - Start and end months+years
+     - GPA if present
+     Do NOT drop the bachelor's just because I also have a master's —
+     include ALL educations I have.
+
+  3. EVERY technical and professional skill on the resume, as a flat list.
+     Aim for 15-30 entries when the resume supports it. Deduplicate,
+     but do not collapse categories (keep "PyTorch" and "TensorFlow"
+     separately, keep both "SQL" and "PostgreSQL" if both are listed).
+
+  4. EEO + work authorization fields as the resume implies them (or
+     "decline" if not stated).
+
+  5. "target_titles" — after parsing the above, GENERATE a list of
+     10-15 job titles that are genuinely relevant to THIS person given
+     their experience, skills, and education. Do not copy generic
+     examples — these must be titles I could realistically apply to.
+     E.g. if the resume shows strong NLP/LLM experience, include
+     "NLP Engineer", "LLM Engineer", "Applied Scientist - NLP"; if the
+     resume shows CV experience include "Computer Vision Engineer".
+     Bias toward IC (individual contributor) titles at the same seniority
+     level as the most recent role, plus one step up.
+
+  6. "standard_answers" — generate real professional prose (not
+     placeholders) based on my actual resume: why_interested tailored
+     to my target_titles, strengths referencing my actual projects,
+     career_goals consistent with my trajectory, and a cover_letter_template
+     that opens with a specific achievement from my most recent role.
 
 Respond with ONLY this JSON (fill everything you know, leave "" for unknown):
 
@@ -90,7 +131,12 @@ Valid values:
 - veteran_status: "not_veteran", "veteran", "decline"
 - disability_status: "no_disability", "has_disability", "decline"
 
-Include ALL your work experiences (not just current). Include ALL education. Generate real professional answers for standard_answers based on your actual background.`;
+Final checks before returning the JSON:
+  - work_experience has an entry for EVERY job on the resume
+  - education has an entry for EVERY school (undergrad AND grad)
+  - skills has 15+ entries when the resume supports it
+  - target_titles are TAILORED to my actual background, not generic
+  - standard_answers contain real prose, not placeholders`;
 
 /**
  * Set of field names from the parse result that we persist to
