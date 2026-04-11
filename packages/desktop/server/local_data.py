@@ -1,8 +1,9 @@
 """
 Read application data from the local SQLite database.
 
-Database: $APPLYLOOP_DB or ~/.autoapply/workspace/applications.db
-         (falls back to ~/.openclaw/agents/job-bot/workspace/applications.db)
+Database: $APPLYLOOP_DB or ~/.autoapply/workspace/applications.db.
+config.py propagates APPLYLOOP_WORKSPACE into APPLYLOOP_DB so every
+per-tenant instance picks up its own file.
 
 Schema:
   applications(id, company, role, url, ats, source, location, posted_at,

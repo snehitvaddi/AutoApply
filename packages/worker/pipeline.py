@@ -35,10 +35,9 @@ DB_PATH = Path(os.environ.get(
     "APPLYLOOP_DB",
     Path.home() / ".autoapply" / "workspace" / "applications.db"
 ))
-if not DB_PATH.exists():
-    _legacy = Path.home() / ".openclaw" / "agents" / "job-bot" / "workspace" / "applications.db"
-    if _legacy.exists():
-        DB_PATH = _legacy
+# NOTE: the legacy ~/.openclaw fallback was removed — it broke multi-tenant
+# isolation because every worker instance would converge on the same DB
+# regardless of APPLYLOOP_DB / APPLYLOOP_WORKSPACE.
 
 
 # --- DATABASE ---------------------------------------------------------------
