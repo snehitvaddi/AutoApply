@@ -599,10 +599,55 @@ def main():
             time.sleep(5)
             continue
 
+        # Pre-flight resume check. The worker would previously claim a job,
+        # call download_resume() in the middle of its happy-path try block,
+        # catch the "No resume found" ValueError in the outer except, and
+        # mark the job FAILED forever. Net effect: a user with no resume
+        # watched 100% of their queue get burned on the first cycle, with
+        # no way to recover even after they uploaded one.
+        #
+        # Now: probe download_resume FIRST. If the user has no resume on
+        # file, push the job back to 'pending' (re-claimable the moment
+        # they upload), surface the state via heartbeat + local SQLite
+        # status, and sleep 120s to avoid spinning. On upload success,
+        # the desktop's upload handler also auto-starts the PTY, so the
+        # apply loop picks up seamlessly on the next cycle.
+        try:
+            resume_path = download_resume(user_id, job.get('title'))
+        except WorkerAuthError:
+            # Auth errors are fatal — let the outer handler exit the loop.
+            raise
+        except Exception as e:
+            msg = str(e).lower()
+            if "no resume" in msg or "resume not found" in msg:
+                logger.info(
+                    f"User {user_id} has no resume — job {job['id']} "
+                    f"returned to queue, backing off 120s"
+                )
+                update_queue_status(
+                    job['id'], 'pending',
+                    error='awaiting_resume_upload',
+                )
+                try:
+                    update_local_status(job, 'queued', 'awaiting resume upload')
+                except Exception:
+                    pass
+                update_heartbeat(
+                    user_id, "awaiting_resume",
+                    "No resume on file — upload via Settings → Resume",
+                )
+                time.sleep(120)
+                continue
+            # Other download errors (network, auth, etc.) — fail this job
+            # but keep the worker alive.
+            logger.warning(f"Resume download failed for job {job['id']}: {e}")
+            update_queue_status(job['id'], 'failed', error=f"resume download: {e}")
+            update_local_status(job, 'failed', f"resume download: {e}")
+            continue
+
         try:
             profile = load_user_profile(user_id)
             answer_key = build_answer_key(profile, global_template)
-            resume_path = download_resume(user_id, job.get('title'))
 
             # Get ATS-specific cooldown
             ats = job.get('ats', 'greenhouse')

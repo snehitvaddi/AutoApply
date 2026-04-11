@@ -94,20 +94,55 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Telegram gateway failed to start: {e}")
 
-    # Auto-start the Claude Code PTY session so users don't have to manually
-    # click "Start Session" on the Terminal tab every time they relaunch.
-    # Guarded:
-    #   - Skip in headless mode (CI has no `claude` CLI installed and doesn't
-    #     need the agent loop)
-    #   - Skip if there's no worker token (nothing useful to do)
-    #   - Skip if `claude` CLI isn't installed (PTYSession.start() will log
-    #     the error itself — we just avoid hammering it on boot)
-    # Failures are swallowed — a broken PTY must never take down the server.
+    # Auto-start the Claude Code PTY session so users don't have to
+    # manually click "Start Session" on the Terminal tab every time
+    # they relaunch. Guards, in this order:
+    #
+    #   1. Skip in headless mode — CI runners don't have `claude`
+    #      installed and don't need the agent loop.
+    #   2. Skip if there's no worker token — nothing useful to do.
+    #   3. Skip if the user has no uploaded resume — the worker will
+    #      fail every apply without one, so starting the agent loop is
+    #      counterproductive. Tell the user to upload via Settings →
+    #      Resume; the upload handler auto-starts the PTY on success
+    #      so they don't have to relaunch.
+    #   4. Skip if `claude` CLI isn't findable on PATH — log the
+    #      install hint instead of trying to spawn a missing binary.
+    #
+    # Failures at any layer are swallowed with a warning. The server
+    # must never fail to start because the agent loop is broken — the
+    # rest of the app (dashboard, Kanban, Settings, Telegram gateway)
+    # stays functional.
     import os as _os
     if not _os.environ.get("APPLYLOOP_HEADLESS") and token:
         try:
             from .pty_terminal import PTYSession as _PTYSession
-            if _PTYSession._find_claude() and not session_manager.pty.is_alive:
+            # Check resume existence via worker proxy — one round-trip,
+            # ~50ms in practice. Cheap insurance against spinning up a
+            # doomed apply loop.
+            resume_result = await stats._proxy("list_resumes")
+            resume_rows = (
+                (resume_result or {}).get("data", {}).get("resumes", [])
+                if not (resume_result or {}).get("error")
+                else []
+            )
+            has_resume = len(resume_rows) > 0
+
+            if not has_resume:
+                logger.warning(
+                    "No resume uploaded yet — skipping PTY auto-start. "
+                    "Open Settings → Resume to upload one; the apply loop "
+                    "will start automatically when the upload succeeds."
+                )
+            elif not _PTYSession._find_claude():
+                logger.warning(
+                    "claude CLI not found on PATH — skipping PTY auto-start. "
+                    "Install from https://claude.com/product/claude-code "
+                    "and click Start Session on the Terminal tab after."
+                )
+            elif session_manager.pty.is_alive:
+                logger.info("PTY already alive; skipping auto-start")
+            else:
                 result = session_manager.new_session()
                 if result.get("alive"):
                     logger.info(
@@ -119,12 +154,6 @@ async def lifespan(app: FastAPI):
                         "PTY auto-start did not bring the session up — "
                         "user can click Start Session on the Terminal tab"
                     )
-            elif not _PTYSession._find_claude():
-                logger.warning(
-                    "claude CLI not found on PATH — skipping PTY auto-start. "
-                    "Install from https://claude.com/product/claude-code and "
-                    "click Start Session on the Terminal tab after."
-                )
         except Exception as e:
             logger.warning(f"PTY auto-start failed: {e}")
 
@@ -698,7 +727,32 @@ async def upload_resume(
     except Exception as e:
         logger.debug(f"Post-upload resume cache refresh failed: {e}")
 
-    return {"ok": True, "data": result.get("data", {})}
+    # If this is the user's FIRST resume upload, the PTY auto-start at
+    # boot was almost certainly skipped (no resume → no apply loop).
+    # Now that they have one, spin up the Claude Code session so they
+    # don't have to relaunch the app. Same guards as the lifespan
+    # handler: only when we have claude on PATH and nothing's already
+    # running. Swallows all errors — upload succeeded either way.
+    pty_auto_started = False
+    try:
+        if not session_manager.pty.is_alive:
+            from .pty_terminal import PTYSession as _PTYSession
+            if _PTYSession._find_claude():
+                result_session = session_manager.new_session()
+                pty_auto_started = bool(result_session.get("alive"))
+                if pty_auto_started:
+                    logger.info(
+                        "PTY auto-started after first resume upload "
+                        f"(pid={result_session.get('pid')})"
+                    )
+    except Exception as e:
+        logger.debug(f"Post-upload PTY auto-start failed: {e}")
+
+    return {
+        "ok": True,
+        "data": result.get("data", {}),
+        "pty_auto_started": pty_auto_started,
+    }
 
 
 @app.get("/api/activity")
