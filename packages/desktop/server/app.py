@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -93,6 +93,40 @@ async def lifespan(app: FastAPI):
         await telegram_gateway.start()
     except Exception as e:
         logger.warning(f"Telegram gateway failed to start: {e}")
+
+    # Auto-start the Claude Code PTY session so users don't have to manually
+    # click "Start Session" on the Terminal tab every time they relaunch.
+    # Guarded:
+    #   - Skip in headless mode (CI has no `claude` CLI installed and doesn't
+    #     need the agent loop)
+    #   - Skip if there's no worker token (nothing useful to do)
+    #   - Skip if `claude` CLI isn't installed (PTYSession.start() will log
+    #     the error itself — we just avoid hammering it on boot)
+    # Failures are swallowed — a broken PTY must never take down the server.
+    import os as _os
+    if not _os.environ.get("APPLYLOOP_HEADLESS") and token:
+        try:
+            from .pty_terminal import PTYSession as _PTYSession
+            if _PTYSession._find_claude() and not session_manager.pty.is_alive:
+                result = session_manager.new_session()
+                if result.get("alive"):
+                    logger.info(
+                        f"Auto-started Claude Code PTY session "
+                        f"(pid={result.get('pid')})"
+                    )
+                else:
+                    logger.warning(
+                        "PTY auto-start did not bring the session up — "
+                        "user can click Start Session on the Terminal tab"
+                    )
+            elif not _PTYSession._find_claude():
+                logger.warning(
+                    "claude CLI not found on PATH — skipping PTY auto-start. "
+                    "Install from https://claude.com/product/claude-code and "
+                    "click Start Session on the Terminal tab after."
+                )
+        except Exception as e:
+            logger.warning(f"PTY auto-start failed: {e}")
 
     yield
 
@@ -588,6 +622,83 @@ async def setup_activate(body: dict):
         },
         "resume_downloaded": resume_ok,
     }
+
+
+# ── Resume upload / list ────────────────────────────────────────────────────
+
+@app.get("/api/resumes")
+async def list_resumes():
+    """List the authenticated user's resumes via the worker proxy."""
+    try:
+        result = await stats._proxy("list_resumes")
+        if "error" in result:
+            return {"ok": False, "error": result["error"]}
+        return {"ok": True, "data": result.get("data", {})}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/resumes/upload")
+async def upload_resume(
+    file: UploadFile = File(...),
+    is_default: bool = Form(True),
+    target_keywords: str = Form(""),
+):
+    """Accept a PDF upload from the desktop Settings page → forward to the
+    worker proxy's upload_resume action → Supabase Storage.
+
+    We read the bytes here, sanity-check size + PDF magic at the edge so
+    obvious mistakes surface before a network round-trip, then base64-encode
+    and hand off to the proxy. The proxy re-validates server-side
+    (belt-and-suspenders).
+
+    Params come in as multipart/form-data so the browser file picker works:
+      file              UploadFile   the PDF
+      is_default        bool         default True — set as the user's
+                                     default resume (clears other rows'
+                                     is_default flag for this user)
+      target_keywords   str          comma-separated keywords for resume
+                                     routing (e.g. "ml,ai,llm")
+    """
+    import base64 as _b64
+    try:
+        raw = await file.read()
+    except Exception as e:
+        return {"ok": False, "error": f"could not read uploaded file: {e}"}
+
+    MAX_BYTES = 10 * 1024 * 1024
+    if not raw:
+        return {"ok": False, "error": "uploaded file is empty"}
+    if len(raw) > MAX_BYTES:
+        return {"ok": False, "error": f"resume exceeds 10 MB cap ({len(raw)} bytes)"}
+    if raw[:4] != b"%PDF":
+        return {
+            "ok": False,
+            "error": "file does not look like a PDF (missing %PDF magic bytes)",
+        }
+
+    keywords = [k.strip() for k in (target_keywords or "").split(",") if k.strip()]
+
+    result = await stats._proxy("upload_resume", {
+        "content_base64": _b64.b64encode(raw).decode("ascii"),
+        "file_name": file.filename or "resume.pdf",
+        "is_default": is_default,
+        "target_keywords": keywords,
+    })
+    if "error" in result:
+        return {"ok": False, "error": result["error"]}
+
+    # Also refresh the local resume.pdf copy so the worker's applier can
+    # read it without another round-trip. Best-effort — if we fail we still
+    # return OK because the cloud upload itself succeeded.
+    try:
+        token = load_token()
+        if token:
+            await _download_default_resume(token)
+    except Exception as e:
+        logger.debug(f"Post-upload resume cache refresh failed: {e}")
+
+    return {"ok": True, "data": result.get("data", {})}
 
 
 @app.get("/api/activity")
