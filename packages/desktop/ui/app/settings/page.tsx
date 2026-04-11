@@ -7,6 +7,7 @@ import {
   getProfile, updateProfile, getPreferences, updatePreferences,
   listResumes, uploadResume, getSetupStatus, type ResumeRow,
 } from "@/lib/api"
+import { AI_PROFILE_PROMPT, parseAiResponseSafe } from "@/lib/profile-schema"
 import { cn } from "@/lib/utils"
 import {
   Save, Loader2, Check, User, Briefcase, Target, Key,
@@ -24,50 +25,12 @@ const tabs: { id: Tab; label: string; icon: typeof User }[] = [
   { id: "auth", label: "API Token", icon: Key },
 ]
 
-// The same prompt the web /onboarding uses. Ports verbatim so users who
-// have already cached a response in their AI chat history can reuse it.
-const AI_PROFILE_PROMPT = `I'm setting up ApplyLoop — an automated job application bot. I need my COMPLETE professional profile extracted as JSON. Use my resume (paste it below or reference from our past conversations).
-
-IMPORTANT: Include ALL work experiences, ALL education entries, skills, and generate professional answers for common application questions.
-
-Respond with ONLY this JSON (fill everything you know, leave "" for unknown):
-
-{
-  "first_name": "",
-  "last_name": "",
-  "email": "",
-  "phone": "",
-  "linkedin_url": "",
-  "github_url": "",
-  "portfolio_url": "",
-  "current_company": "",
-  "current_title": "",
-  "years_experience": 0,
-  "work_experience": [
-    {"company": "", "title": "", "location": "", "start_date": "Mon YYYY", "end_date": "Present", "achievements": ["bullet 1", "bullet 2"]}
-  ],
-  "education": [
-    {"school": "", "degree": "", "field": "", "start_date": "Mon YYYY", "end_date": "Mon YYYY", "gpa": ""}
-  ],
-  "skills": ["Python", "PyTorch"],
-  "education_level": "masters",
-  "school_name": "",
-  "degree": "",
-  "graduation_year": 0,
-  "work_authorization": "us_citizen",
-  "requires_sponsorship": false,
-  "salary_min": 120000,
-  "target_titles": ["AI Engineer", "ML Engineer"],
-  "excluded_companies": [],
-  "remote_only": false,
-  "auto_apply": true
-}
-
-Valid values:
-- education_level: "bachelors", "masters", "phd", "other"
-- work_authorization: "us_citizen", "green_card", "h1b", "opt", "tn", "other"
-
-Include ALL your work experiences (not just current). Include ALL education.`
+// AI_PROFILE_PROMPT now imported from @/lib/profile-schema (a byte-identical
+// copy of packages/web/src/lib/profile-schema.ts). Previously this file had
+// its own local copy that had drifted significantly — missing all the "ALL
+// work_experience / education / skills" extraction rules, default values,
+// EEO fields, and the generated target_titles instruction. One source of
+// truth now, mirrored manually between the web + desktop packages.
 
 function Input({
   label,
@@ -245,82 +208,99 @@ export default function SettingsPage() {
     }
   }
 
+  // Extra ref-like storage for the array fields (work_experience, skills,
+  // education, answer_key_json) that the desktop's `profile` state shape
+  // can't hold since it's Record<string, string>. We carry them through
+  // parse → saveAiImport without passing through component state.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pendingArraysRef = useRef<Record<string, any>>({})
+
   function parseAiResponse() {
     setAiError(null)
     setAiParsed(false)
-    let jsonStr = aiResponse.trim()
-    if (!jsonStr) {
+    if (!aiResponse.trim()) {
       setAiError("Please paste the AI response first.")
       return
     }
-    // Strip markdown fences if present
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (fenceMatch) jsonStr = fenceMatch[1].trim()
-    // If there's prose wrapping the JSON, grab the first top-level {...} block
-    if (!jsonStr.startsWith("{")) {
-      const braceStart = jsonStr.indexOf("{")
-      const braceEnd = jsonStr.lastIndexOf("}")
-      if (braceStart !== -1 && braceEnd > braceStart) {
-        jsonStr = jsonStr.slice(braceStart, braceEnd + 1)
-      }
+
+    // Tolerant parse + default application via the shared lib. This will:
+    //   - strip markdown fences, // line / /* */ block comments, trailing commas
+    //   - recover from prose wrapping the JSON
+    //   - fill DEFAULTS for missing work_auth, sponsorship, disability,
+    //     salary range, etc.
+    //   - normalize alias field names (experience → work_experience, etc.)
+    //   - return .profile (user_profiles fields) + .prefs (user_job_preferences)
+    //   - NEVER throw — on unparseable input it returns defaults + an error string
+    const result = parseAiResponseSafe(aiResponse)
+    const p = result.profile as Record<string, unknown>
+    const pf = result.prefs as Record<string, unknown>
+    const str = (v: unknown) => (v == null ? "" : String(v))
+
+    if (!result.ok && result.error) {
+      setAiError(result.error + " (defaults still applied — you can save or adjust.)")
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let data: any
-    try {
-      data = JSON.parse(jsonStr)
-    } catch (e) {
-      const snippet = jsonStr.slice(0, 60).replace(/\s+/g, " ")
-      const reason = e instanceof Error ? e.message : "unknown error"
-      setAiError(
-        `Could not parse as JSON (${reason}). Starts with: "${snippet}${jsonStr.length > 60 ? "..." : ""}". Make sure you copied only the JSON block.`
-      )
-      return
-    }
-    if (!data || typeof data !== "object") {
-      setAiError("AI response must be a JSON object (got " + typeof data + ").")
-      return
-    }
-
-    // Populate profile fields, gated so empty strings don't clobber state
+    // Scalar fields go into the `profile` state (which is Record<string,string>)
     const nextProfile = { ...profile }
     const setIf = (k: string, v: unknown) => {
       if (v !== undefined && v !== null && String(v) !== "") {
         nextProfile[k] = String(v)
       }
     }
-    setIf("first_name", data.first_name)
-    setIf("last_name", data.last_name)
-    setIf("email", data.email)
-    setIf("phone", data.phone)
-    setIf("linkedin_url", data.linkedin_url)
-    setIf("github_url", data.github_url)
-    setIf("portfolio_url", data.portfolio_url)
-    setIf("current_company", data.current_company)
-    setIf("current_title", data.current_title)
-    setIf("years_experience", data.years_experience)
-    setIf("education_level", data.education_level)
-    setIf("school_name", data.school_name)
-    setIf("degree", data.degree)
-    setIf("graduation_year", data.graduation_year)
-    setIf("work_authorization", data.work_authorization)
-    if (data.requires_sponsorship !== undefined) {
-      nextProfile.requires_sponsorship = data.requires_sponsorship ? "Yes" : "No"
+    setIf("first_name", p.first_name)
+    setIf("last_name", p.last_name)
+    setIf("phone", p.phone)
+    setIf("linkedin_url", p.linkedin_url)
+    setIf("github_url", p.github_url)
+    setIf("portfolio_url", p.portfolio_url)
+    setIf("current_company", p.current_company)
+    setIf("current_title", p.current_title)
+    setIf("years_experience", p.years_experience)
+    setIf("education_level", p.education_level)
+    setIf("school_name", p.school_name)
+    setIf("degree", p.degree)
+    setIf("graduation_year", p.graduation_year)
+    setIf("work_authorization", p.work_authorization)
+    setIf("gender", p.gender)
+    setIf("race_ethnicity", p.race_ethnicity)
+    setIf("veteran_status", p.veteran_status)
+    setIf("disability_status", p.disability_status)
+    if (typeof p.requires_sponsorship === "boolean") {
+      nextProfile.requires_sponsorship = p.requires_sponsorship ? "Yes" : "No"
     }
     setProfile(nextProfile)
 
-    // Populate prefs
+    // Array fields stored in a ref for later forwarding to updateProfile().
+    pendingArraysRef.current = {}
+    if (Array.isArray(p.work_experience) && p.work_experience.length > 0) {
+      pendingArraysRef.current.work_experience = p.work_experience
+    }
+    if (Array.isArray(p.skills) && p.skills.length > 0) {
+      pendingArraysRef.current.skills = p.skills
+    }
+    if (Array.isArray(p.education) && p.education.length > 0) {
+      pendingArraysRef.current.education = p.education
+    }
+    if (p.answer_key_json && typeof p.answer_key_json === "object") {
+      pendingArraysRef.current.answer_key_json = p.answer_key_json
+    }
+
+    // Preferences → separate prefs state
     const nextPrefs = { ...prefs }
-    if (Array.isArray(data.target_titles) && data.target_titles.length) {
-      nextPrefs.target_titles = data.target_titles.join(", ")
+    if (Array.isArray(pf.target_titles) && pf.target_titles.length) {
+      nextPrefs.target_titles = (pf.target_titles as string[]).join(", ")
     }
-    if (Array.isArray(data.excluded_companies)) {
-      nextPrefs.excluded_companies = data.excluded_companies.join(", ")
+    if (Array.isArray(pf.excluded_companies)) {
+      nextPrefs.excluded_companies = (pf.excluded_companies as string[]).join(", ")
     }
-    if (data.salary_min !== undefined) nextPrefs.min_salary = String(data.salary_min)
-    if (data.remote_only !== undefined) nextPrefs.remote_only = data.remote_only ? "Yes" : "No"
-    if (data.auto_apply !== undefined) nextPrefs.auto_apply = data.auto_apply ? "Yes" : "No"
+    if (pf.min_salary != null) nextPrefs.min_salary = str(pf.min_salary)
+    if (typeof pf.remote_only === "boolean") nextPrefs.remote_only = pf.remote_only ? "Yes" : "No"
+    if (typeof pf.auto_apply === "boolean") nextPrefs.auto_apply = pf.auto_apply ? "Yes" : "No"
     setPrefs(nextPrefs)
+
+    if (result.defaulted.length > 0) {
+      console.info(`[settings] Applied defaults for: ${result.defaulted.join(", ")}`)
+    }
 
     setAiParsed(true)
   }
@@ -329,8 +309,18 @@ export default function SettingsPage() {
     setSaveError(null)
     setSaving(true)
     try {
-      // Persist both profile + preferences in one shot
-      await updateProfile(profile)
+      // Persist profile: scalars from form state + array fields from
+      // the pendingArraysRef that parseAiResponse stashed. The desktop
+      // /api/profile endpoint forwards to the worker proxy which has
+      // work_experience / skills / education / answer_key_json in its
+      // PROFILE_COLUMNS allowlist, so they land on user_profiles.
+      const profilePayload: Record<string, unknown> = { ...profile }
+      if (profile.requires_sponsorship) {
+        profilePayload.requires_sponsorship = profile.requires_sponsorship === "Yes"
+      }
+      Object.assign(profilePayload, pendingArraysRef.current)
+
+      await updateProfile(profilePayload)
       await updatePreferences({
         ...prefs,
         target_titles: prefs.target_titles?.split(",").map(s => s.trim()).filter(Boolean),
@@ -339,6 +329,8 @@ export default function SettingsPage() {
         remote_only: prefs.remote_only === "Yes",
         auto_apply: prefs.auto_apply === "Yes",
       })
+      // Clear stashed arrays after successful save.
+      pendingArraysRef.current = {}
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (e) {

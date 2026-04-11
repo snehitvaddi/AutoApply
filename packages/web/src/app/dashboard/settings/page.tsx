@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { AI_PROFILE_PROMPT } from "@/lib/profile-schema";
+import { AI_PROFILE_PROMPT, parseAiResponseSafe } from "@/lib/profile-schema";
 
 const ROLE_PRESETS = [
   "AI Engineer", "ML Engineer", "Data Scientist", "Data Engineer",
@@ -333,35 +333,48 @@ export default function SettingsPage() {
 
   async function importFromAi() {
     try {
-      let jsonStr = aiResponse.trim();
-      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) jsonStr = jsonMatch[1].trim();
+      // Tolerant parse: strips markdown fences, line/block comments, trailing
+      // commas, prose wrapping. Applies our default values (work_auth,
+      // sponsorship, disability, salary range, etc.) for missing/empty fields.
+      // Never throws — on a totally-unparseable input it still returns an
+      // object with defaults so the user can save and edit.
+      const result = parseAiResponseSafe(aiResponse);
+      const data = result.profile as Record<string, unknown>;
+      const pf = result.prefs as Record<string, unknown>;
+      const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
 
-      const data = JSON.parse(jsonStr);
+      if (!result.ok && result.error) {
+        showMessage(result.error, "error");
+        // Still apply defaults below.
+      }
 
-      // Populate all fields from AI response
-      if (data.first_name) setFirstName(data.first_name);
-      if (data.last_name) setLastName(data.last_name);
-      if (data.phone) setPhone(data.phone);
-      if (data.linkedin_url) setLinkedinUrl(data.linkedin_url);
-      if (data.github_url) setGithubUrl(data.github_url);
-      if (data.portfolio_url) setPortfolioUrl(data.portfolio_url);
-      if (data.current_company) setCurrentCompany(data.current_company);
-      if (data.current_title) setCurrentTitle(data.current_title);
-      if (data.years_experience) setYearsExperience(String(data.years_experience));
-      if (data.education_level) setEducationLevel(data.education_level);
-      if (data.school_name) setSchoolName(data.school_name);
-      if (data.degree) setDegree(data.degree);
-      if (data.graduation_year) setGraduationYear(String(data.graduation_year));
-      if (data.work_authorization) setWorkAuthorization(data.work_authorization);
-      if (data.requires_sponsorship !== undefined) setRequiresSponsorship(data.requires_sponsorship);
-      if (data.gender) setGender(data.gender);
-      if (data.race_ethnicity) setRaceEthnicity(data.race_ethnicity);
-      if (data.target_titles?.length) setTargetTitles(data.target_titles);
-      if (data.excluded_companies?.length) setExcludedCompanies(data.excluded_companies.join(", "));
-      if (data.salary_min) setMinSalary(String(data.salary_min));
-      if (data.remote_only !== undefined) setRemoteOnly(data.remote_only);
-      if (data.auto_apply !== undefined) setAutoApply(data.auto_apply);
+      // Populate form state
+      if (str(data.first_name)) setFirstName(str(data.first_name));
+      if (str(data.last_name)) setLastName(str(data.last_name));
+      if (str(data.phone)) setPhone(str(data.phone));
+      if (str(data.linkedin_url)) setLinkedinUrl(str(data.linkedin_url));
+      if (str(data.github_url)) setGithubUrl(str(data.github_url));
+      if (str(data.portfolio_url)) setPortfolioUrl(str(data.portfolio_url));
+      if (str(data.current_company)) setCurrentCompany(str(data.current_company));
+      if (str(data.current_title)) setCurrentTitle(str(data.current_title));
+      if (data.years_experience != null) setYearsExperience(str(data.years_experience));
+      if (str(data.education_level)) setEducationLevel(str(data.education_level));
+      if (str(data.school_name)) setSchoolName(str(data.school_name));
+      if (str(data.degree)) setDegree(str(data.degree));
+      if (data.graduation_year != null) setGraduationYear(str(data.graduation_year));
+      if (str(data.work_authorization)) setWorkAuthorization(str(data.work_authorization));
+      if (typeof data.requires_sponsorship === "boolean") setRequiresSponsorship(data.requires_sponsorship);
+      if (str(data.gender)) setGender(str(data.gender));
+      if (str(data.race_ethnicity)) setRaceEthnicity(str(data.race_ethnicity));
+      if (Array.isArray(pf.target_titles) && pf.target_titles.length) setTargetTitles(pf.target_titles as string[]);
+      if (Array.isArray(pf.excluded_companies)) setExcludedCompanies((pf.excluded_companies as string[]).join(", "));
+      if (pf.min_salary != null) setMinSalary(str(pf.min_salary));
+      if (typeof pf.remote_only === "boolean") setRemoteOnly(pf.remote_only);
+      if (typeof pf.auto_apply === "boolean") setAutoApply(pf.auto_apply);
+
+      if (result.defaulted.length > 0) {
+        console.info(`[settings] Applied defaults for: ${result.defaulted.join(", ")}`);
+      }
 
       // Save profile + preferences to backend. This includes the array
       // fields (work_experience, skills, education, answer_key_json) that
@@ -387,24 +400,47 @@ export default function SettingsPage() {
         gender: data.gender || gender,
         race_ethnicity: data.race_ethnicity || raceEthnicity,
       };
-      // Only include array fields in the PUT if the AI response had them;
-      // otherwise we'd overwrite existing cloud data with []s.
-      if (Array.isArray(data.work_experience) && data.work_experience.length > 0) {
+      // The shared parser splits parsed data into result.profile (user_profiles
+      // columns) and result.prefs (user_job_preferences columns). PUT each
+      // to its respective endpoint. Only include array fields when non-empty
+      // so we never overwrite existing cloud data with []s.
+      if (Array.isArray(data.work_experience) && (data.work_experience as unknown[]).length > 0) {
         profileBody.work_experience = data.work_experience;
       }
-      if (Array.isArray(data.skills) && data.skills.length > 0) {
+      if (Array.isArray(data.skills) && (data.skills as unknown[]).length > 0) {
         profileBody.skills = data.skills;
       }
-      if (Array.isArray(data.education) && data.education.length > 0) {
+      if (Array.isArray(data.education) && (data.education as unknown[]).length > 0) {
         profileBody.education = data.education;
       }
-      if (data.standard_answers && typeof data.standard_answers === "object") {
-        profileBody.answer_key_json = data.standard_answers;
+      if (data.answer_key_json && typeof data.answer_key_json === "object") {
+        profileBody.answer_key_json = data.answer_key_json;
       }
-      // EEO parity with the onboarding form (the AI prompt schema asks
-      // for these, but this page never persisted them).
+      // EEO: defaults are already applied by parseAiResponseSafe, so these
+      // are always set — use the normalized values.
       if (data.veteran_status) profileBody.veteran_status = data.veteran_status;
       if (data.disability_status) profileBody.disability_status = data.disability_status;
+      // The parser ALSO fills default work_authorization / requires_sponsorship
+      // / disability_status when missing. Make sure the PUT body reflects
+      // those (not the form state) so the user's first save locks in defaults.
+      if (data.work_authorization) profileBody.work_authorization = data.work_authorization;
+      if (typeof data.requires_sponsorship === "boolean") {
+        profileBody.requires_sponsorship = data.requires_sponsorship;
+      }
+
+      const prefsBody: Record<string, unknown> = {
+        target_titles: Array.isArray(pf.target_titles) && (pf.target_titles as unknown[]).length > 0
+          ? pf.target_titles
+          : targetTitles,
+        excluded_companies: Array.isArray(pf.excluded_companies)
+          ? pf.excluded_companies
+          : excludedCompanies.split(",").map((s: string) => s.trim()).filter(Boolean),
+        min_salary: pf.min_salary != null ? parseInt(str(pf.min_salary)) : null,
+        remote_only: typeof pf.remote_only === "boolean" ? pf.remote_only : remoteOnly,
+        auto_apply: typeof pf.auto_apply === "boolean" ? pf.auto_apply : autoApply,
+      };
+      if (pf.max_salary != null) prefsBody.max_salary = parseInt(str(pf.max_salary));
+      if (Array.isArray(pf.preferred_locations)) prefsBody.preferred_locations = pf.preferred_locations;
 
       const [profileRes, prefsRes] = await Promise.all([
         fetch("/api/settings/profile", {
@@ -415,13 +451,7 @@ export default function SettingsPage() {
         fetch("/api/settings/preferences", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            target_titles: data.target_titles?.length ? data.target_titles : targetTitles,
-            excluded_companies: data.excluded_companies?.length ? data.excluded_companies : excludedCompanies.split(",").map((s: string) => s.trim()).filter(Boolean),
-            min_salary: data.salary_min ? parseInt(String(data.salary_min)) : null,
-            remote_only: data.remote_only ?? remoteOnly,
-            auto_apply: data.auto_apply ?? autoApply,
-          }),
+          body: JSON.stringify(prefsBody),
         }),
       ]);
       setSaving(false);

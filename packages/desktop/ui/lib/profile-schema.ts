@@ -1,11 +1,10 @@
 /**
- * KEEP IN SYNC with packages/desktop/ui/lib/profile-schema.ts
+ * KEEP IN SYNC with packages/web/src/lib/profile-schema.ts
  *
- * The desktop Next.js app can't cross-package import this file, so a
- * byte-identical copy lives at packages/desktop/ui/lib/profile-schema.ts.
- * Any edit here MUST be mirrored to the other. Run:
- *   diff packages/web/src/lib/profile-schema.ts packages/desktop/ui/lib/profile-schema.ts
- * before committing to catch drift.
+ * This file is a byte-identical copy of the web-side profile schema lib.
+ * Desktop's Next.js app can't cross-package import from packages/web (no
+ * shared monorepo path alias), so we copy and keep them in sync manually.
+ * Any edit to one MUST be mirrored to the other.
  *
  * ---
  *

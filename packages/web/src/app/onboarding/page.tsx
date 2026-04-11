@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
-import { AI_PROFILE_PROMPT } from "@/lib/profile-schema";
+import { AI_PROFILE_PROMPT, parseAiResponseSafe } from "@/lib/profile-schema";
 
 // Persistent onboarding draft. We key by user id so switching Google accounts
 // on the same machine doesn't show a stranger's data. The draft is a single
@@ -216,76 +216,65 @@ export default function OnboardingPage() {
       setError("Please paste the AI response first.");
       return;
     }
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenceMatch) jsonStr = fenceMatch[1].trim();
-    // If there's prose wrapping the JSON, grab the first top-level {...} block.
-    if (!jsonStr.startsWith("{")) {
-      const braceStart = jsonStr.indexOf("{");
-      const braceEnd = jsonStr.lastIndexOf("}");
-      if (braceStart !== -1 && braceEnd > braceStart) {
-        jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
-      }
+
+    // Use the shared tolerant parser: strips markdown fences, line/block
+    // comments, trailing commas, prose wrapping, and applies our default
+    // values for any missing/empty fields (work_auth, sponsorship, disability,
+    // salary range, etc.). Never throws — on a totally-unparseable input it
+    // still returns an object with defaults applied so the form can proceed.
+    const result = parseAiResponseSafe(jsonStr);
+    const p = result.profile as Record<string, unknown>;
+    const pf = result.prefs as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
+
+    if (!result.ok && result.error) {
+      setError(result.error);
+      // NOTE: we still apply defaults below — the user can edit and save.
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let data: any;
-    try {
-      data = JSON.parse(jsonStr);
-    } catch (e) {
-      const snippet = jsonStr.slice(0, 60).replace(/\s+/g, " ");
-      const reason = e instanceof Error ? e.message : "unknown error";
-      // Log the full payload for debugging in the browser devtools, but only
-      // show a safe, short preview in the UI.
-      console.warn("[onboarding] AI JSON parse failed:", reason, jsonStr);
-      setError(
-        `Could not parse the AI response as JSON (${reason}). ` +
-          `Starts with: "${snippet}${jsonStr.length > 60 ? "..." : ""}". ` +
-          `Make sure you copied only the JSON block.`
+    // user_profiles / onboarding fields
+    if (str(p.first_name)) setFirstName(str(p.first_name));
+    if (str(p.last_name)) setLastName(str(p.last_name));
+    if (str(p.phone)) setPhone(str(p.phone));
+    if (str(p.linkedin_url)) setLinkedinUrl(str(p.linkedin_url));
+    if (str(p.github_url)) setGithubUrl(str(p.github_url));
+    if (str(p.portfolio_url)) setPortfolioUrl(str(p.portfolio_url));
+    if (str(p.current_company)) setCurrentCompany(str(p.current_company));
+    if (str(p.current_title)) setCurrentTitle(str(p.current_title));
+    if (p.years_experience != null) setYearsExperience(str(p.years_experience));
+    if (str(p.education_level)) setEducationLevel(str(p.education_level));
+    if (str(p.school_name)) setSchoolName(str(p.school_name));
+    if (str(p.degree)) setDegree(str(p.degree));
+    if (p.graduation_year != null) setGraduationYear(str(p.graduation_year));
+    if (str(p.work_authorization)) setWorkAuthorization(str(p.work_authorization));
+    if (typeof p.requires_sponsorship === "boolean") setRequiresSponsorship(p.requires_sponsorship);
+    if (str(p.gender)) setGender(str(p.gender));
+    if (str(p.race_ethnicity)) setRaceEthnicity(str(p.race_ethnicity));
+    if (str(p.veteran_status)) setVeteranStatus(str(p.veteran_status));
+    if (str(p.disability_status)) setDisabilityStatus(str(p.disability_status));
+    if (Array.isArray(p.work_experience)) setParsedWorkExperience(p.work_experience);
+    if (Array.isArray(p.skills)) setParsedSkills(p.skills as string[]);
+    if (p.answer_key_json && typeof p.answer_key_json === "object") {
+      setParsedStandardAnswers(p.answer_key_json as Record<string, unknown>);
+    }
+
+    // user_job_preferences fields
+    if (Array.isArray(pf.target_titles) && pf.target_titles.length) setTargetTitles(pf.target_titles as string[]);
+    if (Array.isArray(pf.excluded_companies)) {
+      setExcludedCompanies((pf.excluded_companies as string[]).join(", "));
+    }
+    if (pf.min_salary != null) setMinSalary(str(pf.min_salary));
+    if (typeof pf.remote_only === "boolean") setRemoteOnly(pf.remote_only);
+    if (typeof pf.auto_apply === "boolean") setAutoApply(pf.auto_apply);
+
+    if (result.defaulted.length > 0) {
+      console.info(
+        `[onboarding] Applied defaults for missing/empty fields: ${result.defaulted.join(", ")}`
       );
-      return;
-    }
-    if (!data || typeof data !== "object") {
-      setError("AI response must be a JSON object (got " + typeof data + ").");
-      return;
     }
 
-    // Populate all fields. Every assignment is gated so partially-filled
-    // AI responses (e.g. user pasted a resume with some fields missing)
-    // don't clobber existing draft state with empty strings.
-    if (data.first_name) setFirstName(data.first_name);
-    if (data.last_name) setLastName(data.last_name);
-    if (data.phone) setPhone(data.phone);
-    if (data.linkedin_url) setLinkedinUrl(data.linkedin_url);
-    if (data.github_url) setGithubUrl(data.github_url);
-    if (data.portfolio_url) setPortfolioUrl(data.portfolio_url);
-    if (data.current_company) setCurrentCompany(data.current_company);
-    if (data.current_title) setCurrentTitle(data.current_title);
-    if (data.years_experience) setYearsExperience(String(data.years_experience));
-    if (data.education_level) setEducationLevel(data.education_level);
-    if (data.school_name) setSchoolName(data.school_name);
-    if (data.degree) setDegree(data.degree);
-    if (data.graduation_year) setGraduationYear(String(data.graduation_year));
-    if (data.work_authorization) setWorkAuthorization(data.work_authorization);
-    if (data.requires_sponsorship !== undefined) setRequiresSponsorship(Boolean(data.requires_sponsorship));
-    if (data.gender) setGender(data.gender);
-    if (data.race_ethnicity) setRaceEthnicity(data.race_ethnicity);
-    if (data.veteran_status) setVeteranStatus(data.veteran_status);
-    if (data.disability_status) setDisabilityStatus(data.disability_status);
-    if (Array.isArray(data.work_experience)) setParsedWorkExperience(data.work_experience);
-    if (Array.isArray(data.skills)) setParsedSkills(data.skills);
-    if (data.standard_answers && typeof data.standard_answers === "object") {
-      setParsedStandardAnswers(data.standard_answers);
-    }
-    if (Array.isArray(data.target_titles) && data.target_titles.length) setTargetTitles(data.target_titles);
-    if (Array.isArray(data.excluded_companies) && data.excluded_companies.length) {
-      setExcludedCompanies(data.excluded_companies.join(", "));
-    }
-    if (data.salary_min) setMinSalary(String(data.salary_min));
-    if (data.remote_only !== undefined) setRemoteOnly(Boolean(data.remote_only));
-    if (data.auto_apply !== undefined) setAutoApply(Boolean(data.auto_apply));
-
-    setError("");
-    setStep(2); // Move to review step
+    if (result.ok) setError("");
+    setStep(2); // Move to review step regardless of parse result — defaults are in place.
   }
 
   function toggleTitle(title: string) {
