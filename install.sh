@@ -121,8 +121,90 @@ prompt_validated() {
     printf "  ${C_YELLOW}Invalid:${C_RESET} %s. Try again or press Enter to skip.\n" "$errmsg" > /dev/tty
     attempt=$((attempt + 1))
   done
-  printf "  ${C_YELLOW}Max attempts reached — skipping.${C_RESET}\n" > /dev/tty
+  printf "  ${C_YELLOW}Max attempts reached - skipping.${C_RESET}\n" > /dev/tty
   echo ""
+}
+
+# ── .env reuse helpers ─────────────────────────────────────────────
+#
+# On a fresh install, Phase D prompts for all optional integrations.
+# On a RE-install (same $APPLYLOOP_HOME), we should detect the existing
+# ~/.applyloop/.env and offer [Enter to keep / 's' to unset / type new]
+# per field. Pujith hit this pain — every rerun re-asked Telegram Chat
+# ID, AgentMail, Finetune, Gmail email + password from scratch.
+
+# Read a single KEY=value line from the existing ~/.applyloop/.env. Trim
+# wrapping quotes and surrounding whitespace. Empty if file missing or
+# key not set.
+read_env_value() {
+  local key="$1"
+  local env_file="$APPLYLOOP_HOME/.env"
+  [[ -f "$env_file" ]] || { echo ""; return 0; }
+  grep -E "^${key}=" "$env_file" 2>/dev/null | head -1 \
+    | sed -E "s/^${key}=//" \
+    | sed -E 's/^"//; s/"$//; s/^'\''//; s/'\''$//'
+}
+
+# Three-way prompt: keep existing / unset / type new. If no existing
+# value, falls through to prompt_validated.
+#
+# Usage:
+#   TELEGRAM_CHAT_ID="$(reuse_or_prompt \
+#       TELEGRAM_CHAT_ID \
+#       'Telegram Chat ID' \
+#       '^-?[0-9]+$' \
+#       'digits only (may start with - for group chats)')"
+reuse_or_prompt() {
+  local key="$1" label="$2" regex="$3" errmsg="$4"
+  local existing val display
+  existing="$(read_env_value "$key")"
+  if [[ -z "$existing" ]]; then
+    # No prior value — use the standard prompt
+    prompt_validated "  $label: " "$regex" "$errmsg"
+    return 0
+  fi
+
+  # Mask secrets for the display. Anything ending in _KEY / _TOKEN /
+  # _PASSWORD shows only the last 4 chars.
+  display="$existing"
+  case "$key" in
+    *KEY|*TOKEN|*PASSWORD)
+      if [[ ${#existing} -gt 4 ]]; then
+        display="****${existing: -4}"
+      else
+        display="****"
+      fi
+      ;;
+  esac
+
+  printf "  %s: ${C_BLUE}%s${C_RESET}  [Enter to keep / 's' to unset / type new]: " \
+    "$label" "$display" > /dev/tty
+  if ! IFS= read -r val < /dev/tty; then
+    echo "$existing"
+    return 0
+  fi
+
+  if [[ -z "$val" ]]; then
+    # Enter pressed — keep the existing value
+    echo "$existing"
+    return 0
+  fi
+
+  if [[ "$val" == "s" || "$val" == "S" ]]; then
+    # Explicit unset
+    printf "  ${C_YELLOW}Unset.${C_RESET}\n" > /dev/tty
+    echo ""
+    return 0
+  fi
+
+  # Validate the new value
+  if [[ "$val" =~ $regex ]]; then
+    echo "$val"
+    return 0
+  fi
+
+  printf "  ${C_YELLOW}Invalid:${C_RESET} %s - keeping old value.\n" "$errmsg" > /dev/tty
+  echo "$existing"
 }
 
 # ------------------------------------------------------------------ guards
@@ -437,7 +519,10 @@ ensure_claude
 ensure_openclaw
 
 # ------------------------------------------------------------------ clone / update
-
+# Ensure the parent directory exists — covers the case where the user
+# passes APPLYLOOP_HOME=/deeply/nested/path/that/does/not/exist. git
+# clone --depth 1 would fail if the parent doesn't exist; mkdir -p
+# handles both "parent missing" and "parent exists" gracefully.
 mkdir -p "$(dirname "$APPLYLOOP_HOME")"
 
 if [[ -d "$APPLYLOOP_HOME/.git" ]]; then
@@ -638,30 +723,40 @@ else
   echo "${C_BOLD}Optional integrations${C_RESET} — press Enter to skip any field."
   echo ""
 
-  # 1) Telegram chat ID (skip if already in profile).
-  # Chat IDs are integers; group chats can be negative (e.g. -1001234567890),
-  # so the regex allows an optional leading minus.
-  if [[ -z "$ACTIVATION_TELEGRAM_CHAT_ID" ]] && [[ -z "${APPLYLOOP_TELEGRAM_CHAT_ID:-}" ]]; then
+  # 1) Telegram chat ID. Chat IDs are integers; group chats can be
+  # negative (e.g. -1001234567890). Precedence:
+  #   1. env var APPLYLOOP_TELEGRAM_CHAT_ID (non-interactive override)
+  #   2. value already in the activation response (cli-config)
+  #   3. existing ~/.applyloop/.env (reuse with confirmation)
+  #   4. interactive prompt
+  if [[ -n "${APPLYLOOP_TELEGRAM_CHAT_ID:-}" ]]; then
+    ACTIVATION_TELEGRAM_CHAT_ID="$APPLYLOOP_TELEGRAM_CHAT_ID"
+  elif [[ -z "$ACTIVATION_TELEGRAM_CHAT_ID" ]]; then
     echo "${C_BOLD}  Telegram notifications${C_RESET}"
     echo "    1. Open Telegram, find @ApplyLoopBot"
     echo "    2. Send /start to the bot"
     echo "    3. Bot replies with your Chat ID"
     echo "    4. Paste the number below (or Enter to skip)"
-    ACTIVATION_TELEGRAM_CHAT_ID="$(prompt_validated \
-      "  Telegram Chat ID: " \
+    ACTIVATION_TELEGRAM_CHAT_ID="$(reuse_or_prompt \
+      TELEGRAM_CHAT_ID \
+      'Telegram Chat ID' \
       '^-?[0-9]+$' \
-      "not a valid chat ID (digits only, may start with - for group chats)")"
+      'digits only (may start with - for group chats)')"
     echo ""
-  elif [[ -z "$ACTIVATION_TELEGRAM_CHAT_ID" && -n "${APPLYLOOP_TELEGRAM_CHAT_ID:-}" ]]; then
-    ACTIVATION_TELEGRAM_CHAT_ID="$APPLYLOOP_TELEGRAM_CHAT_ID"
   fi
 
   # 2) AgentMail (disposable inboxes)
   if [[ -z "$AGENTMAIL_KEY_VAL" ]]; then
-    echo "${C_BOLD}  AgentMail${C_RESET} — disposable email inboxes for job verification"
+    echo "${C_BOLD}  AgentMail${C_RESET} - disposable email inboxes for job verification"
     echo "    Sign up at https://agentmail.to/dashboard and copy your API key."
-    read -r -p "  AgentMail API key (Enter to skip): " AGENTMAIL_KEY_VAL < /dev/tty || true
-    if [[ -n "$AGENTMAIL_KEY_VAL" ]]; then
+    AGENTMAIL_KEY_VAL="$(reuse_or_prompt \
+      AGENTMAIL_API_KEY \
+      'AgentMail API key' \
+      '^.{8,}$' \
+      'API key looks too short (expected at least 8 chars)')"
+    if [[ -n "$AGENTMAIL_KEY_VAL" ]] && [[ "$AGENTMAIL_KEY_VAL" != "$(read_env_value AGENTMAIL_API_KEY)" ]]; then
+      # Only curl-verify if the user entered a NEW value — no point
+      # re-hitting the API for a key we already had.
       log "  Verifying AgentMail key..."
       AM_HTTP="$(curl -sS -o /dev/null -w "%{http_code}" \
         "https://api.agentmail.to/v0/inboxes" \
@@ -669,7 +764,7 @@ else
       if [[ "$AM_HTTP" == "200" ]]; then
         log "  ${C_GREEN}AgentMail key verified${C_RESET}"
       else
-        warn "  AgentMail key returned HTTP $AM_HTTP — saving anyway, fix in ~/.applyloop/.env later"
+        warn "  AgentMail key returned HTTP $AM_HTTP - saving anyway, fix in ~/.applyloop/.env later"
       fi
     fi
     echo ""
@@ -677,29 +772,60 @@ else
 
   # 3) Finetune Resume (per-job tailored resume generation)
   if [[ -z "$FINETUNE_KEY_VAL" ]]; then
-    echo "${C_BOLD}  Finetune Resume${C_RESET} — per-job tailored resume generation"
+    echo "${C_BOLD}  Finetune Resume${C_RESET} - per-job tailored resume generation"
     echo "    The service already has your base resume from signup; it returns a"
     echo "    tailored PDF when you send a job description + API key."
-    read -r -p "  Finetune Resume API key (Enter to skip): " FINETUNE_KEY_VAL < /dev/tty || true
+    FINETUNE_KEY_VAL="$(reuse_or_prompt \
+      FINETUNE_RESUME_API_KEY \
+      'Finetune Resume API key' \
+      '^.{8,}$' \
+      'API key looks too short (expected at least 8 chars)')"
     echo ""
   fi
 
-  # 4) Gmail + Himalaya (email verification codes)
+  # 4) Gmail + Himalaya (email verification codes).
+  # Reuse existing .env values if present, matching the pattern of the
+  # three prompts above.
   if [[ -z "$GMAIL_EMAIL_VAL" && -z "$GMAIL_APP_PW_VAL" ]]; then
-    echo "${C_BOLD}  Gmail email verification (optional — skip with Enter)${C_RESET}"
+    echo "${C_BOLD}  Gmail email verification (optional - skip with Enter)${C_RESET}"
     echo "    Used to read 6-digit confirmation codes from job applications."
     echo "    Requires: 2FA enabled + App Password from"
     echo "    https://myaccount.google.com/apppasswords"
 
-    # Validated email: basic shape `anything@anything.anything`. We avoid
-    # strict RFC5322 on purpose (bash regex can't express it). This catches
-    # the common typos — forgot @, forgot .com, pasted a name instead.
-    GMAIL_EMAIL_VAL="$(prompt_validated \
-      "  Gmail address (Enter to skip): " \
+    # Email: reuse-or-prompt with basic email regex.
+    GMAIL_EMAIL_VAL="$(reuse_or_prompt \
+      GMAIL_EMAIL \
+      'Gmail address' \
       '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' \
-      "not a valid email (expected name@domain.tld)")"
+      'not a valid email (expected name@domain.tld)')"
 
     if [[ -n "$GMAIL_EMAIL_VAL" ]]; then
+      # If there's an existing password in .env and the user kept the
+      # existing email, offer to keep the existing password too without
+      # re-running the length validator (the existing password is
+      # already known-valid).
+      EXISTING_GMAIL_PW="$(read_env_value GMAIL_APP_PASSWORD)"
+      if [[ -n "$EXISTING_GMAIL_PW" && ${#EXISTING_GMAIL_PW} -eq 16 ]]; then
+        printf "  Gmail app password: ${C_BLUE}****%s${C_RESET}  [Enter to keep / 's' to unset / type new]: " "${EXISTING_GMAIL_PW: -4}" > /dev/tty
+        IFS= read -r GMAIL_PW_INPUT < /dev/tty || GMAIL_PW_INPUT=""
+        if [[ -z "$GMAIL_PW_INPUT" ]]; then
+          GMAIL_APP_PW_VAL="$EXISTING_GMAIL_PW"
+          echo ""
+        elif [[ "$GMAIL_PW_INPUT" == "s" || "$GMAIL_PW_INPUT" == "S" ]]; then
+          GMAIL_APP_PW_VAL=""
+          GMAIL_EMAIL_VAL=""
+          printf "  ${C_YELLOW}Gmail unset.${C_RESET}\n" > /dev/tty
+        else
+          # User typed a new value — run it through the full length
+          # validator below (by setting GMAIL_APP_PW_VAL and falling
+          # into the existing loop path).
+          GMAIL_APP_PW_VAL="$(echo "$GMAIL_PW_INPUT" | tr -d '[:space:]')"
+          if [[ ${#GMAIL_APP_PW_VAL} -ne 16 ]]; then
+            printf "  ${C_YELLOW}Invalid:${C_RESET} expected 16 characters after stripping spaces, got %d. Keeping old value.\n" "${#GMAIL_APP_PW_VAL}" > /dev/tty
+            GMAIL_APP_PW_VAL="$EXISTING_GMAIL_PW"
+          fi
+        fi
+      else
       # App passwords are displayed by Google as "abcd efgh ijkl mnop" —
       # four groups of four, space-separated. We strip ALL whitespace
       # before validating length. Google app passwords are exactly 16
@@ -726,13 +852,14 @@ else
         GMAIL_PW_ATTEMPTS=$((GMAIL_PW_ATTEMPTS + 1))
       done
       if [[ -z "$GMAIL_APP_PW_VAL" && -n "$GMAIL_EMAIL_VAL" ]]; then
-        printf "  ${C_YELLOW}Skipping Gmail — no valid app password provided.${C_RESET}\n" > /dev/tty
+        printf "  ${C_YELLOW}Skipping Gmail - no valid app password provided.${C_RESET}\n" > /dev/tty
         GMAIL_EMAIL_VAL=""
       fi
-    fi
+      fi  # closes: if [[ -n "$EXISTING_GMAIL_PW" ... ]]
+    fi    # closes: if [[ -n "$GMAIL_EMAIL_VAL" ]]
     echo ""
-  fi
-fi
+  fi      # closes: if [[ -z "$GMAIL_EMAIL_VAL" && -z "$GMAIL_APP_PW_VAL" ]]
+fi        # closes: the outer interactive-prompts guard
 
 # ------------------------------------------------------------------ Phase D: write ~/.applyloop/.env
 #

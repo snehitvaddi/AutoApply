@@ -63,10 +63,15 @@ class PTYSession:
 
     IDLE_THRESHOLD = 1800  # 30 minutes
     WATCHDOG_INTERVAL = 300  # check every 5 minutes
+    # Updated for v1.0.10 + AGENTS.md architecture. Old copy pointed at
+    # `python3 scripts/auto_loop.py` which was the pre-worker layout.
     NUDGE_MESSAGE = (
-        "Status check: are you still applying? If idle, resume work. "
-        "If no jobs in queue, scout new jobs then filter and apply. "
-        "Run: python3 scripts/auto_loop.py\n"
+        "Status check (auto-nudge from ApplyLoop watchdog): you've been idle "
+        "for over 30 minutes. What have you been doing? If you've finished the "
+        "current scout/filter/apply round, kick off the next one: "
+        "cd ~/.applyloop/packages/worker && python3 worker.py. "
+        "If you're waiting on user input, tell them explicitly in one short line "
+        "so they know to check in. Do not sit silent.\n"
     )
 
     def __init__(self):
@@ -155,15 +160,74 @@ class PTYSession:
             except Exception:
                 cwd = os.path.expanduser("~")
 
+        # Belt-and-suspenders: make sure cwd actually exists on disk. If a
+        # stale APPLYLOOP_HOME env var points at a deleted directory,
+        # os.chdir() in the child would raise and claude would exit before
+        # producing any output — the terminal tab would be empty with no
+        # explanation. Create it if it's missing.
+        try:
+            os.makedirs(cwd, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Could not create cwd {cwd}: {e}")
+            cwd = os.path.expanduser("~")
+
         env = {**os.environ}
         token = load_token()
         if token:
             env["AUTOAPPLY_TOKEN"] = token
             env["WORKER_TOKEN"] = token
-        # Ensure claude is on PATH
-        local_bin = os.path.expanduser("~/.local/bin")
-        if local_bin not in env.get("PATH", ""):
-            env["PATH"] = f"{local_bin}:{env.get('PATH', '')}"
+
+        # Build a PATH that includes every place claude/openclaw/npm could
+        # live. When the app is launched from Finder/Dock, macOS gives the
+        # process a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin) and the
+        # launcher's brew shellenv adds /opt/homebrew/bin, but if the user
+        # bypasses the launcher (dev mode, launchctl, etc.) those dirs
+        # aren't there. Explicitly prepend them so the child can always
+        # find claude regardless of how the server was started.
+        path_prepends = [
+            os.path.expanduser("~/.local/bin"),
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+        ]
+        # Also include the npm global prefix if we can find it — that's
+        # where `openclaw` lands.
+        try:
+            npm_prefix = os.environ.get("NPM_CONFIG_PREFIX") or (
+                subprocess.run(
+                    ["npm", "config", "get", "prefix"],
+                    capture_output=True, text=True, timeout=3,
+                ).stdout.strip() if shutil.which("npm") else ""
+            )
+            if npm_prefix and os.path.isdir(f"{npm_prefix}/bin"):
+                path_prepends.append(f"{npm_prefix}/bin")
+        except Exception:
+            pass
+
+        existing_path = env.get("PATH", "")
+        existing_parts = existing_path.split(":") if existing_path else []
+        for p in path_prepends:
+            if p and p not in existing_parts:
+                existing_parts.insert(0, p)
+        env["PATH"] = ":".join(existing_parts)
+
+        logger.info(
+            f"PTY start: claude={claude} cwd={cwd} "
+            f"PATH-head={':'.join(existing_parts[:3])}"
+        )
+
+        # Pre-fill the output buffer with a visible "starting..." line so
+        # WebSocket clients that connect BEFORE Claude produces its first
+        # byte see something instead of an empty black screen. The line
+        # is sent via the normal _broadcast path the moment a subscriber
+        # attaches.
+        startup_banner = (
+            "\x1b[36m[ApplyLoop]\x1b[0m Starting Claude Code session...\r\n"
+            "\x1b[36m[ApplyLoop]\x1b[0m On first run, Claude will print an\r\n"
+            "\x1b[36m[ApplyLoop]\x1b[0m OAuth URL - open it in your browser,\r\n"
+            "\x1b[36m[ApplyLoop]\x1b[0m paste the code back here, and you're in.\r\n"
+            "\r\n"
+        ).encode("utf-8")
+        self.output_buffer.append(startup_banner)
 
         # Fork a PTY
         child_pid, master_fd = pty.fork()
@@ -198,6 +262,46 @@ class PTYSession:
 
             # Set terminal size (80x24 default, will be resized by client)
             self._set_size(80, 24)
+
+            # Brief post-fork death check. If execvpe failed in the child
+            # (bad cwd, missing claude binary, permission denied, etc.) the
+            # child exits instantly. Without this check, the parent sets
+            # self._alive = True and returns success — the UI shows
+            # "Session active" but the terminal is empty. waitpid with
+            # WNOHANG is non-blocking; if the child is still running we
+            # get pid=0.
+            time.sleep(0.05)  # give execvpe a moment to either succeed or fail
+            try:
+                pid, status_code = os.waitpid(child_pid, os.WNOHANG)
+                if pid == child_pid:
+                    # Child died before we could attach — log the exit code
+                    # and surface it as a banner in the buffer so the UI
+                    # shows what happened.
+                    exit_code = os.WEXITSTATUS(status_code) if os.WIFEXITED(status_code) else -1
+                    logger.error(
+                        f"PTY child died immediately after fork "
+                        f"(pid={child_pid}, exit_code={exit_code}). "
+                        f"Likely causes: claude binary at {claude} is broken, "
+                        f"cwd {cwd} inaccessible, or exec environment missing "
+                        f"critical vars."
+                    )
+                    self.output_buffer.append(
+                        f"\x1b[31m[ApplyLoop]\x1b[0m Claude Code failed to start "
+                        f"(exit {exit_code}).\r\n"
+                        f"\x1b[31m[ApplyLoop]\x1b[0m Check ~/.autoapply/desktop.log "
+                        f"for details. Try: applyloop update\r\n\r\n".encode()
+                    )
+                    self._alive = False
+                    self.child_pid = None
+                    try:
+                        os.close(master_fd)
+                    except Exception:
+                        pass
+                    self.master_fd = None
+                    return False
+            except ChildProcessError:
+                # Already reaped — fall through
+                pass
 
             # Start reading + watchdog in background
             self._read_task = asyncio.create_task(self._read_loop())
