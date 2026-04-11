@@ -627,67 +627,123 @@ except Exception as e:
   rm -f "$CFG_TMP"
 fi
 
-# Transform the /api/activate response into the nested profile.json shape
-# that Claude Code / the worker expects. Same structure the old script
-# used (ApplyLoop-Setup-Mac.sh:746-790).
+# Transform the activation + cli-config responses into the nested profile.json
+# shape that Claude Code / the worker expects.
+#
+# Why both responses?
+#
+# /api/activate returns the raw user_profiles row, which means work_experience
+# is whatever Supabase has — usually [] because the onboarding form never
+# posts the parsed array (that's a separate bug being fixed server-side).
+#
+# /api/settings/cli-config returns the SAME profile but runs a synthesis
+# fallback: if work_experience is empty but current_company is set, it
+# builds a single-entry array from the flat fields. That means cli-config
+# always has the richer shape when the flat fields are populated.
+#
+# We prefer cli-config for profile/preferences and fall back to activate
+# for identity fields (user_id / email / full_name / tier) which cli-config
+# doesn't always include.
 if [[ -n "$ACTIVATION_PROFILE_JSON" ]]; then
   log "Writing $APPLYLOOP_HOME/profile.json"
-  echo "$ACTIVATION_PROFILE_JSON" | python3 -c "
-import sys, json, os
-raw = sys.stdin.read()
-d = json.loads(raw).get('data', {}) or {}
-p = d.get('profile') or {}
-prefs = d.get('preferences') or {}
+  ACT_TMP="$(mktemp -t applyloop-activate.XXXXXX)"
+  CFG_TMP2="$(mktemp -t applyloop-cfg.XXXXXX)"
+  printf '%s' "$ACTIVATION_PROFILE_JSON" > "$ACT_TMP"
+  printf '%s' "$CLI_CONFIG_JSON" > "$CFG_TMP2"
+
+  APPLYLOOP_HOME="$APPLYLOOP_HOME" \
+  ACTIVATE_PATH="$ACT_TMP" \
+  CLI_CONFIG_PATH="$CFG_TMP2" \
+  python3 <<'PY' || warn "profile.json transform failed"
+import json, os
+
+def load(path):
+    try:
+        with open(path) as f:
+            return json.loads(f.read()).get("data", {}) or {}
+    except Exception:
+        return {}
+
+act = load(os.environ["ACTIVATE_PATH"])
+cfg = load(os.environ["CLI_CONFIG_PATH"]) if os.environ.get("CLI_CONFIG_PATH") else {}
+
+# cli-config shape: data.profile, data.preferences, data.user
+# activate shape:   data.profile, data.preferences, data.user_id/email/full_name/tier
+cfg_profile = cfg.get("profile") or {}
+act_profile = act.get("profile") or {}
+cfg_prefs = cfg.get("preferences") or {}
+act_prefs = act.get("preferences") or {}
+
+# Prefer cli-config for profile fields since it runs the work_experience
+# synthesis fallback. Fall back to activate.profile for anything missing.
+def pick(key, default=None):
+    v = cfg_profile.get(key)
+    if v not in (None, "", [], {}):
+        return v
+    return act_profile.get(key) if act_profile.get(key) not in (None, "") else default
+
+# User identity: activate is authoritative (cli-config may not include tier)
+user_id = act.get("user_id") or (cfg.get("user", {}) or {}).get("id") or ""
+email = act.get("email") or (cfg.get("user", {}) or {}).get("email") or ""
+full_name = act.get("full_name") or (cfg.get("user", {}) or {}).get("full_name") or ""
+tier = act.get("tier") or cfg.get("tier") or ""
+
 profile = {
-  'user': {
-    'id': d.get('user_id', ''),
-    'email': d.get('email', '') or '',
-    'full_name': d.get('full_name', '') or '',
-    'tier': d.get('tier', '') or '',
+  "user": {
+    "id": user_id,
+    "email": email or "",
+    "full_name": full_name or "",
+    "tier": tier or "",
   },
-  'personal': {
-    'first_name': p.get('first_name', '') or '',
-    'last_name': p.get('last_name', '') or '',
-    'email': d.get('email', '') or '',
-    'phone': p.get('phone', '') or '',
-    'linkedin_url': p.get('linkedin_url', '') or '',
-    'github_url': p.get('github_url', '') or '',
-    'portfolio_url': p.get('portfolio_url', '') or '',
+  "personal": {
+    "first_name": pick("first_name", "") or "",
+    "last_name": pick("last_name", "") or "",
+    "email": email or "",
+    "phone": pick("phone", "") or "",
+    "linkedin_url": pick("linkedin_url", "") or "",
+    "github_url": pick("github_url", "") or "",
+    "portfolio_url": pick("portfolio_url", "") or "",
   },
-  'work': {
-    'current_company': p.get('current_company', '') or '',
-    'current_title': p.get('current_title', '') or '',
-    'years_experience': p.get('years_experience', '') or '',
+  "work": {
+    "current_company": pick("current_company", "") or "",
+    "current_title": pick("current_title", "") or "",
+    "years_experience": pick("years_experience", "") or "",
   },
-  'legal': {
-    'work_authorization': p.get('work_authorization', '') or '',
-    'requires_sponsorship': p.get('requires_sponsorship', False),
+  "legal": {
+    "work_authorization": pick("work_authorization", "") or "",
+    "requires_sponsorship": pick("requires_sponsorship", False) or False,
   },
-  'eeo': {
-    'gender': p.get('gender', '') or '',
-    'race_ethnicity': p.get('race_ethnicity', '') or '',
-    'veteran_status': p.get('veteran_status', '') or '',
-    'disability_status': p.get('disability_status', '') or '',
+  "eeo": {
+    "gender": pick("gender", "") or "",
+    "race_ethnicity": pick("race_ethnicity", "") or "",
+    "veteran_status": pick("veteran_status", "") or "",
+    "disability_status": pick("disability_status", "") or "",
   },
-  'experience': p.get('work_experience') or [],
-  'education': p.get('education') or [],
-  'education_summary': {
-    'education_level': p.get('education_level', '') or '',
-    'school_name': p.get('school_name', '') or '',
-    'degree': p.get('degree', '') or '',
-    'graduation_year': p.get('graduation_year', '') or '',
+  "experience": pick("work_experience", []) or [],
+  "education": pick("education", "") or "",
+  "education_summary": {
+    "education_level": pick("education_level", "") or "",
+    "school_name": pick("school_name", "") or "",
+    "degree": pick("degree", "") or "",
+    "graduation_year": pick("graduation_year", "") or "",
   },
-  'skills': p.get('skills') or [],
-  'standard_answers': p.get('answer_key_json') or {},
-  'cover_letter_template': p.get('cover_letter_template', '') or '',
-  'preferences': prefs,
-  'resumes': [d.get('default_resume')] if d.get('default_resume') else [],
+  "skills": pick("skills", []) or [],
+  "standard_answers": pick("answer_key_json", {}) or {},
+  "cover_letter_template": pick("cover_letter_template", "") or "",
+  "preferences": cfg_prefs or act_prefs or {},
+  "resumes": [act.get("default_resume")] if act.get("default_resume") else [],
 }
-os.makedirs('$APPLYLOOP_HOME', exist_ok=True)
-with open('$APPLYLOOP_HOME/profile.json', 'w') as f:
+
+home = os.environ["APPLYLOOP_HOME"]
+os.makedirs(home, exist_ok=True)
+with open(f"{home}/profile.json", "w") as f:
     json.dump(profile, f, indent=2)
-print(f'  wrote {len(profile[\"experience\"])} experience(s), {len(profile[\"education\"])} education(s), {len(profile[\"skills\"])} skill(s)')
-" || warn "profile.json transform failed"
+
+print(f"  wrote {len(profile['experience'])} experience, {len(profile['skills'])} skills, targets={len(profile['preferences'].get('target_titles',[]) or [])}")
+source = "cli-config" if cfg_profile else "activate"
+print(f"  primary source: {source}")
+PY
+  rm -f "$ACT_TMP" "$CFG_TMP2"
 fi
 
 # Persist the worker token to disk where the desktop wizard expects it.
