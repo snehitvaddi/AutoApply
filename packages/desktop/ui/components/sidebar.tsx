@@ -9,8 +9,11 @@ import {
   MessageSquare,
   User,
   ClipboardList,
+  Sun,
+  Moon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useTheme } from "@/components/theme-provider"
 
 const navItems = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -27,6 +30,7 @@ interface SidebarProps {
 
 export function Sidebar({ workerRunning }: SidebarProps) {
   const pathname = usePathname()
+  const { theme, toggle } = useTheme()
 
   return (
     <aside className="fixed left-0 top-0 z-40 flex h-screen w-16 flex-col border-r border-border bg-sidebar">
@@ -65,6 +69,18 @@ export function Sidebar({ workerRunning }: SidebarProps) {
 
       {/* Bottom section */}
       <div className="flex flex-col items-center gap-3 border-t border-border py-4">
+        {/* Theme toggle */}
+        <button
+          onClick={toggle}
+          className="group relative flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        >
+          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          <span className="absolute left-full ml-2 hidden whitespace-nowrap rounded-md bg-popover px-2 py-1 text-xs text-popover-foreground shadow-md group-hover:block">
+            {theme === "dark" ? "Light mode" : "Dark mode"}
+          </span>
+        </button>
+
         <div className="flex flex-col items-center gap-1">
           <div
             className={cn(

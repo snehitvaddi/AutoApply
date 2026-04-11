@@ -50,6 +50,8 @@ def get_worker_env() -> dict[str, str]:
         **os.environ,
         "NEXT_PUBLIC_APP_URL": APP_URL,
         "WORKER_ID": "desktop-1",
+        # Ensure the worker writes to the same SQLite DB that the desktop UI reads
+        "APPLYLOOP_DB": str(WORKSPACE_DIR / "applications.db"),
     }
     if token:
         env["WORKER_TOKEN"] = token

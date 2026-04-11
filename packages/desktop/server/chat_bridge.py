@@ -22,10 +22,32 @@ import time
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 
-from . import local_data
+from . import local_data, qa_agent
 from .config import load_token, APP_URL
+from .message_router import message_router  # legacy PTY router — kept for rollback
 
 logger = logging.getLogger(__name__)
+
+# ── Global chat-UI fanout ────────────────────────────────────────────────────
+# Any /ws/chat client that connects is registered here so background components
+# (like telegram_gateway) can push events to every open desktop chat UI.
+
+_chat_ui_subscribers: set[WebSocket] = set()
+
+
+async def broadcast_to_chat_ui(payload: dict) -> None:
+    """Fan-out a payload to every connected /ws/chat client.
+
+    Safe to call from any async context. Silently drops disconnected clients.
+    """
+    stale: list[WebSocket] = []
+    for ws in list(_chat_ui_subscribers):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            stale.append(ws)
+    for ws in stale:
+        _chat_ui_subscribers.discard(ws)
 
 # ── Telegram integration ─────────────────────────────────────────────────────
 
@@ -101,75 +123,43 @@ async def chat_websocket(ws: WebSocket):
     """
     Chat WebSocket handler.
 
-    Sends two types of messages:
-    - {"type": "activity", "entries": [...]} — status feed from SQLite
-    - {"type": "btw_response", "data": "..."} — response to /btw question
-    - {"type": "system", "data": "..."} — system messages
+    Message types sent to client:
+    - {"type": "activity", "entries": [...]}  — SQLite activity feed
+    - {"type": "btw_response", "data": "..."} — response to a /btw question
+    - {"type": "telegram", "data": "...", "from_bot": bool} — mirrored Telegram traffic
+    - {"type": "system", "data": "..."}       — system messages
+    - {"type": "queue_update", ...}           — queue count changes
+    - {"type": "session_idle", ...}           — PTY idle warning
     """
     await ws.accept()
+    _chat_ui_subscribers.add(ws)
 
     from .pty_terminal import session_manager
 
-    # Check if Telegram is configured
-    tg_config = await _get_telegram_config()
-    use_telegram = tg_config is not None
-    tg_last_update_id = 0
-
-    # Track what we've already sent
     last_check_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 300))
     last_queue_count = local_data.get_queue_count()
 
-    # Send initial status
-    source = "Telegram" if use_telegram else "local database"
     await ws.send_json({
         "type": "system",
-        "data": f"Connected to ApplyLoop. Status updates from {source}.",
+        "data": "Connected to ApplyLoop. Status updates from local database.",
     })
 
-    # Send recent activity (last 20)
     recent = local_data.get_recent_activity(limit=20)
     if recent:
         await ws.send_json({"type": "activity", "entries": recent})
 
-    # ANSI stripper for /btw responses
-    _ansi_re = re.compile(
-        r'\x1b\[[0-9;?]*[a-zA-Z]'
-        r'|\x1b\][^\x07]*\x07'
-        r'|\x1b\([A-Z]'
-        r'|\x1b[=><=<>]'
-        r'|\x1b'
-    )
-
     async def _status_feed():
-        """Poll for updates — Telegram if configured, otherwise SQLite."""
-        nonlocal last_check_time, last_queue_count, tg_last_update_id
+        """Poll SQLite for activity + queue changes + PTY idle status."""
+        nonlocal last_check_time, last_queue_count
         try:
             while True:
                 await asyncio.sleep(5)
 
-                if use_telegram and tg_config:
-                    # Fetch from Telegram Bot API
-                    messages = await _fetch_telegram_messages(
-                        tg_config["bot_token"], tg_config["chat_id"], tg_last_update_id
-                    )
-                    if messages:
-                        tg_last_update_id = max(m["update_id"] for m in messages)
-                        for msg in messages:
-                            if msg["text"]:
-                                await ws.send_json({
-                                    "type": "telegram",
-                                    "data": msg["text"],
-                                    "from_bot": msg["from_bot"],
-                                    "timestamp": msg["date"],
-                                })
-                else:
-                    # Fallback: poll SQLite
-                    new_entries = local_data.get_recent_activity(since=last_check_time, limit=10)
-                    if new_entries:
-                        last_check_time = new_entries[0].get("applied_at", last_check_time)
-                        await ws.send_json({"type": "activity", "entries": new_entries})
+                new_entries = local_data.get_recent_activity(since=last_check_time, limit=10)
+                if new_entries:
+                    last_check_time = new_entries[0].get("applied_at", last_check_time)
+                    await ws.send_json({"type": "activity", "entries": new_entries})
 
-                # Check queue count changes
                 current_queue = local_data.get_queue_count()
                 if current_queue != last_queue_count:
                     diff = current_queue - last_queue_count
@@ -187,7 +177,6 @@ async def chat_websocket(ws: WebSocket):
                         })
                     last_queue_count = current_queue
 
-                # Check PTY session status
                 if session_manager.pty.is_alive:
                     idle = time.time() - session_manager.pty.last_output_at if session_manager.pty.last_output_at else 0
                     if idle > 900:  # 15 min
@@ -212,75 +201,26 @@ async def chat_websocket(ws: WebSocket):
                 if not user_input:
                     continue
 
-                # Check if PTY session is alive
-                if not session_manager.pty.is_alive:
-                    await ws.send_json({
-                        "type": "btw_response",
-                        "data": "No active session. Start one from the Terminal tab or session dropdown.",
-                    })
-                    continue
-
-                # Send /btw command to the PTY
-                btw_cmd = f"/btw {user_input}\n"
-                session_manager.pty.write(btw_cmd.encode("utf-8"))
-
-                # Wait briefly for response, then capture PTY output
                 await ws.send_json({"type": "thinking", "data": "Asking Claude..."})
 
-                # Subscribe to PTY output temporarily to capture /btw response
-                queue = session_manager.pty.subscribe()
-                response_chunks = []
+                # Route through the fire-and-forget Q&A agent (standalone claude --print
+                # subprocess with pre-baked DB context). The main PTY applier loop is
+                # untouched.
                 try:
-                    # Collect output for up to 30 seconds
-                    deadline = time.time() + 30
-                    blank_count = 0
-                    while time.time() < deadline:
-                        try:
-                            data = await asyncio.wait_for(queue.get(), timeout=2.0)
-                            text = data.decode("utf-8", errors="replace")
-                            clean = _ansi_re.sub("", text)
-                            clean = re.sub(r'[\r\x00-\x08\x0e-\x1f]', '', clean)
-                            stripped = clean.strip()
-                            if stripped:
-                                response_chunks.append(stripped)
-                                blank_count = 0
-                            else:
-                                blank_count += 1
-                                # Two consecutive blanks after some content = response done
-                                if response_chunks and blank_count >= 2:
-                                    break
-                        except asyncio.TimeoutError:
-                            if response_chunks:
-                                break  # Got response, timeout means done
-                finally:
-                    session_manager.pty.unsubscribe(queue)
-
-                # Clean up the response
-                full_response = "\n".join(response_chunks)
-                # Remove /btw echo and noise
-                lines = full_response.split("\n")
-                clean_lines = []
-                for line in lines:
-                    if line.startswith("/btw"):
-                        continue
-                    if "bypass permissions" in line.lower():
-                        continue
-                    if "ctrl+" in line.lower() or "shift+tab" in line.lower():
-                        continue
-                    if "esc to" in line.lower():
-                        continue
-                    if len(line.strip()) < 2:
-                        continue
-                    clean_lines.append(line)
-
-                response = "\n".join(clean_lines).strip()
-                if not response:
-                    response = "Claude is busy. Your message was sent — check back shortly."
+                    response = await qa_agent.answer(user_input)
+                except Exception as e:
+                    response = f"⚠️ Error processing message: {e}"
 
                 await ws.send_json({"type": "btw_response", "data": response})
 
+                # Mirror the reply to Telegram so phone + desktop stay in sync.
+                try:
+                    from .telegram_gateway import telegram_gateway
+                    await telegram_gateway.send_telegram(response)
+                except Exception as e:
+                    logger.debug(f"Telegram mirror failed: {e}")
+
             elif action == "status":
-                # Return current stats
                 stats = local_data.get_stats()
                 await ws.send_json({"type": "stats", "data": stats})
 
@@ -290,3 +230,4 @@ async def chat_websocket(ws: WebSocket):
         logger.debug(f"Chat WS closed: {e}")
     finally:
         feed_task.cancel()
+        _chat_ui_subscribers.discard(ws)

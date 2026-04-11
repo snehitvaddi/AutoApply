@@ -84,6 +84,22 @@ export interface PipelineJob {
   posted_at: string;
   status: string;
   error?: string;
+  url?: string;
+  location?: string;
+  scouted_at?: string;
+  applied_at?: string;
+  updated_at?: string;
+  screenshot?: string;
+}
+
+export interface CurrentlyApplyingJob {
+  id: number;
+  company: string;
+  title: string;
+  url: string;
+  ats: string;
+  location: string;
+  updated_at: string;
 }
 
 export interface PipelineData {
@@ -96,6 +112,55 @@ export interface PipelineData {
 
 export async function getPipeline() {
   return apiFetch<{ ok: boolean; data: PipelineData }>("/pipeline");
+}
+
+export async function getCurrentlyApplying() {
+  return apiFetch<{ ok: boolean; data: CurrentlyApplyingJob | null }>("/pipeline/current");
+}
+
+export async function getStuckJobs() {
+  return apiFetch<{ ok: boolean; data: PipelineJob[] }>("/pipeline/stuck");
+}
+
+export async function resetStuckJobs() {
+  return apiFetch<{ ok: boolean; reset: number }>("/pipeline/reset-stuck", { method: "POST" });
+}
+
+export async function focusBrowser() {
+  return apiFetch<{ ok: boolean; focused?: string; error?: string }>("/browser/focus", {
+    method: "POST",
+  });
+}
+
+// ── First-run setup ────────────────────────────────────────────────────────
+
+export interface SetupStatus {
+  setup_complete: boolean;
+  reason?: "no_token" | "token_invalid" | "offline";
+}
+
+export interface ActivateResult {
+  ok: boolean;
+  user?: {
+    email?: string | null;
+    name?: string | null;
+    tier?: string | null;
+  };
+  resume_downloaded?: boolean;
+  error?: string;
+  suggestion?: string;
+  message?: string;
+}
+
+export async function getSetupStatus() {
+  return apiFetch<SetupStatus>("/setup/status");
+}
+
+export async function activateWithCode(code: string) {
+  return apiFetch<ActivateResult>("/setup/activate", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
 }
 
 // ── Queue Management ────────────────────────────────────────────────────────

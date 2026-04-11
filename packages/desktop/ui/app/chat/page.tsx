@@ -1,10 +1,31 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { AppShell } from "@/components/app-shell"
-import { Send, Loader2, Check, X, Clock, AlertTriangle, Zap } from "lucide-react"
+import { Send, Loader2, Check, X, Clock, AlertTriangle, Zap, Smartphone } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useWebSocket } from "@/hooks/use-websocket"
+
+// Lightweight Markdown renderer for chat bubbles.
+// Keeps styling inline so we don't need a separate prose CSS dependency.
+function MessageMarkdown({ children }: { children: string }) {
+  return (
+    <div className="[&>p]:my-0.5 [&>ul]:my-1 [&>ol]:my-1 [&>ul]:ml-4 [&>ol]:ml-4 [&>ul]:list-disc [&>ol]:list-decimal [&_code]:rounded [&_code]:bg-black/20 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_code]:font-mono [&_pre]:mt-1 [&_pre]:mb-1 [&_pre]:rounded-md [&_pre]:bg-black/30 [&_pre]:p-2 [&_pre]:overflow-x-auto [&_pre>code]:bg-transparent [&_pre>code]:px-0 [&_pre>code]:py-0 [&_strong]:font-semibold [&_em]:italic [&_a]:text-primary [&_a]:underline [&_hr]:my-2 [&_hr]:border-border [&_h1]:text-base [&_h1]:font-semibold [&_h1]:mt-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:mt-1 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-1 [&_li]:my-0 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-2 [&_blockquote]:text-muted-foreground">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ ...props }) => (
+            <a {...props} target="_blank" rel="noopener noreferrer" />
+          ),
+        }}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  )
+}
 
 interface StatusEntry {
   id?: number
@@ -20,6 +41,7 @@ interface ChatItem {
   content: string
   entries?: StatusEntry[]
   timestamp?: string
+  viaTelegram?: boolean
 }
 
 function timeAgo(dateStr?: string): string {
@@ -78,18 +100,27 @@ export default function ChatPage() {
     if (msg.type === "system") {
       setItems((prev) => [...prev, { type: "system", content: msg.data || "" }])
     } else if (msg.type === "activity" && msg.entries) {
-      // Status feed — show new applications
+      // Status feed — show new applications.
+      // Sort oldest → newest so newest ends up at the bottom (messaging-app style).
+      const sorted = [...msg.entries].sort((a, b) => {
+        const ta = new Date(a.applied_at || 0).getTime()
+        const tb = new Date(b.applied_at || 0).getTime()
+        return ta - tb
+      })
       setItems((prev) => [
         ...prev,
-        { type: "status", content: "", entries: msg.entries, timestamp: new Date().toISOString() },
+        { type: "status", content: "", entries: sorted, timestamp: new Date().toISOString() },
       ])
     } else if (msg.type === "telegram") {
-      // Real Telegram message
+      // Telegram traffic mirrored into the chat UI.
+      // from_bot=false → incoming user message from phone
+      // from_bot=true  → Claude's reply that was also sent to Telegram
       setItems((prev) => [
         ...prev,
         {
           type: msg.from_bot ? "response" : "user",
           content: msg.data || "",
+          viaTelegram: true,
         },
       ])
     } else if (msg.type === "queue_update") {
@@ -185,9 +216,15 @@ export default function ChatPage() {
 
             if (item.type === "user") {
               return (
-                <div key={i} className="flex justify-end">
+                <div key={i} className="flex flex-col items-end gap-0.5">
+                  {item.viaTelegram && (
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <Smartphone className="h-2.5 w-2.5" />
+                      from Telegram
+                    </div>
+                  )}
                   <div className="max-w-[80%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-                    {item.content}
+                    <MessageMarkdown>{item.content}</MessageMarkdown>
                   </div>
                 </div>
               )
@@ -195,9 +232,15 @@ export default function ChatPage() {
 
             if (item.type === "response") {
               return (
-                <div key={i} className="flex justify-start">
+                <div key={i} className="flex flex-col items-start gap-0.5">
+                  {item.viaTelegram && (
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <Smartphone className="h-2.5 w-2.5" />
+                      sent to Telegram
+                    </div>
+                  )}
                   <div className="max-w-[80%] rounded-2xl border border-border bg-card px-4 py-2.5 text-sm text-card-foreground">
-                    <p className="whitespace-pre-wrap">{item.content}</p>
+                    <MessageMarkdown>{item.content}</MessageMarkdown>
                   </div>
                 </div>
               )

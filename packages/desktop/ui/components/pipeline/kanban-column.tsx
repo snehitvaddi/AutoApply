@@ -17,7 +17,7 @@ const variantStyles = {
 
 export function KanbanColumn({ title, count, variant, children }: KanbanColumnProps) {
   return (
-    <div className="flex w-64 flex-shrink-0 flex-col rounded-xl bg-card">
+    <div className="flex min-w-[240px] max-w-[360px] flex-1 flex-col rounded-xl bg-card">
       <div className="flex items-center justify-between border-b border-border px-3 py-3">
         <span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", variantStyles[variant])}>
           {title}

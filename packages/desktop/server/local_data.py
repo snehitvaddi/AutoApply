@@ -1,7 +1,8 @@
 """
 Read application data from the local SQLite database.
 
-Database: ~/.openclaw/agents/job-bot/workspace/applications.db
+Database: $APPLYLOOP_DB or ~/.autoapply/workspace/applications.db
+         (falls back to ~/.openclaw/agents/job-bot/workspace/applications.db)
 
 Schema:
   applications(id, company, role, url, ats, source, location, posted_at,
@@ -161,24 +162,44 @@ def get_pipeline() -> dict:
     """Pipeline/queue view grouped by status."""
     pipeline = {"discovered": [], "queued": [], "applying": [], "submitted": [], "failed": []}
 
-    for status_key, sql_status in [
-        ("queued", "('queued','scouted')"),
-        ("applying", "('applying')"),
-        ("submitted", "('submitted')"),
-        ("failed", "('failed')"),
+    # Note: 'discovered' bucket collects scouted jobs (waiting to be queued). The UI
+    # merges them with 'queued' for display, so both show up as "waiting to apply".
+    for status_key, status_val, order_col in [
+        ("discovered", "scouted", "scouted_at"),
+        ("queued", "queued", "scouted_at"),
+        ("applying", "applying", "updated_at"),
+        ("submitted", "submitted", "applied_at"),
+        ("failed", "failed", "updated_at"),
     ]:
         rows = _query(f"""
-            SELECT id, company, role as title, ats, applied_at as posted_at, status, notes as error
+            SELECT id, company, role as title, url, ats, location,
+                   COALESCE(applied_at, scouted_at, updated_at) as posted_at,
+                   scouted_at, applied_at, updated_at,
+                   status, notes as error, screenshot
             FROM applications
-            WHERE status IN {sql_status}
-            ORDER BY applied_at DESC
+            WHERE status = ?
+            ORDER BY
+                CASE WHEN screenshot IS NOT NULL AND screenshot != '' THEN 0 ELSE 1 END,
+                {order_col} DESC
             LIMIT 50
-        """)
+        """, (status_val,))
         for r in rows:
             r["ats"] = _normalize_ats(r.get("ats", ""))
         pipeline[status_key] = rows
 
     return pipeline
+
+
+def get_currently_applying() -> dict | None:
+    """Get the job currently being applied to (if any)."""
+    row = _query_one("""
+        SELECT id, company, role as title, url, ats, location, updated_at
+        FROM applications WHERE status = 'applying'
+        ORDER BY updated_at DESC LIMIT 1
+    """)
+    if row:
+        row["ats"] = _normalize_ats(row.get("ats", ""))
+    return row or None
 
 
 def _write_connect() -> sqlite3.Connection | None:
@@ -246,6 +267,43 @@ def get_queue_count() -> int:
     """Get current queue size."""
     result = _query("SELECT COUNT(*) as c FROM applications WHERE status IN ('queued','scouted')")
     return result[0]["c"] if result else 0
+
+
+def get_stuck_jobs() -> list[dict]:
+    """Get jobs stuck in 'applying' for more than 10 minutes."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    rows = _query(
+        "SELECT id, company, role as title, url, ats, location, updated_at "
+        "FROM applications WHERE status = 'applying' AND updated_at < ?",
+        (cutoff,)
+    )
+    for r in rows:
+        r["ats"] = _normalize_ats(r.get("ats", ""))
+    return rows
+
+
+def reset_stuck_jobs() -> int:
+    """Reset jobs stuck in 'applying' for >10 min back to 'queued'. Returns count reset."""
+    from datetime import datetime, timedelta, timezone
+    conn = _write_connect()
+    if not conn:
+        return 0
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+        result = conn.execute(
+            "UPDATE applications SET status = 'queued', updated_at = ? "
+            "WHERE status = 'applying' AND updated_at < ?",
+            (now, cutoff)
+        )
+        conn.commit()
+        count = result.rowcount
+        if count > 0:
+            logger.info(f"Reset {count} stuck job(s) back to queue")
+        return count
+    finally:
+        conn.close()
 
 
 def _normalize_ats(raw: str | None) -> str:

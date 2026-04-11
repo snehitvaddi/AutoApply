@@ -21,27 +21,26 @@ function timeAgo(dateStr?: string): string {
 
 function formatDate(dateStr?: string): string {
   if (!dateStr) return ""
-  // Date-only strings (e.g. "2026-04-07") have no time component — just show the date
   const hasTime = dateStr.includes("T") || dateStr.includes(" ")
-  if (hasTime) {
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    })
+  const dt = hasTime
+    ? new Date(dateStr)
+    : (() => { const [y, m, d] = dateStr.split("-").map(Number); return new Date(y, m - 1, d) })()
+
+  const now = new Date()
+  const isToday = dt.toDateString() === now.toDateString()
+
+  if (isToday && hasTime) {
+    return dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
   }
-  // Date-only: parse parts manually to avoid timezone shift from Date constructor
-  const [year, month, day] = dateStr.split("-").map(Number)
-  const dt = new Date(year, month - 1, day)
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" })
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, position }: { status: string; position?: number }) {
+  const queueLabel = position === 1 ? "Next" : position ? `#${position}` : "Queued"
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium",
+        "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium whitespace-nowrap",
         status === "submitted" && "bg-success/10 text-success",
         status === "failed" && "bg-destructive/10 text-destructive",
         status === "queued" && "bg-primary/10 text-primary",
@@ -53,7 +52,7 @@ function StatusBadge({ status }: { status: string }) {
       {status === "queued" && <Clock className="h-3 w-3" />}
       {status === "submitted" && "Applied"}
       {status === "failed" && "Failed"}
-      {status === "queued" && "In Queue"}
+      {status === "queued" && queueLabel}
       {status === "skipped" && "Skipped"}
     </span>
   )
@@ -220,7 +219,7 @@ export default function JobsListPage() {
                           <td className="px-4 py-2.5">
                             <StatusBadge status={job.status} />
                           </td>
-                          <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+                          <td className="px-4 py-2.5 text-right text-xs text-muted-foreground whitespace-nowrap">
                             {formatDate(job.applied_at)}
                           </td>
                         </tr>
@@ -308,9 +307,9 @@ export default function JobsListPage() {
                             )}
                           </td>
                           <td className="px-4 py-2.5">
-                            <StatusBadge status="queued" />
+                            <StatusBadge status="queued" position={i + 1} />
                           </td>
-                          <td className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+                          <td className="px-4 py-2.5 text-right text-xs text-muted-foreground whitespace-nowrap">
                             {timeAgo(job.applied_at)}
                           </td>
                           <td className="px-2 py-2.5">
