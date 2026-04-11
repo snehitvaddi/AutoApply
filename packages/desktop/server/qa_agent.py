@@ -23,9 +23,32 @@ from . import local_data
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_BIN = shutil.which("claude") or "/Users/vsneh/.local/bin/claude"
 DEFAULT_MODEL = "sonnet"  # fast + smart enough for DB Q&A
 DEFAULT_TIMEOUT = 60.0    # seconds
+
+# Install-specific hint shown to users when the Claude CLI is not on PATH.
+_CLAUDE_INSTALL_HINT = (
+    "Claude CLI not found on PATH. Install from https://claude.com/product/claude-code "
+    "and restart ApplyLoop."
+)
+
+
+def _find_claude_bin() -> str | None:
+    """Resolve the `claude` CLI at call time — never bake in a developer path."""
+    p = shutil.which("claude")
+    if p:
+        return p
+    # Broad search across common install locations; still honors current PATH.
+    import os as _os
+    for candidate in (
+        "/opt/homebrew/bin/claude",
+        "/usr/local/bin/claude",
+        _os.path.expanduser("~/.local/bin/claude"),
+        _os.path.expanduser("~/.npm-global/bin/claude"),
+    ):
+        if _os.path.isfile(candidate) and _os.access(candidate, _os.X_OK):
+            return candidate
+    return None
 
 SYSTEM_PROMPT_TEMPLATE = """You are the ApplyLoop Q&A assistant embedded in a desktop job-application bot.
 
@@ -70,6 +93,11 @@ async def answer(question: str, model: str = DEFAULT_MODEL, timeout: float = DEF
     if not question:
         return "⚠️ Empty question."
 
+    claude_bin = _find_claude_bin()
+    if not claude_bin:
+        logger.warning("QA agent skipped — Claude CLI not installed")
+        return _CLAUDE_INSTALL_HINT
+
     context = _build_context()
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         now_iso=datetime.utcnow().isoformat() + "Z",
@@ -83,7 +111,7 @@ async def answer(question: str, model: str = DEFAULT_MODEL, timeout: float = DEF
         try:
             proc = subprocess.run(
                 [
-                    CLAUDE_BIN,
+                    claude_bin,
                     "--print",
                     "--model", model,
                     "--allowedTools", "",
@@ -97,7 +125,7 @@ async def answer(question: str, model: str = DEFAULT_MODEL, timeout: float = DEF
         except subprocess.TimeoutExpired:
             return "⚠️ Q&A timed out after 60s. Try a simpler question."
         except FileNotFoundError:
-            return f"⚠️ `claude` CLI not found at {CLAUDE_BIN}."
+            return _CLAUDE_INSTALL_HINT
         except Exception as e:
             return f"⚠️ Q&A error: {e}"
 
