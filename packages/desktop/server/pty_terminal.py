@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 import shutil
+import subprocess
 import time
 import uuid
 import struct
@@ -233,23 +235,133 @@ class PTYSession:
         child_pid, master_fd = pty.fork()
 
         if child_pid == 0:
-            # Child process — exec claude with initial instruction as prompt.
-            # The prompt points at AGENTS.md + SOUL.md in the install dir
-            # ($APPLYLOOP_HOME). install.sh generates AGENTS.md with absolute
-            # paths to profile.json, .env, worker code, and configured
-            # integrations, plus the user's name for a personalized greeting.
+            # Child process — exec a bash wrapper that:
+            #   1. Checks if ~/.claude/ has any auth state (tokens cached
+            #      from a prior `claude login`).
+            #   2. If yes: runs claude --dangerously-skip-permissions with
+            #      the initial prompt. Claude starts immediately with
+            #      context from AGENTS.md + SOUL.md + profile.json.
+            #   3. When Claude exits (normal exit, auth error, user
+            #      pressed Ctrl-C, anything): falls through to `exec zsh
+            #      -l`, dropping the user to a real shell prompt so they
+            #      can debug, re-run commands, or `claude login` + retry.
+            #
+            # Why this matters (Pujith's feedback): the previous direct
+            # exec of claude meant that if Claude crashed or exited, the
+            # terminal tab was DEAD — no way to type commands, no way to
+            # fix things without restarting the whole session. Non-
+            # technical users saw a black screen and gave up. With the
+            # wrapper, they always have a shell fallback.
             os.chdir(cwd)
+
             initial_prompt = (
-                f"Read ./AGENTS.md for your full context and system status. "
-                f"Then read ./packages/worker/SOUL.md for the scout→apply playbook. "
-                f"Read ./profile.json to know who the user is. "
-                f"Greet the user by first name (from profile.json personal.first_name) ONCE, "
-                f"describe your capabilities briefly, then WAIT for commands. "
-                f"DO NOT auto-start the loop — the user must say 'start' or 'scout'. "
-                f"If profile.json is missing, tell the user the install is incomplete "
-                f"and point them at `applyloop update`."
+                "Read ./AGENTS.md for your full context and system status. "
+                "Then read ./packages/worker/SOUL.md for the scout/apply playbook. "
+                "Read ./profile.json to know who the user is. "
+                "Greet the user by first name (from profile.json personal.first_name) ONCE, "
+                "describe your capabilities briefly, then WAIT for commands. "
+                "DO NOT auto-start the loop - the user must say 'start' or 'scout'. "
+                "If profile.json is missing, tell the user the install is incomplete "
+                "and point them at `applyloop update`."
             )
-            os.execvpe(claude, [claude, "--dangerously-skip-permissions", initial_prompt], env)
+            # Single-quote escape for the prompt inside the bash -c string:
+            # any single-quote in the prompt becomes '"'"'. We don't have
+            # any in the current prompt text, but defensive anyway.
+            escaped_prompt = initial_prompt.replace("'", "'\"'\"'")
+
+            # The claude binary path is resolved above; pass it in via
+            # env var so the wrapper finds it without its own PATH lookup.
+            env["APPLYLOOP_CLAUDE_BIN"] = claude
+
+            # Build the wrapper script via string concat (not an f-string)
+            # because the heredoc has `%s` printf format specifiers and f-
+            # strings mangle braces. Only two substitutions: the cwd and
+            # the escaped prompt. Use .replace() for both.
+            wrapper_template = r"""#!/bin/bash
+# Child wrapper — keeps the PTY alive even if claude exits.
+# Drop into a zsh login shell on exit so the user can recover.
+cd __CWD__
+
+CYAN=$'\033[36m'
+GREEN=$'\033[32m'
+YELLOW=$'\033[33m'
+RESET=$'\033[0m'
+
+printf '%s[ApplyLoop]%s cwd=%s%s%s\r\n' "$CYAN" "$RESET" "$CYAN" "$PWD" "$RESET"
+
+# Check Claude Code authentication state. Claude stores tokens under
+# ~/.claude/ after `claude login`. If the directory exists AND has
+# content (not just an empty marker), we consider it authed.
+if [[ -d "$HOME/.claude" ]] && [[ -n "$(ls -A "$HOME/.claude" 2>/dev/null)" ]]; then
+  printf '%s[ApplyLoop]%s Claude Code is authenticated - starting session...\r\n' "$GREEN" "$RESET"
+  # Capture a small tail of claude's output to the session log so we can
+  # classify exit reasons below. Use `script` if available for real PTY
+  # mirroring, else fall back to tee — but tee captures are worse for
+  # ANSI handling. Keep it simple: rely on ~/.claude/logs tail instead.
+  "$APPLYLOOP_CLAUDE_BIN" --dangerously-skip-permissions '__PROMPT__'
+  CLAUDE_EXIT=$?
+
+  # Exit-code + log-tail classifier. Tries to translate whatever Claude
+  # printed into a human line. Non-technical users see "your plan has
+  # hit its daily limit, resets in N hours" instead of a raw red error.
+  CLAUDE_REASON=""
+  CLAUDE_HINT=""
+  # Look at the last ~40 lines of the most recent claude log.
+  CLAUDE_LOG_DIR="$HOME/.claude/logs"
+  LAST_LINES=""
+  if [[ -d "$CLAUDE_LOG_DIR" ]]; then
+    LATEST_LOG=$(ls -t "$CLAUDE_LOG_DIR"/*.log 2>/dev/null | head -1)
+    if [[ -n "$LATEST_LOG" && -f "$LATEST_LOG" ]]; then
+      LAST_LINES=$(tail -40 "$LATEST_LOG" 2>/dev/null)
+    fi
+  fi
+  # Pattern-match against common Claude Code error phrases. Order
+  # matters — more-specific matches first.
+  if echo "$LAST_LINES" | grep -qiE 'rate.?limit|429|too many requests'; then
+    CLAUDE_REASON="Anthropic API rate limit hit"
+    CLAUDE_HINT="Wait a few minutes and try again. If this keeps happening, your Claude plan may be undersized for the workload."
+  elif echo "$LAST_LINES" | grep -qiE 'daily.{0,20}limit|usage.{0,20}limit|quota.{0,20}exceeded|plan.{0,20}limit'; then
+    CLAUDE_REASON="Your Claude plan's daily quota is used up"
+    CLAUDE_HINT="Resets at midnight Pacific time. Or upgrade at https://claude.com/billing"
+  elif echo "$LAST_LINES" | grep -qiE 'upgrade|pro plan|max plan|requires.{0,20}subscription'; then
+    CLAUDE_REASON="Claude needs a higher-tier plan for this model"
+    CLAUDE_HINT="Upgrade at https://claude.com/billing"
+  elif echo "$LAST_LINES" | grep -qiE 'invalid.{0,20}token|unauthorized|401|expired.{0,20}token|re-?authenticate|please.{0,20}log.?in'; then
+    CLAUDE_REASON="Claude Code auth expired or invalid"
+    CLAUDE_HINT="Run: claude login (then paste the code from your browser)"
+  elif echo "$LAST_LINES" | grep -qiE 'connection.{0,20}refused|network|timeout|could not connect|ENOTFOUND|dns'; then
+    CLAUDE_REASON="Network error reaching Anthropic"
+    CLAUDE_HINT="Check your internet. If you're on a corporate VPN, try toggling it off. Claude needs api.anthropic.com reachable."
+  elif [[ "$CLAUDE_EXIT" == "0" ]]; then
+    CLAUDE_REASON="Session ended normally"
+    CLAUDE_HINT="Type 'claude' to start a new one, or 'applyloop status' for worker state."
+  elif [[ "$CLAUDE_EXIT" == "127" ]]; then
+    CLAUDE_REASON="Claude Code binary not found on PATH"
+    CLAUDE_HINT="Run: applyloop update  (this reinstalls claude via brew)"
+  elif [[ "$CLAUDE_EXIT" == "130" ]]; then
+    CLAUDE_REASON="Session interrupted with Ctrl-C"
+    CLAUDE_HINT="Type 'claude' to restart."
+  else
+    CLAUDE_REASON="Claude Code session ended unexpectedly (exit $CLAUDE_EXIT)"
+    CLAUDE_HINT="Try 'claude' to restart. If it keeps failing, 'applyloop logs' shows the full trace."
+  fi
+
+  printf '\r\n%s[ApplyLoop]%s %s%s%s\r\n' "$YELLOW" "$RESET" "$CYAN" "$CLAUDE_REASON" "$RESET"
+  printf '%s[ApplyLoop]%s %s\r\n' "$YELLOW" "$RESET" "$CLAUDE_HINT"
+  printf '%s[ApplyLoop]%s Dropping to shell - type %sclaude%s to restart.\r\n\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
+else
+  printf '%s[ApplyLoop]%s Claude Code is not authenticated yet.\r\n' "$YELLOW" "$RESET"
+  printf '%s[ApplyLoop]%s Run: %sclaude login%s\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
+  printf '%s[ApplyLoop]%s Follow the browser prompt, paste the code back here,\r\n' "$YELLOW" "$RESET"
+  printf '%s[ApplyLoop]%s then type %sclaude%s to start the session.\r\n\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
+fi
+
+# Drop to a login shell so the user always has something to type into.
+# zsh -l loads .zprofile + .zshrc so they get their normal environment.
+exec /bin/zsh -l
+"""
+            wrapper = wrapper_template.replace("__CWD__", shlex.quote(cwd)).replace("__PROMPT__", escaped_prompt)
+            os.execvpe("/bin/bash", ["/bin/bash", "-c", wrapper], env)
         else:
             # Parent process
             self.master_fd = master_fd
