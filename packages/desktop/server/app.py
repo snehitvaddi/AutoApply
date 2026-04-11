@@ -991,6 +991,28 @@ async def put_preferences(body: dict):
         return {"ok": False, "error": str(e)}
 
 
+# ── Integrations (API keys for Telegram, Gmail, AgentMail, Finetune) ────
+# These are stored encrypted in user_profiles.integrations_encrypted on the
+# cloud. The desktop UI talks to this local endpoint (instead of direct-
+# calling the cloud) so the worker token stays off the browser.
+
+@app.get("/api/integrations")
+async def get_integrations():
+    """Return masked integration values for the settings UI."""
+    try:
+        return {"ok": True, "data": await stats.get_integrations(raw=False)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.put("/api/integrations")
+async def put_integrations(body: dict):
+    try:
+        return {"ok": True, "data": await stats.update_integrations(body)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 
 # (CLI Session endpoints removed — Chat now uses /btw via PTY)
 

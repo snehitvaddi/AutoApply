@@ -588,6 +588,18 @@ SUPABASE_URL_VAL=""
 SUPABASE_ANON_KEY_VAL=""
 CLI_CONFIG_JSON=""
 
+# Integration credentials pulled from cloud (from /api/settings/integrations
+# in Phase C below). If the user already saved these on a prior install or
+# via the web dashboard, they'll come back as plaintext here and get used
+# as defaults in the interactive prompts (reuse_or_prompt respects non-empty
+# defaults from both ~/.applyloop/.env AND these shell vars).
+INTEGRATIONS_TELEGRAM_BOT=""
+INTEGRATIONS_TELEGRAM_CHAT=""
+INTEGRATIONS_GMAIL_EMAIL=""
+INTEGRATIONS_GMAIL_PW=""
+INTEGRATIONS_AGENTMAIL=""
+INTEGRATIONS_FINETUNE=""
+
 if [[ -n "$WORKER_TOKEN" ]]; then
   log "Fetching cli-config (telegram bot token + supabase creds)..."
   CFG_TMP="$(mktemp -t applyloop-cliconfig.XXXXXX)"
@@ -625,6 +637,66 @@ except Exception as e:
     warn "cli-config fetch failed (HTTP $CFG_HTTP) — Telegram + Supabase config will be empty"
   fi
   rm -f "$CFG_TMP"
+
+  # Also pull the encrypted integrations blob via /api/settings/integrations?raw=1.
+  # This returns plaintext values for any integration the user already saved
+  # (via web dashboard, desktop app, or a prior install). If the migration
+  # 010_user_integrations.sql hasn't been applied yet on the user's Supabase
+  # project, this endpoint returns 500 with a helpful message — we log it
+  # and move on (prompts fall back to interactive).
+  log "Fetching saved integrations (if any)..."
+  INT_TMP="$(mktemp -t applyloop-integrations.XXXXXX)"
+  INT_HTTP="$(curl -sS -o "$INT_TMP" -w "%{http_code}" \
+    -H "X-Worker-Token: $WORKER_TOKEN" \
+    "$APP_URL/api/settings/integrations?raw=1" 2>/dev/null || echo "000")"
+  if [[ "$INT_HTTP" == "200" ]]; then
+    INT_VARS="$(python3 -c "
+import sys, json
+try:
+    d = json.loads(open('$INT_TMP').read()).get('data', {}).get('integrations', {}) or {}
+    print(f'TB={d.get(\"telegram_bot_token\") or \"\"}')
+    print(f'TC={d.get(\"telegram_chat_id\") or \"\"}')
+    print(f'GE={d.get(\"gmail_email\") or \"\"}')
+    print(f'GP={d.get(\"gmail_app_password\") or \"\"}')
+    print(f'AM={d.get(\"agentmail_api_key\") or \"\"}')
+    print(f'FT={d.get(\"finetune_resume_api_key\") or \"\"}')
+except Exception as e:
+    print(f'ERR: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1)"
+    while IFS='=' read -r key val; do
+      case "$key" in
+        TB) INTEGRATIONS_TELEGRAM_BOT="$val" ;;
+        TC) INTEGRATIONS_TELEGRAM_CHAT="$val" ;;
+        GE) INTEGRATIONS_GMAIL_EMAIL="$val" ;;
+        GP) INTEGRATIONS_GMAIL_PW="$val" ;;
+        AM) INTEGRATIONS_AGENTMAIL="$val" ;;
+        FT) INTEGRATIONS_FINETUNE="$val" ;;
+      esac
+    done <<< "$INT_VARS"
+    # If cloud has real values, use them as the authoritative defaults so
+    # reuse_or_prompt will show them as "current" rather than asking blank.
+    if [[ -n "$INTEGRATIONS_TELEGRAM_BOT" ]]; then
+      TELEGRAM_BOT_TOKEN_VAL="$INTEGRATIONS_TELEGRAM_BOT"
+    fi
+    if [[ -n "$INTEGRATIONS_TELEGRAM_CHAT" && -z "$ACTIVATION_TELEGRAM_CHAT_ID" ]]; then
+      ACTIVATION_TELEGRAM_CHAT_ID="$INTEGRATIONS_TELEGRAM_CHAT"
+    fi
+    _filled=0
+    for v in "$INTEGRATIONS_TELEGRAM_BOT" "$INTEGRATIONS_TELEGRAM_CHAT" \
+             "$INTEGRATIONS_GMAIL_EMAIL" "$INTEGRATIONS_GMAIL_PW" \
+             "$INTEGRATIONS_AGENTMAIL" "$INTEGRATIONS_FINETUNE"; do
+      [[ -n "$v" ]] && _filled=$((_filled + 1))
+    done
+    if [[ $_filled -gt 0 ]]; then
+      log "  Loaded $_filled integration(s) from cloud"
+    fi
+  elif [[ "$INT_HTTP" == "500" ]]; then
+    warn "Integrations endpoint returned 500 — run supabase/migrations/010_user_integrations.sql on your Supabase project"
+  else
+    log "  No saved integrations on cloud yet (HTTP $INT_HTTP)"
+  fi
+  rm -f "$INT_TMP"
 fi
 
 # Transform the activation + cli-config responses into the nested profile.json

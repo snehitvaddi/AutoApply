@@ -180,6 +180,52 @@ async def update_preferences(prefs_data: dict) -> dict:
     return result.get("data", {"updated": True})
 
 
+async def get_integrations(raw: bool = False) -> dict:
+    """Fetch integration credentials from the cloud's /api/settings/integrations.
+
+    When raw=False (UI path), returns masked values + a `set` boolean for
+    each field so the settings page shows "••••1234" instead of plaintext.
+
+    When raw=True (desktop .env sync path), returns decrypted plaintext so
+    the session-start sync loop can write them into ~/.applyloop/.env.
+    Both paths authenticate with the worker token via X-Worker-Token.
+    """
+    token = load_token()
+    if not token:
+        return {"error": "No API token configured"}
+    url = f"{APP_URL}/api/settings/integrations"
+    if raw:
+        url += "?raw=1"
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            resp = await client.get(url, headers={"X-Worker-Token": token})
+        if resp.status_code == 200:
+            return (resp.json() or {}).get("data", {})
+        return {"error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def update_integrations(fields: dict) -> dict:
+    """PUT integration credential updates to /api/settings/integrations.
+
+    fields is a partial dict — only keys present are updated. Passing a
+    key with an empty-string value clears that field.
+    """
+    token = load_token()
+    if not token:
+        return {"error": "No API token configured"}
+    url = f"{APP_URL}/api/settings/integrations"
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            resp = await client.put(url, json=fields, headers={"X-Worker-Token": token})
+        if resp.status_code == 200:
+            return (resp.json() or {}).get("data", {})
+        return {"error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 async def get_settings_profile() -> dict:
     """Get profile using worker proxy, with fallback to local PROFILE.md."""
     result = await _proxy("load_profile")

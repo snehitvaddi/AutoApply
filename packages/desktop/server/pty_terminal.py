@@ -133,6 +133,118 @@ class PTYSession:
         return None
 
     @staticmethod
+    def _sync_integrations_to_env(cwd: str, env: dict) -> bool:
+        """Pull encrypted integration credentials from
+        /api/settings/integrations?raw=1 (Telegram bot/chat, Gmail
+        email/app_password, AgentMail, Finetune Resume) and write the
+        decrypted plaintext into ~/.applyloop/.env.
+
+        Strategy: read the existing .env line-by-line, replace any line
+        starting with one of the integration keys, leave everything else
+        untouched. Cloud wins on non-empty. If the cloud has nothing set
+        for a key, the existing .env value is preserved (so wiping the
+        cloud doesn't accidentally wipe a working local .env).
+
+        Best-effort: any failure just logs + returns False. The session
+        still boots with whatever was already in .env.
+        """
+        import urllib.request
+        token = (env.get("WORKER_TOKEN") or "").strip().strip('"').strip("'")
+        if not token:
+            return False
+        app_url = os.environ.get("APPLYLOOP_APP_URL", "https://applyloop.vercel.app")
+        try:
+            req = urllib.request.Request(
+                f"{app_url}/api/settings/integrations?raw=1",
+                headers={"X-Worker-Token": token},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                payload = json.loads(resp.read()) or {}
+        except Exception as e:
+            # Migration 010 not applied yet → server returns 500 with a
+            # clear message. Log at info so it's visible but not alarming.
+            logger.info(f"Integrations sync skipped: {e}")
+            return False
+
+        data = payload.get("data") or {}
+        integrations = data.get("integrations") or {}
+        if not integrations:
+            return False
+
+        # Only these keys are written to .env. Anything else the endpoint
+        # might return is ignored.
+        key_map = {
+            "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+            "telegram_chat_id": "TELEGRAM_CHAT_ID",
+            "gmail_email": "GMAIL_EMAIL",
+            "gmail_app_password": "GMAIL_APP_PASSWORD",
+            "agentmail_api_key": "AGENTMAIL_API_KEY",
+            "finetune_resume_api_key": "FINETUNE_RESUME_API_KEY",
+        }
+
+        # Build the set of (env_key → new_value) pairs for cloud values
+        # that are non-empty. Empty cloud values DON'T clear the .env —
+        # that's explicit via the "clear" button in the Integrations tab,
+        # which sends the key with an empty string and the server drops
+        # it from the encrypted blob (so it'd re-appear here as absent).
+        updates: dict[str, str] = {}
+        for src, dst in key_map.items():
+            v = integrations.get(src) or ""
+            if v:
+                updates[dst] = v
+
+        if not updates:
+            return False
+
+        env_path = os.path.join(cwd, ".env")
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+        except Exception as e:
+            logger.warning(f"Could not read .env for integrations sync: {e}")
+            return False
+
+        # In-place rewrite: replace existing lines that start with a
+        # known key, append missing ones at the bottom.
+        seen: set[str] = set()
+        new_lines: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                new_lines.append(line)
+                continue
+            if "=" in stripped:
+                key = stripped.split("=", 1)[0].strip()
+                if key in updates:
+                    new_lines.append(f"{key}={updates[key]}\n")
+                    seen.add(key)
+                    continue
+            new_lines.append(line)
+
+        # Append any keys that weren't in the original .env
+        for key, val in updates.items():
+            if key not in seen:
+                if new_lines and not new_lines[-1].endswith("\n"):
+                    new_lines.append("\n")
+                new_lines.append(f"{key}={val}\n")
+
+        try:
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+            logger.info(f"Synced {len(updates)} integration key(s) from cloud to .env: {', '.join(updates.keys())}")
+            # Also update the in-memory env dict so the rest of
+            # _read_profile_snapshot sees the fresh values (e.g. for the
+            # live Telegram probe).
+            for k, v in updates.items():
+                env[k] = v
+            return True
+        except Exception as e:
+            logger.warning(f"Could not write .env during integrations sync: {e}")
+            return False
+
+    @staticmethod
     def _download_resume_locally(env: dict) -> str | None:
         """Fetch the user's default resume PDF from the cloud and stash it
         at ~/.autoapply/workspace/resumes/default.pdf so the Claude PTY
@@ -571,6 +683,14 @@ class PTYSession:
             # made on applyloop.vercel.app (or pushed by a previous session)
             # are reflected in this session. Cloud is the source of truth.
             PTYSession._pull_profile_from_cloud(cwd, out["env"])
+
+            # Step 2b: sync third-party integration credentials (Telegram
+            # bot+chat, Gmail, AgentMail, Finetune) from the cloud's
+            # encrypted blob into ~/.applyloop/.env. This is what lets a
+            # user update their Telegram bot token on the web dashboard
+            # and have the next desktop session pick it up without a
+            # reinstall. Also runs on every background sync tick.
+            PTYSession._sync_integrations_to_env(cwd, out["env"])
 
             # Step 3: read the (now freshly-synced) local profile.
             profile_path = os.path.join(cwd, "profile.json")
