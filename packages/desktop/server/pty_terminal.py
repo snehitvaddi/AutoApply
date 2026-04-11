@@ -133,6 +133,121 @@ class PTYSession:
         return None
 
     @staticmethod
+    def _push_integrations_from_env_to_cloud(cwd: str, env: dict) -> int:
+        """Walk local .env for the 6 integration keys; for any key that is
+        non-empty locally AND not already set on the cloud, validate it
+        against the server's regex rules and PUT it up. Returns the count
+        of fields successfully pushed.
+
+        This is the reverse of _sync_integrations_to_env: we already had
+        cloud → local, now we add local → cloud so a user who set their
+        creds via install.sh gets them into the cloud automatically on the
+        first desktop launch. Prevents the "I already have all my keys in
+        .env but the web dashboard shows (not set)" confusion.
+
+        Safety:
+        - Never pushes values that fail shape validation (the server would
+          reject them anyway, and we don't want per-field rejection to kill
+          the whole batch).
+        - Never pushes placeholder strings like "placeholder", "xxx",
+          "changeme" that were injected by install.sh when the user skipped
+          a prompt.
+        - Never overwrites a cloud value that's already set — only fills
+          gaps. If the user explicitly edited on the web dashboard, that
+          value is authoritative.
+        """
+        import re as _re_push
+        import urllib.request, urllib.error
+
+        token = (env.get("WORKER_TOKEN") or "").strip().strip('"').strip("'")
+        if not token:
+            return 0
+        app_url = os.environ.get("APPLYLOOP_APP_URL", "https://applyloop.vercel.app")
+
+        # First, check what cloud already has so we only fill gaps.
+        try:
+            req = urllib.request.Request(
+                f"{app_url}/api/settings/integrations",
+                headers={"X-Worker-Token": token},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                current = (json.loads(resp.read()) or {}).get("data", {}).get("integrations", {})
+        except Exception as e:
+            logger.info(f"Integration push skipped (can't read current state): {e}")
+            return 0
+
+        # Shape validators mirroring /api/settings/integrations/route.ts.
+        PLACEHOLDERS = {"placeholder", "changeme", "todo", "xxx", "your_token_here", ""}
+        def valid(key: str, value: str) -> bool:
+            if not value or value.lower() in PLACEHOLDERS:
+                return False
+            if key == "telegram_bot_token":
+                return bool(_re_push.match(r"^[0-9]{6,}:[A-Za-z0-9_-]{25,}$", value))
+            if key == "telegram_chat_id":
+                return bool(_re_push.match(r"^-?[0-9]+$", value))
+            if key == "gmail_email":
+                return bool(_re_push.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", value))
+            if key == "gmail_app_password":
+                return len(value.replace(" ", "")) == 16
+            if key in ("agentmail_api_key", "finetune_resume_api_key"):
+                return len(value) >= 8
+            return False
+
+        env_to_cloud_key = {
+            "TELEGRAM_BOT_TOKEN": "telegram_bot_token",
+            "TELEGRAM_CHAT_ID": "telegram_chat_id",
+            "GMAIL_EMAIL": "gmail_email",
+            "GMAIL_APP_PASSWORD": "gmail_app_password",
+            "AGENTMAIL_API_KEY": "agentmail_api_key",
+            "FINETUNE_RESUME_API_KEY": "finetune_resume_api_key",
+        }
+        payload: dict[str, str] = {}
+        skipped_invalid: list[str] = []
+        skipped_already_set: list[str] = []
+        for env_key, cloud_key in env_to_cloud_key.items():
+            local_val = (env.get(env_key) or "").strip()
+            if not local_val:
+                continue
+            if current.get(cloud_key, {}).get("set"):
+                skipped_already_set.append(cloud_key)
+                continue
+            if not valid(cloud_key, local_val):
+                skipped_invalid.append(cloud_key)
+                continue
+            payload[cloud_key] = local_val
+
+        if not payload:
+            if skipped_invalid:
+                logger.info(
+                    f"Integration push: nothing to sync. Skipped "
+                    f"(invalid/placeholder): {', '.join(skipped_invalid)}. "
+                    f"Update these via the Integrations tab or install.sh."
+                )
+            return 0
+
+        try:
+            body = json.dumps(payload).encode()
+            req = urllib.request.Request(
+                f"{app_url}/api/settings/integrations",
+                data=body,
+                method="PUT",
+                headers={
+                    "X-Worker-Token": token,
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp.read()
+            msg = f"Pushed {len(payload)} integration key(s) from local .env to cloud: {', '.join(payload.keys())}"
+            if skipped_invalid:
+                msg += f" (skipped invalid: {', '.join(skipped_invalid)})"
+            logger.info(msg)
+            return len(payload)
+        except Exception as e:
+            logger.warning(f"Integration push failed: {e}")
+            return 0
+
+    @staticmethod
     def _sync_integrations_to_env(cwd: str, env: dict) -> bool:
         """Pull encrypted integration credentials from
         /api/settings/integrations?raw=1 (Telegram bot/chat, Gmail
@@ -684,12 +799,15 @@ class PTYSession:
             # are reflected in this session. Cloud is the source of truth.
             PTYSession._pull_profile_from_cloud(cwd, out["env"])
 
-            # Step 2b: sync third-party integration credentials (Telegram
-            # bot+chat, Gmail, AgentMail, Finetune) from the cloud's
-            # encrypted blob into ~/.applyloop/.env. This is what lets a
-            # user update their Telegram bot token on the web dashboard
-            # and have the next desktop session pick it up without a
-            # reinstall. Also runs on every background sync tick.
+            # Step 2b: bidirectional integration sync.
+            # Push first (fills any cloud gaps from local .env values the
+            # user set via install.sh), then pull (pulls authoritative
+            # values back down). This order matters: a push-then-pull means
+            # the user ends up with whatever's on cloud AS OF the end of
+            # this session start, which is the "cloud is source of truth"
+            # semantics we want. If cloud already has a field set, the push
+            # skips it — cloud edits never get clobbered by stale .env.
+            PTYSession._push_integrations_from_env_to_cloud(cwd, out["env"])
             PTYSession._sync_integrations_to_env(cwd, out["env"])
 
             # Step 3: read the (now freshly-synced) local profile.
