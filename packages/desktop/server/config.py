@@ -4,10 +4,17 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-# Paths
-WORKSPACE_DIR = Path.home() / ".autoapply" / "workspace"
+# Paths — honor APPLYLOOP_WORKSPACE for multi-tenant/test isolation.
+# Falling back to ~/.autoapply/workspace for the normal single-user install.
+_ws_env = os.environ.get("APPLYLOOP_WORKSPACE")
+WORKSPACE_DIR = Path(_ws_env).expanduser() if _ws_env else (Path.home() / ".autoapply" / "workspace")
 TOKEN_FILE = WORKSPACE_DIR / ".api-token"
 WORKER_PID_FILE = WORKSPACE_DIR / "worker.pid"
+# The SQLite applications.db lives inside the workspace too; unless the user
+# explicitly overrides APPLYLOOP_DB we propagate WORKSPACE_DIR into it so all
+# the worker + desktop modules agree on a single source of truth per instance.
+if "APPLYLOOP_DB" not in os.environ:
+    os.environ["APPLYLOOP_DB"] = str(WORKSPACE_DIR / "applications.db")
 # Find worker directory — could be in repo or relative to .app bundle
 _server_dir = Path(__file__).resolve().parent
 WORKER_DIR = None

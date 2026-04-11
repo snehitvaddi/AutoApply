@@ -19,25 +19,74 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(os.environ.get(
-    "APPLYLOOP_DB",
-    Path.home() / ".autoapply" / "workspace" / "applications.db"
-))
+def _resolve_db_path() -> Path:
+    """Pick the database path at call time so APPLYLOOP_DB / WORKSPACE changes stick."""
+    env = os.environ.get("APPLYLOOP_DB")
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".autoapply" / "workspace" / "applications.db"
 
-# Fallback: check the legacy OpenClaw path if the default doesn't exist
-if not DB_PATH.exists():
-    _legacy = Path.home() / ".openclaw" / "agents" / "job-bot" / "workspace" / "applications.db"
-    if _legacy.exists():
-        DB_PATH = _legacy
-        logger.info(f"Using legacy DB path: {DB_PATH}")
+
+DB_PATH = _resolve_db_path()
+
+
+# Schema mirrors packages/worker/pipeline.py::get_db — kept in sync so
+# the desktop server can bootstrap a fresh workspace before the worker runs.
+_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS applications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company TEXT NOT NULL, role TEXT NOT NULL, url TEXT, ats TEXT,
+    source TEXT, location TEXT, posted_at TEXT, scouted_at TEXT,
+    applied_at TEXT, updated_at TEXT,
+    status TEXT NOT NULL DEFAULT 'scouted'
+        CHECK(status IN ('scouted','queued','applying','submitted','failed','skipped','blocked','interview','rejected','offer')),
+    notes TEXT, screenshot TEXT, dedup_token TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_status ON applications(status);
+CREATE INDEX IF NOT EXISTS idx_company ON applications(company);
+CREATE INDEX IF NOT EXISTS idx_applied_at ON applications(applied_at);
+CREATE INDEX IF NOT EXISTS idx_dedup ON applications(dedup_token);
+"""
+
+
+def _ensure_db_exists() -> Path:
+    """Auto-create the workspace DB + schema on first call.
+
+    Previously the desktop module would return empty dicts forever if the
+    worker hadn't run yet, because the SQLite file didn't exist. Now we
+    bootstrap an empty schema so every dashboard call at least returns valid
+    (zero-row) results instead of silent failures.
+    """
+    global DB_PATH
+    DB_PATH = _resolve_db_path()
+    if DB_PATH.exists():
+        return DB_PATH
+    try:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript(_SCHEMA_SQL)
+            conn.commit()
+        finally:
+            conn.close()
+        logger.info(f"Bootstrapped empty applications.db at {DB_PATH}")
+    except Exception as e:
+        logger.warning(f"Could not bootstrap DB at {DB_PATH}: {e}")
+    return DB_PATH
 
 
 def _connect() -> sqlite3.Connection | None:
-    """Open a read-only connection to the SQLite database."""
-    if not DB_PATH.exists():
-        logger.warning(f"Database not found: {DB_PATH}")
+    """Open a read-only connection to the SQLite database.
+
+    Auto-creates the workspace DB + schema if missing so the desktop dashboard
+    never sits in a silent-empty state on a brand-new install.
+    """
+    path = _ensure_db_exists()
+    if not path.exists():
+        logger.warning(f"Database not found: {path}")
         return None
-    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -204,9 +253,10 @@ def get_currently_applying() -> dict | None:
 
 def _write_connect() -> sqlite3.Connection | None:
     """Open a writable connection to the SQLite database."""
-    if not DB_PATH or not DB_PATH.exists():
+    path = _ensure_db_exists()
+    if not path or not path.exists():
         return None
-    return sqlite3.connect(str(DB_PATH))
+    return sqlite3.connect(str(path))
 
 
 def delete_from_queue(job_id: int) -> bool:
