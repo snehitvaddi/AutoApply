@@ -95,16 +95,18 @@ async def _check_profile() -> dict:
 
     data = result.get("data", {}) or {}
     profile = data.get("profile") or {}
+    user = data.get("user") or {}
 
-    missing = [
-        field for field in _REQUIRED_PROFILE_FIELDS
-        if not (profile.get(field) or "").strip()
-    ]
-    has_contact = bool(
-        (profile.get("phone") or "").strip()
-        or (profile.get("linkedin_url") or "").strip()
-    )
-    if not has_contact:
+    # email lives on the users (auth-managed) row, NOT on user_profiles.
+    # first_name / last_name / phone / linkedin_url live on user_profiles.
+    # Until v1.0.7 this check only looked at `profile`, which meant every
+    # user — even after fully completing web onboarding — was reported as
+    # "missing email". Pujith hit it on v1.0.6.
+    def _f(key: str) -> str:
+        return (profile.get(key) or user.get(key) or "").strip()
+
+    missing = [field for field in _REQUIRED_PROFILE_FIELDS if not _f(field)]
+    if not (_f("phone") or _f("linkedin_url")):
         missing.append("phone or linkedin_url")
 
     if missing:
@@ -119,7 +121,7 @@ async def _check_profile() -> dict:
         "id": "profile",
         "ok": True,
         "label": "Profile information",
-        "detail": f"Profile complete ({profile.get('first_name', '')} {profile.get('last_name', '')})".strip(),
+        "detail": f"Profile complete ({_f('first_name')} {_f('last_name')})".strip(),
     }
 
 
@@ -262,13 +264,16 @@ def _check_openclaw_gateway() -> dict:
     apply time with a confusing error. Catch it here instead."""
     openclaw = _find_binary("openclaw")
     if not openclaw:
-        # Already covered by _check_openclaw_cli — keep consistent
-        # state but don't duplicate the remediation message.
+        # Already covered by _check_openclaw_cli. Mark this row hidden so
+        # the UI doesn't show two consecutive rows about the same missing
+        # CLI — once openclaw is installed, the gateway check runs for
+        # real and surfaces subscription state.
         return {
             "id": "openclaw_gateway",
             "ok": False,
+            "hidden": True,
             "label": "OpenClaw Pro subscription",
-            "detail": "CLI not installed — install that first.",
+            "detail": "Pending OpenClaw CLI install",
             "remediation": {"type": "install", "target": "openclaw"},
         }
     try:
@@ -559,3 +564,259 @@ def start_install(tool: str) -> dict:
     }
     logger.info(f"Install of {tool!r} started (pid={proc.pid}, log={log_path})")
     return {"ok": True, "pid": proc.pid, "log_path": str(log_path)}
+
+
+# ── Bootstrap orchestrator ───────────────────────────────────────────
+#
+# The single auto-install chain triggered after activation. Walks a
+# dependency graph (brew → node → openclaw, brew → claude), runs each
+# step in order, streams stdout to a single bootstrap.log + a rolling
+# log_tail in _BOOTSTRAP_STATE so the wizard can render live progress
+# from one polling endpoint instead of N per-tool polls.
+#
+# Why a separate state machine from _INSTALL_STATE: the manual per-tool
+# install endpoints stay around as a fallback (user clicks "Install"
+# from a row that failed during bootstrap). Bootstrap is the happy
+# path; per-tool is the recovery path.
+
+import threading
+
+# (prereq, install_argv, post_check)
+# install_argv=None means "special handling" (brew bootstrap via Terminal.app)
+_BOOTSTRAP_GRAPH: dict[str, tuple[str | None, list[str] | None]] = {
+    "brew":     (None,    None),
+    "node":     ("brew",  ["brew", "install", "node"]),
+    "openclaw": ("node",  ["npm", "install", "-g", "openclaw"]),
+    "claude":   ("brew",  ["brew", "install", "claude"]),
+}
+
+
+def _bootstrap_post_check(tool: str) -> bool:
+    """Did this tool actually land on PATH after the install command?
+    Some installers exit 0 but don't put the binary where we expect."""
+    if tool == "brew":
+        return shutil.which("brew") is not None
+    if tool == "node":
+        return shutil.which("npm") is not None
+    if tool == "claude":
+        return _find_binary("claude", _CLAUDE_FALLBACK_PATHS) is not None
+    if tool == "openclaw":
+        return _find_binary("openclaw") is not None
+    return False
+
+
+def _plan_bootstrap(targets: list[str]) -> list[str]:
+    """Topologically order the install plan, dropping anything already
+    installed. So if brew + node already exist, the plan for ["claude",
+    "openclaw"] is just ["claude", "openclaw"] in that order."""
+    plan: list[str] = []
+    visited: set[str] = set()
+
+    def visit(tool: str) -> None:
+        if tool in visited:
+            return
+        visited.add(tool)
+        prereq, _ = _BOOTSTRAP_GRAPH[tool]
+        if prereq:
+            visit(prereq)
+        if not _bootstrap_post_check(tool):
+            plan.append(tool)
+
+    for t in targets:
+        visit(t)
+    return plan
+
+
+_BOOTSTRAP_STATE: dict = {
+    "running": False,
+    "plan": [],
+    "current": None,
+    "completed": [],
+    "failed": None,
+    "needs_brew_terminal": False,
+    "log_tail": [],
+    "started_at": None,
+}
+_BOOTSTRAP_LOCK = threading.Lock()
+
+
+def _bootstrap_log_path() -> Path:
+    return WORKSPACE_DIR / "bootstrap.log"
+
+
+def _append_log(line: str) -> None:
+    """Append a single line to bootstrap.log + the rolling tail."""
+    try:
+        with _bootstrap_log_path().open("a") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+    tail = _BOOTSTRAP_STATE["log_tail"]
+    tail.append(line)
+    if len(tail) > 60:
+        del tail[: len(tail) - 60]
+
+
+def _open_brew_install_terminal() -> None:
+    """Open Terminal.app with the official Homebrew installer pre-typed.
+
+    Brew is the only step we can't run silently from inside the desktop
+    server: the install script needs sudo and there's no PTY here for
+    password input. Spawning Terminal.app via osascript hands control
+    to the user; the wizard polls shutil.which("brew") and resumes the
+    chain automatically once brew lands on PATH.
+    """
+    install_cmd = (
+        '/bin/bash -c "$(curl -fsSL '
+        'https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+    )
+    # Wrap in single-quote then echo a marker so the user sees a clear
+    # finish line in their Terminal window.
+    apple_script = (
+        f'tell application "Terminal" to do script '
+        f'"{install_cmd}; echo; echo \\"=== brew install finished — '
+        f'you can close this window ===\\""'
+    )
+    try:
+        subprocess.Popen(["osascript", "-e", apple_script])
+        _append_log("[bootstrap] opened Terminal.app for brew install")
+    except Exception as e:
+        _append_log(f"[bootstrap] failed to open Terminal.app: {e}")
+
+
+def _wait_for_binary(name: str, timeout: int) -> bool:
+    """Block until `name` is on PATH (post-bootstrap), or until timeout."""
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if shutil.which(name):
+            return True
+        time.sleep(2)
+    return False
+
+
+def _run_install_step(tool: str, cmd: list[str]) -> bool:
+    """Run one install command synchronously, tee stdout into the rolling
+    log + bootstrap.log. Returns True iff the command exits 0 AND the
+    post-check (binary actually on PATH) also passes."""
+    _append_log(f"\n=== {tool}: {' '.join(cmd)} ===")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env={**os.environ, "NONINTERACTIVE": "1"},
+        )
+    except FileNotFoundError as e:
+        _append_log(f"[bootstrap] spawn failed: {e}")
+        return False
+    except Exception as e:
+        _append_log(f"[bootstrap] spawn error: {e}")
+        return False
+
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        _append_log(line.rstrip())
+    code = proc.wait()
+    if code != 0:
+        _append_log(f"[bootstrap] {tool} install exited {code}")
+        return False
+    if not _bootstrap_post_check(tool):
+        _append_log(f"[bootstrap] {tool} install exited 0 but binary still missing")
+        return False
+    return True
+
+
+def _run_bootstrap(plan: list[str]) -> None:
+    """Worker thread body: walks the plan in order, updating state."""
+    for tool in plan:
+        with _BOOTSTRAP_LOCK:
+            _BOOTSTRAP_STATE["current"] = tool
+        ok = False
+        if tool == "brew":
+            with _BOOTSTRAP_LOCK:
+                _BOOTSTRAP_STATE["needs_brew_terminal"] = True
+            _open_brew_install_terminal()
+            ok = _wait_for_binary("brew", timeout=600)
+            with _BOOTSTRAP_LOCK:
+                _BOOTSTRAP_STATE["needs_brew_terminal"] = False
+        else:
+            _, cmd = _BOOTSTRAP_GRAPH[tool]
+            if cmd is None:
+                ok = False
+            else:
+                ok = _run_install_step(tool, cmd)
+
+        if not ok:
+            with _BOOTSTRAP_LOCK:
+                _BOOTSTRAP_STATE["failed"] = tool
+                _BOOTSTRAP_STATE["running"] = False
+                _BOOTSTRAP_STATE["current"] = None
+            return
+
+        with _BOOTSTRAP_LOCK:
+            _BOOTSTRAP_STATE["completed"].append(tool)
+
+    with _BOOTSTRAP_LOCK:
+        _BOOTSTRAP_STATE["current"] = None
+        _BOOTSTRAP_STATE["running"] = False
+
+
+def start_bootstrap() -> dict:
+    """Kick off the auto-install chain in a background thread.
+
+    Idempotent: if a bootstrap is already running, returns the current
+    plan with `already_running=True`. The wizard calls this once after
+    activation and then polls bootstrap_status() for progress.
+    """
+    import time
+    with _BOOTSTRAP_LOCK:
+        if _BOOTSTRAP_STATE["running"]:
+            return {
+                "ok": True,
+                "already_running": True,
+                "plan": list(_BOOTSTRAP_STATE["plan"]),
+            }
+
+        plan = _plan_bootstrap(["claude", "openclaw"])
+        if not plan:
+            # Nothing to install — short-circuit so the wizard skips the overlay.
+            return {"ok": True, "plan": [], "already_running": False, "nothing_to_do": True}
+
+        # Reset and seed state
+        _BOOTSTRAP_STATE.update(
+            running=True,
+            plan=plan,
+            current=None,
+            completed=[],
+            failed=None,
+            needs_brew_terminal=False,
+            log_tail=[],
+            started_at=time.time(),
+        )
+        # Wipe the previous bootstrap.log so the new run starts clean.
+        try:
+            _bootstrap_log_path().write_text("")
+        except Exception:
+            pass
+
+    _append_log(f"[bootstrap] plan: {plan}")
+    threading.Thread(target=_run_bootstrap, args=(plan,), daemon=True).start()
+    return {"ok": True, "plan": plan}
+
+
+def bootstrap_status() -> dict:
+    """Snapshot of the current bootstrap state for the polling UI."""
+    with _BOOTSTRAP_LOCK:
+        return {
+            "running": _BOOTSTRAP_STATE["running"],
+            "plan": list(_BOOTSTRAP_STATE["plan"]),
+            "current": _BOOTSTRAP_STATE["current"],
+            "completed": list(_BOOTSTRAP_STATE["completed"]),
+            "failed": _BOOTSTRAP_STATE["failed"],
+            "needs_brew_terminal": _BOOTSTRAP_STATE["needs_brew_terminal"],
+            "log_tail": list(_BOOTSTRAP_STATE["log_tail"]),
+            "started_at": _BOOTSTRAP_STATE["started_at"],
+        }

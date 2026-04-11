@@ -154,6 +154,7 @@ export interface PreflightCheck {
     fallback_url?: string;
   };
   optional?: boolean;
+  hidden?: boolean;
 }
 
 export interface SetupStatus {
@@ -194,6 +195,30 @@ export async function getInstallProgress(tool: string) {
   return apiFetch<InstallProgress>(
     `/setup/install-progress?tool=${encodeURIComponent(tool)}`
   );
+}
+
+export interface BootstrapState {
+  running: boolean;
+  plan: string[];
+  current: string | null;
+  completed: string[];
+  failed: string | null;
+  needs_brew_terminal: boolean;
+  log_tail: string[];
+  started_at: number | null;
+}
+
+export async function startBootstrap() {
+  return apiFetch<{
+    ok: boolean;
+    plan?: string[];
+    already_running?: boolean;
+    nothing_to_do?: boolean;
+  }>("/setup/auto-install", { method: "POST" });
+}
+
+export async function getBootstrapStatus() {
+  return apiFetch<BootstrapState>("/setup/auto-install/status");
 }
 
 export interface AuthState {

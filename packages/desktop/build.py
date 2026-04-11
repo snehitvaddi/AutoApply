@@ -27,7 +27,7 @@ UI_DIR = HERE / "ui"
 UI_OUT = UI_DIR / "out"  # Static export output
 DIST_DIR = HERE / "dist"
 APP_NAME = "ApplyLoop"
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 BUNDLE_ID = "com.applyloop.desktop"
 
 

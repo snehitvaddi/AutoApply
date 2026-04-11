@@ -32,7 +32,9 @@ import {
 } from "lucide-react"
 import {
   activateWithCode, getSetupStatus, installTool, getInstallProgress,
+  startBootstrap, getBootstrapStatus,
   type PreflightCheck, type SetupStatus, type InstallProgress,
+  type BootstrapState,
 } from "@/lib/api"
 
 const CODE_PATTERN = /^AL-[A-Z0-9]{4}-[A-Z0-9]{4}$/
@@ -77,9 +79,39 @@ export default function SetupPage() {
   const [status, setStatus] = useState<SetupStatus | null>(null)
   const [checking, setChecking] = useState(true)
 
-  // Per-tool install progress (keyed by tool name)
+  // Per-tool install progress (keyed by tool name) — recovery path when
+  // a single row's "Install" button is clicked manually after the
+  // bootstrap chain finishes.
   const [installing, setInstalling] = useState<Record<string, InstallProgress>>({})
   const installTimersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({})
+
+  // Auto-install bootstrap state — kicks off after activation succeeds.
+  // While running (or while needs_brew_terminal is true), the wizard
+  // renders a single full-screen overlay instead of the per-row
+  // checklist, so the user sees one progress view, not five.
+  const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null)
+  const bootstrapPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const pollBootstrapOnce = useCallback(async () => {
+    try {
+      const s = await getBootstrapStatus()
+      setBootstrap(s)
+      if (!s.running && !s.needs_brew_terminal) {
+        if (bootstrapPollRef.current) {
+          clearInterval(bootstrapPollRef.current)
+          bootstrapPollRef.current = null
+        }
+        // Once the chain finishes, refresh the full preflight so the
+        // per-row checklist reflects the new green state.
+        setTimeout(() => loadStatusRef.current?.(), 500)
+      }
+    } catch {
+      /* transient error — keep polling */
+    }
+  }, [])
+  // Use a ref so the bootstrap poller can call the latest loadStatus
+  // without recreating the callback every render.
+  const loadStatusRef = useRef<(() => Promise<void>) | null>(null)
 
   const loadStatus = useCallback(async () => {
     try {
@@ -91,6 +123,29 @@ export default function SetupPage() {
       setChecking(false)
     }
   }, [])
+  // Keep the ref in sync so the bootstrap poller (which doesn't re-run
+  // on each loadStatus identity change) always calls the live version.
+  useEffect(() => {
+    loadStatusRef.current = loadStatus
+  }, [loadStatus])
+
+  const kickOffBootstrap = useCallback(async () => {
+    try {
+      const res = await startBootstrap()
+      // nothing_to_do means the user already has every tool — skip the
+      // overlay entirely so the checklist renders unobstructed.
+      if (res.nothing_to_do) {
+        return
+      }
+      // Begin polling — the overlay shows up the first time we see
+      // running=true. Tear down on completion in pollBootstrapOnce.
+      pollBootstrapOnce()
+      if (bootstrapPollRef.current) clearInterval(bootstrapPollRef.current)
+      bootstrapPollRef.current = setInterval(pollBootstrapOnce, 1000)
+    } catch {
+      /* transient — user can manually click per-row install as a fallback */
+    }
+  }, [pollBootstrapOnce])
 
   // Initial fetch + poll every 3s so checks auto-refresh as the user
   // completes steps elsewhere (Settings edits, background installs).
@@ -104,8 +159,28 @@ export default function SetupPage() {
   useEffect(() => {
     return () => {
       Object.values(installTimersRef.current).forEach((t) => clearInterval(t))
+      if (bootstrapPollRef.current) clearInterval(bootstrapPollRef.current)
     }
   }, [])
+
+  // On mount, peek at bootstrap state — if a previous session left a
+  // chain running (user closed the window before it finished), resume
+  // polling so the overlay reappears instead of dumping the user into
+  // a half-installed checklist.
+  useEffect(() => {
+    let cancelled = false
+    getBootstrapStatus()
+      .then((s) => {
+        if (cancelled) return
+        if (s.running || s.needs_brew_terminal) {
+          setBootstrap(s)
+          if (bootstrapPollRef.current) clearInterval(bootstrapPollRef.current)
+          bootstrapPollRef.current = setInterval(pollBootstrapOnce, 1000)
+        }
+      })
+      .catch(() => { /* ignore */ })
+    return () => { cancelled = true }
+  }, [pollBootstrapOnce])
 
   // ── Activation code flow ──────────────────────────────────────────
 
@@ -119,6 +194,11 @@ export default function SetupPage() {
         setActivationSuccess(res.user || null)
         // Let the checklist poll pick up the new token state on next tick
         setTimeout(loadStatus, 500)
+        // Auto-bootstrap: install brew → node → openclaw + claude in
+        // dependency order. The wizard renders an overlay while the
+        // chain runs so the user doesn't have to click each install
+        // button manually. Per Pujith's feedback after v1.0.6.
+        kickOffBootstrap()
       } else {
         setActivationError(
           res.suggestion || res.message || "Activation failed — try again."
@@ -186,7 +266,11 @@ export default function SetupPage() {
 
   // ── Derived state ─────────────────────────────────────────────────
 
-  const checks = status?.checks || []
+  // Filter out checks the backend explicitly marked hidden — used today
+  // for the OpenClaw Pro row when openclaw CLI isn't installed yet
+  // (otherwise users see two consecutive rows about the same missing
+  // tool, which Pujith found confusing on v1.0.6).
+  const checks = (status?.checks || []).filter((c) => !c.hidden)
   const tokenCheck = checks.find((c) => c.id === "token")
   const hasToken = tokenCheck?.ok === true
   const otherChecks = checks.filter((c) => c.id !== "token")
@@ -205,6 +289,13 @@ export default function SetupPage() {
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     )
+  }
+
+  // Bootstrap takes over the page while it's running. Once it finishes
+  // (or short-circuits to nothing_to_do), we fall through to the normal
+  // checklist render and the user finishes setup the usual way.
+  if (bootstrap && (bootstrap.running || bootstrap.needs_brew_terminal)) {
+    return <BootstrapOverlay state={bootstrap} />
   }
 
   return (
@@ -348,6 +439,107 @@ export default function SetupPage() {
               </button>
             </div>
           </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Bootstrap overlay ───────────────────────────────────────────────
+//
+// Single full-screen view that takes over /setup while the post-
+// activation install chain is running. Shows a vertical stepper of the
+// planned tools, a spinner on the current step, a checkmark on
+// completed ones, and a tail of the live install log. If brew is
+// missing, the chain spawns Terminal.app via osascript and shows a
+// banner instructing the user to enter their password there — the
+// wizard polls and resumes automatically once brew lands on PATH.
+
+const BOOTSTRAP_LABELS: Record<string, string> = {
+  brew: "Homebrew (package manager)",
+  node: "Node.js + npm",
+  openclaw: "OpenClaw CLI",
+  claude: "Claude Code CLI",
+}
+
+function BootstrapOverlay({ state }: { state: BootstrapState }) {
+  const completed = new Set(state.completed)
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background p-6">
+      <div className="w-full max-w-2xl rounded-xl border border-border bg-card p-8 shadow-lg">
+        <div className="mb-6 flex items-center justify-center">
+          <span className="bg-gradient-to-r from-primary to-[#60a5fa] bg-clip-text text-3xl font-bold text-transparent">
+            ApplyLoop
+          </span>
+        </div>
+
+        <div className="mb-4 text-center">
+          <h2 className="text-lg font-semibold text-foreground">
+            Setting up your machine
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Installing the tools ApplyLoop needs to apply to jobs on your behalf.
+            This is a one-time setup — usually under 5 minutes.
+          </p>
+        </div>
+
+        {state.needs_brew_terminal && (
+          <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-100">
+            <Terminal className="h-4 w-4 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium">Terminal opened — please enter your password</p>
+              <p className="mt-0.5 text-xs">
+                Homebrew installation needs admin permission. Find the Terminal
+                window we just opened, type your Mac password when prompted,
+                and we&apos;ll continue automatically once it&apos;s done.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <ol className="mb-6 space-y-2.5">
+          {state.plan.map((tool) => {
+            const isDone = completed.has(tool)
+            const isCurrent = state.current === tool
+            return (
+              <li key={tool} className="flex items-center gap-3 rounded-lg border border-border bg-secondary/20 p-3">
+                <span className="flex h-6 w-6 items-center justify-center">
+                  {isDone ? (
+                    <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                  ) : isCurrent ? (
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  ) : (
+                    <span className="h-2.5 w-2.5 rounded-full border border-muted-foreground/50" />
+                  )}
+                </span>
+                <span className={isCurrent ? "text-sm font-medium text-foreground" : "text-sm text-muted-foreground"}>
+                  {BOOTSTRAP_LABELS[tool] || tool}
+                </span>
+              </li>
+            )
+          })}
+        </ol>
+
+        {state.failed && (
+          <div className="mb-4 flex items-start gap-3 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+            <XCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium">Failed during {BOOTSTRAP_LABELS[state.failed] || state.failed}</p>
+              <p className="mt-0.5 text-xs opacity-90">
+                Check the log below for details. You can manually install
+                the missing tool and reload this page to continue.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {state.log_tail.length > 0 && (
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">Install log</p>
+            <pre className="max-h-48 overflow-auto rounded-lg border border-border bg-secondary/30 p-3 text-[11px] leading-relaxed text-muted-foreground">
+              {state.log_tail.join("\n")}
+            </pre>
+          </div>
         )}
       </div>
     </div>

@@ -1,15 +1,16 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import {
   getProfile, updateProfile, getPreferences, updatePreferences,
-  listResumes, uploadResume, type ResumeRow,
+  listResumes, uploadResume, getSetupStatus, type ResumeRow,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
   Save, Loader2, Check, User, Briefcase, Target, Key,
-  AlertTriangle, Sparkles, FileText, Copy, Upload, Download,
+  AlertTriangle, Sparkles, FileText, Copy, Upload, Download, ArrowLeft,
 } from "lucide-react"
 
 type Tab = "ai" | "personal" | "work" | "preferences" | "resume" | "auth"
@@ -123,7 +124,19 @@ function TextArea({
 }
 
 export default function SettingsPage() {
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState<Tab>("ai")
+  // Mid-setup users land here from the wizard's "Fill in profile" deep-link.
+  // We render a banner so they have a one-click way back to the checklist
+  // (the wizard wants them to come back once they're done editing).
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getSetupStatus()
+      .then((s) => { if (!cancelled) setSetupComplete(!!s.setup_complete) })
+      .catch(() => { if (!cancelled) setSetupComplete(null) })
+    return () => { cancelled = true }
+  }, [])
 
   // Honor ?tab=<id> so the /setup wizard can deep-link to the right tab.
   // Reading from window.location.search in a useEffect (instead of
@@ -414,6 +427,24 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <div className="space-y-6">
+        {setupComplete === false && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+              <span>
+                Setup isn&apos;t complete yet. Edit what you need here, then return
+                to the wizard to finish the remaining steps.
+              </span>
+            </div>
+            <button
+              onClick={() => router.push("/setup")}
+              className="flex items-center gap-1.5 rounded-md bg-amber-200 px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-300 dark:bg-amber-800 dark:text-amber-100 dark:hover:bg-amber-700"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Return to wizard
+            </button>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold text-foreground">Settings</h1>
           <div className="flex items-center gap-3">

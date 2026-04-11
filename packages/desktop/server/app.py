@@ -564,6 +564,29 @@ async def install_progress(tool: str = ""):
     return {"ok": True, **preflight.install_tool_status(tool)}
 
 
+@app.post("/api/setup/auto-install")
+async def auto_install():
+    """Kick off the post-activation bootstrap chain.
+
+    Walks the install dependency graph (brew → node → openclaw, brew →
+    claude), runs each missing step in order, and streams progress to a
+    single bootstrap.log + a rolling tail in memory. The wizard polls
+    /api/setup/auto-install/status until running=False.
+
+    Idempotent: calling this while a bootstrap is already running just
+    returns the current plan with already_running=true. Calling it when
+    everything's already installed returns nothing_to_do=true so the UI
+    skips the overlay.
+    """
+    return preflight.start_bootstrap()
+
+
+@app.get("/api/setup/auto-install/status")
+async def auto_install_status():
+    """Snapshot of the bootstrap chain for the wizard's polling overlay."""
+    return preflight.bootstrap_status()
+
+
 @app.post("/api/setup/clear-reauth")
 async def clear_reauth():
     """Delete the .needs-reauth marker — called after a successful re-activate."""

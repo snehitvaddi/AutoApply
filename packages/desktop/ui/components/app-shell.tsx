@@ -22,6 +22,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const isSetupRoute = pathname?.startsWith("/setup") ?? false
+  // /settings is also allowed during incomplete-setup mode so the wizard's
+  // "Fill in profile" / "Upload resume" / "Set preferences" deep-links don't
+  // trigger an instant bounce back to /setup. The settings page itself shows
+  // a "return to wizard" banner when setup is not yet complete.
+  const isAllowedDuringSetup =
+    isSetupRoute || (pathname?.startsWith("/settings") ?? false)
 
   // First-run setup check: block the main UI and route to /setup if the
   // desktop isn't provisioned with a valid worker token. Re-runs every 15s
@@ -38,7 +44,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             setSetupState("ok")
           } else {
             setSetupState("needed")
-            if (!isSetupRoute) router.replace("/setup")
+            if (!isAllowedDuringSetup) router.replace("/setup")
           }
         })
         .catch(() => {
@@ -51,7 +57,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       cancelled = true
       clearInterval(interval)
     }
-  }, [isSetupRoute, router])
+  }, [isAllowedDuringSetup, router])
 
   const refreshSessions = useCallback(async () => {
     try {
