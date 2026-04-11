@@ -157,6 +157,25 @@ async def auth_status():
         return {"authenticated": False, "error": "Invalid token"}
 
 
+@app.get("/api/auth/state")
+async def auth_state():
+    """Report the desktop's view of whether its worker token is still valid.
+
+    Flipped to "revoked" by stats._proxy the first time the remote API
+    returns 401/403 on a proxy call. The UI polls this and redirects to
+    /setup when the state changes away from "ok".
+    """
+    token = load_token()
+    if not token:
+        return {"status": "no_token"}
+    state = stats.get_auth_state()
+    return {
+        "status": state.get("status", "unknown"),
+        "last_checked": state.get("last_checked"),
+        "last_error": state.get("last_error"),
+    }
+
+
 @app.post("/api/auth/token")
 async def set_token(body: dict):
     """Save API token to disk."""

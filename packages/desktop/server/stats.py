@@ -12,6 +12,7 @@ so we use load_profile to get basic user data.
 from __future__ import annotations
 
 import logging
+import time
 import httpx
 from .config import APP_URL, load_token
 
@@ -19,12 +20,45 @@ logger = logging.getLogger(__name__)
 PROXY_URL = f"{APP_URL}/api/worker/proxy"
 TIMEOUT = 30.0
 
+# Global auth state. Flips to "revoked" the first time the server rejects
+# our worker token with 401/403 — the UI polls /api/auth/state and redirects
+# the user to /setup when this happens, instead of silently showing empty
+# dashboards forever.
+_auth_state: dict = {
+    "status": "ok",       # "ok" | "revoked" | "unknown"
+    "last_checked": 0.0,
+    "last_error": None,
+}
+
+
+def get_auth_state() -> dict:
+    """Expose the latest auth state to the API layer."""
+    return dict(_auth_state)
+
+
+def _mark_auth_ok() -> None:
+    _auth_state["status"] = "ok"
+    _auth_state["last_checked"] = time.time()
+    _auth_state["last_error"] = None
+
+
+def _mark_auth_revoked(reason: str) -> None:
+    _auth_state["status"] = "revoked"
+    _auth_state["last_checked"] = time.time()
+    _auth_state["last_error"] = reason
+    logger.warning(f"Worker token revoked/invalid: {reason}")
+
 
 async def _proxy(action: str, params: dict | None = None) -> dict:
-    """Call the worker proxy endpoint with X-Worker-Token."""
+    """Call the worker proxy endpoint with X-Worker-Token.
+
+    On 401/403 we explicitly surface a "TOKEN_REVOKED" sentinel and flip
+    the global auth state so the desktop UI can redirect to /setup.
+    """
     token = load_token()
     if not token:
-        return {"error": "No API token configured"}
+        _mark_auth_revoked("no_token")
+        return {"error": "No API token configured", "auth": "no_token"}
     headers = {"X-Worker-Token": token}
     payload: dict = {"action": action}
     if params:
@@ -32,8 +66,15 @@ async def _proxy(action: str, params: dict | None = None) -> dict:
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             resp = await client.post(PROXY_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            return resp.json()
+        if resp.status_code in (401, 403):
+            _mark_auth_revoked(f"HTTP {resp.status_code}")
+            return {"error": "TOKEN_REVOKED", "auth": "revoked", "status": resp.status_code}
+        resp.raise_for_status()
+        _mark_auth_ok()
+        return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.debug(f"Proxy {action} HTTP error: {e}")
+        return {"error": str(e)}
     except Exception as e:
         logger.debug(f"Proxy {action} failed: {e}")
         return {"error": str(e)}
