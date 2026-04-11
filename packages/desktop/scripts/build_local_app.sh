@@ -63,9 +63,34 @@ cat > "$APP_DIR/Contents/MacOS/launcher" <<'EOF'
 APPLYLOOP_HOME="${APPLYLOOP_HOME:-$HOME/.applyloop}"
 LOG="$HOME/.autoapply/desktop.log"
 mkdir -p "$HOME/.autoapply" "$HOME/.autoapply/workspace"
+
+# CRITICAL: when an .app is launched from Finder/Dock, macOS gives the
+# process a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin) — NOT the PATH
+# from the user's interactive shell. That means /opt/homebrew/bin and
+# /usr/local/bin are missing, so the preflight check's
+# `shutil.which("npm")` / `which("openclaw")` returns None even though
+# both binaries exist on disk. Source brew's shellenv to fix it before
+# the python process inherits our environment.
+if [[ -x /opt/homebrew/bin/brew ]]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -x /usr/local/bin/brew ]]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
+# Also include the npm global bin (where openclaw lands) and ~/.local/bin
+# for the applyloop CLI shim.
+if command -v npm >/dev/null 2>&1; then
+  NPM_PREFIX="$(npm config get prefix 2>/dev/null || true)"
+  if [[ -n "$NPM_PREFIX" && -d "$NPM_PREFIX/bin" ]]; then
+    PATH="$NPM_PREFIX/bin:$PATH"
+  fi
+fi
+PATH="$HOME/.local/bin:$PATH"
+export PATH
+
 {
   echo "[launcher] $(date '+%Y-%m-%d %H:%M:%S') starting"
   echo "[launcher] APPLYLOOP_HOME=$APPLYLOOP_HOME"
+  echo "[launcher] PATH=$PATH"
 } >> "$LOG" 2>&1
 
 if [[ ! -x "$APPLYLOOP_HOME/venv/bin/python3" ]]; then

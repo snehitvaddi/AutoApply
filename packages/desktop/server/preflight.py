@@ -194,6 +194,17 @@ _CLAUDE_FALLBACK_PATHS = (
     "~/.npm-global/bin/claude",
 )
 
+# Same idea for openclaw — when the wizard is launched from Finder, the
+# .app inherits a bare PATH that's missing /opt/homebrew/bin, so we have
+# to look there explicitly. The launcher script also sources brew's
+# shellenv, but this is the belt-and-suspenders.
+_OPENCLAW_FALLBACK_PATHS = (
+    "/opt/homebrew/bin/openclaw",
+    "/usr/local/bin/openclaw",
+    "~/.npm-global/bin/openclaw",
+    "/opt/homebrew/lib/node_modules/.bin/openclaw",
+)
+
 
 def _find_binary(name: str, fallbacks: tuple[str, ...] = ()) -> str | None:
     """PATH lookup + fallback list. Mirrors pty_terminal.PTYSession._find_claude."""
@@ -235,7 +246,7 @@ def _check_claude_cli() -> dict:
 def _check_openclaw_cli() -> dict:
     """6. `openclaw` CLI on PATH. Every ATS applier shells out to
     `openclaw browser …` — no CLI = no applies."""
-    found = _find_binary("openclaw")
+    found = _find_binary("openclaw", _OPENCLAW_FALLBACK_PATHS)
     if found:
         return {
             "id": "openclaw_cli",
@@ -269,7 +280,7 @@ def _check_openclaw_gateway() -> dict:
     service isn't installed, so this check is OPTIONAL — failure shows
     a hint, not a blocker.
     """
-    openclaw = _find_binary("openclaw")
+    openclaw = _find_binary("openclaw", _OPENCLAW_FALLBACK_PATHS)
     if not openclaw:
         # Covered by _check_openclaw_cli — hide so the wizard doesn't show
         # two consecutive rows about the same missing tool.
@@ -556,9 +567,19 @@ def start_install(tool: str) -> dict:
 
     # brew dependency — if the user clicks "install claude" and brew
     # isn't on PATH, fail fast with needs_brew so the UI can bootstrap.
+    # IMPORTANT: shutil.which alone is wrong here because Finder-launched
+    # .app processes have a stripped PATH that doesn't include
+    # /opt/homebrew/bin. Look in the brew bin dirs explicitly before
+    # declaring "not installed."
+    _BREW_BIN_PATHS = ("/opt/homebrew/bin", "/usr/local/bin")
+    def _brew_aware_which(name: str) -> bool:
+        if shutil.which(name):
+            return True
+        return any(os.access(f"{p}/{name}", os.X_OK) for p in _BREW_BIN_PATHS)
+
     if tool != "brew" and system == "Darwin":
         first_arg = cmds[system][0]
-        if first_arg in ("brew", "npm") and not shutil.which(first_arg):
+        if first_arg in ("brew", "npm") and not _brew_aware_which(first_arg):
             return {
                 "ok": False,
                 "error": f"required tool {first_arg!r} is not installed on this Mac",
@@ -627,7 +648,7 @@ def _bootstrap_post_check(tool: str) -> bool:
     if tool == "claude":
         return _find_binary("claude", _CLAUDE_FALLBACK_PATHS) is not None
     if tool == "openclaw":
-        return _find_binary("openclaw") is not None
+        return _find_binary("openclaw", _OPENCLAW_FALLBACK_PATHS) is not None
     return False
 
 
