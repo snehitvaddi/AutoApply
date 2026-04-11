@@ -137,7 +137,16 @@ class PTYSession:
         # Use the configured ApplyLoop workspace. (Legacy ~/.openclaw fallback
         # removed — honoring it broke multi-tenancy because every instance
         # would fight over the same directory regardless of APPLYLOOP_WORKSPACE.)
-        if WORKSPACE_DIR.exists():
+        # Prefer the install dir ($APPLYLOOP_HOME or ~/.applyloop) so relative
+        # paths in AGENTS.md / SOUL.md resolve — that's where the script,
+        # worker, profile.json, and .env all live. Fall back to WORKSPACE_DIR
+        # and finally $HOME if the install dir doesn't exist.
+        applyloop_home = os.environ.get(
+            "APPLYLOOP_HOME", os.path.expanduser("~/.applyloop")
+        )
+        if os.path.isdir(applyloop_home):
+            cwd = applyloop_home
+        elif WORKSPACE_DIR.exists():
             cwd = str(WORKSPACE_DIR)
         else:
             try:
@@ -160,13 +169,21 @@ class PTYSession:
         child_pid, master_fd = pty.fork()
 
         if child_pid == 0:
-            # Child process — exec claude with initial instruction as prompt
+            # Child process — exec claude with initial instruction as prompt.
+            # The prompt points at AGENTS.md + SOUL.md in the install dir
+            # ($APPLYLOOP_HOME). install.sh generates AGENTS.md with absolute
+            # paths to profile.json, .env, worker code, and configured
+            # integrations, plus the user's name for a personalized greeting.
             os.chdir(cwd)
             initial_prompt = (
-                "Read CLAUDE.md and SOUL.md. You are the ApplyLoop job bot. "
-                "Start immediately: scout for new AI/ML jobs across all sources, "
-                "filter by preferences, then apply. Run: python3 scripts/auto_loop.py. "
-                "Do not wait for further instructions — be autonomous."
+                f"Read ./AGENTS.md for your full context and system status. "
+                f"Then read ./packages/worker/SOUL.md for the scout→apply playbook. "
+                f"Read ./profile.json to know who the user is. "
+                f"Greet the user by first name (from profile.json personal.first_name) ONCE, "
+                f"describe your capabilities briefly, then WAIT for commands. "
+                f"DO NOT auto-start the loop — the user must say 'start' or 'scout'. "
+                f"If profile.json is missing, tell the user the install is incomplete "
+                f"and point them at `applyloop update`."
             )
             os.execvpe(claude, [claude, "--dangerously-skip-permissions", initial_prompt], env)
         else:

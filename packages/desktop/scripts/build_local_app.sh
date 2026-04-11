@@ -87,10 +87,25 @@ fi
 PATH="$HOME/.local/bin:$PATH"
 export PATH
 
+# Source ~/.applyloop/.env so WORKER_TOKEN, SUPABASE_*, TELEGRAM_*,
+# AGENTMAIL_API_KEY, FINETUNE_RESUME_API_KEY, etc. are visible to the
+# python process and every subprocess it spawns (worker, claude, openclaw).
+# Written by install.sh Phase D; may not exist if the user ran the old
+# v1.0.8 installer, in which case we launch with just PATH.
+if [[ -f "$APPLYLOOP_HOME/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$APPLYLOOP_HOME/.env"
+  set +a
+fi
+
 {
   echo "[launcher] $(date '+%Y-%m-%d %H:%M:%S') starting"
   echo "[launcher] APPLYLOOP_HOME=$APPLYLOOP_HOME"
   echo "[launcher] PATH=$PATH"
+  if [[ -f "$APPLYLOOP_HOME/.env" ]]; then
+    echo "[launcher] sourced .env (WORKER_TOKEN ${WORKER_TOKEN:+set}${WORKER_TOKEN:-MISSING})"
+  fi
 } >> "$LOG" 2>&1
 
 if [[ ! -x "$APPLYLOOP_HOME/venv/bin/python3" ]]; then

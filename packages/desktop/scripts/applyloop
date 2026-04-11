@@ -99,12 +99,27 @@ cmd_update() {
 
 cmd_uninstall() {
   cmd_stop || true
+
+  # Tear down the auto-update launchd plist (Phase F in install.sh). Silently
+  # succeed if it was never loaded, or if launchctl bootout is missing (old
+  # macOS). Do this before rm so launchctl can still find the file path.
+  local plist="$HOME/Library/LaunchAgents/com.applyloop.update.plist"
+  if [[ -f "$plist" ]]; then
+    log "Unloading launchd: com.applyloop.update"
+    launchctl bootout "gui/$(id -u)" "$plist" 2>/dev/null || \
+      launchctl unload "$plist" 2>/dev/null || true
+    rm -f "$plist"
+  fi
+
   log "Removing $APPLYLOOP_HOME"
   rm -rf "$APPLYLOOP_HOME"
   log "Removing $APPLYLOOP_APP"
   rm -rf "$APPLYLOOP_APP"
   log "Removing $HOME/.local/bin/applyloop"
   rm -f "$HOME/.local/bin/applyloop"
+  # Also drop the worker token from the runtime workspace so a subsequent
+  # fresh install doesn't inherit a stale token.
+  rm -f "$HOME/.autoapply/workspace/.api-token"
   echo
   echo "Uninstalled. (Workspace at ~/.autoapply preserved — delete manually for a clean wipe.)"
 }
