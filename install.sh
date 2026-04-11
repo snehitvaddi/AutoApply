@@ -41,6 +41,14 @@ APPLYLOOP_HOME="${APPLYLOOP_HOME:-$HOME/.applyloop}"
 REPO_URL="${APPLYLOOP_REPO:-https://github.com/snehitvaddi/AutoApply.git}"
 BRANCH="${APPLYLOOP_BRANCH:-main}"
 
+# Pin npm's download cache to a directory inside $APPLYLOOP_HOME so we
+# don't inherit a global /tmp/npm-cache or ~/.npm that may have
+# root-owned files from a prior sudo install. Same isolation principle
+# as the Python venv: nothing in the install touches state we don't own.
+# Pujith hit `EACCES /tmp/npm-cache` on v1.0.8 — this is the fix.
+export NPM_CONFIG_CACHE="$APPLYLOOP_HOME/.npm-cache"
+mkdir -p "$NPM_CONFIG_CACHE"
+
 # Colors for the summary (fall back to no-op on dumb terminals)
 if [[ -t 1 ]]; then
   C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_GREEN=$'\033[32m'
@@ -141,7 +149,8 @@ ensure_openclaw() {
     log "openclaw already installed (npm global)"
   else
     log "Installing openclaw via $NPM"
-    "$NPM" install -g openclaw || warn "npm install -g openclaw failed — wizard will retry later"
+    "$NPM" install -g openclaw --cache "$NPM_CONFIG_CACHE" --no-fund --no-audit \
+      || warn "npm install -g openclaw failed — wizard will retry later"
   fi
 
   # OpenClaw is open source — no Pro tier, no subscription. The "gateway"
@@ -208,10 +217,12 @@ log "Installing desktop + worker python deps (single pip resolver pass)"
 log "Building static Next.js UI export (npm install + npm run build)"
 (
   cd "$APPLYLOOP_HOME/packages/desktop/ui"
-  # Invoke brew's npm explicitly so NVM/asdf/system node can't interfere
+  # Invoke brew's npm explicitly so NVM/asdf/system node can't interfere.
+  # NPM_CONFIG_CACHE is exported above so npm uses our isolated cache,
+  # not whatever the user had configured globally.
   NPM_BIN="$(brew --prefix node)/bin/npm"
   if [[ ! -x "$NPM_BIN" ]]; then NPM_BIN="npm"; fi
-  "$NPM_BIN" install
+  "$NPM_BIN" install --cache "$NPM_CONFIG_CACHE" --no-fund --no-audit
   "$NPM_BIN" run build
 )
 

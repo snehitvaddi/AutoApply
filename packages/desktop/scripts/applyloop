@@ -14,6 +14,11 @@ APPLYLOOP_APP="${APPLYLOOP_APP:-/Applications/ApplyLoop.app}"
 APPLYLOOP_BRANCH="${APPLYLOOP_BRANCH:-main}"
 PORT="${APPLYLOOP_PORT:-18790}"
 LOG="$HOME/.autoapply/desktop.log"
+# Match install.sh: pin npm cache inside $APPLYLOOP_HOME so `applyloop
+# update` doesn't trip on a global /tmp/npm-cache or ~/.npm with
+# foreign-owned files.
+export NPM_CONFIG_CACHE="$APPLYLOOP_HOME/.npm-cache"
+mkdir -p "$NPM_CONFIG_CACHE" 2>/dev/null || true
 
 log() { echo "[applyloop] $*"; }
 
@@ -78,7 +83,7 @@ cmd_update() {
   log "Rebuilding static UI"
   (
     cd "$APPLYLOOP_HOME/packages/desktop/ui"
-    npm install --silent
+    npm install --silent --cache "$NPM_CONFIG_CACHE" --no-fund --no-audit
     npm run build --silent
   )
 
