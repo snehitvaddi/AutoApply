@@ -1,27 +1,45 @@
 "use client"
 
 /**
- * First-run setup wizard.
+ * First-run + ongoing setup wizard.
  *
- * Shown automatically when the desktop server reports setup_complete=false.
- * User enters their activation code (AL-XXXX-XXXX) → we POST to /api/setup/activate
- * on the local server, which redeems with the cloud, saves the worker token,
- * downloads the default resume, and stashes profile.json. On success we redirect
- * to the main dashboard.
+ * v1.0.4: checklist-based. Calls /api/setup/status, which returns the
+ * full preflight response (8 checks). Renders one row per check with
+ * inline fix buttons:
+ *   - Cloud data rows (profile/resume/preferences) → deep-link to
+ *     Settings tabs via ?tab= query param
+ *   - Local binary rows (claude_cli/openclaw_cli) → POST /api/setup/
+ *     install-tool to kick off a background brew/npm install,
+ *     streams the log, flips green on success
+ *   - Token row → the existing activation-code input (shown full-width
+ *     on the first step before everything else)
+ *   - openclaw_gateway row → opens openclaw.com/pricing in the user's
+ *     default browser
+ *   - git row is optional and shown dimmed
+ *
+ * The page polls /api/setup/status every 3 seconds so when the user
+ * completes a step in another tab (or finishes a background install)
+ * the row auto-flips to green without manual refresh.
+ *
+ * The "Start ApplyLoop" button at the bottom is disabled until every
+ * non-optional check is green. Click routes to / (dashboard).
  */
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, CheckCircle2, AlertTriangle, KeyRound } from "lucide-react"
-import { activateWithCode, getSetupStatus } from "@/lib/api"
+import {
+  Loader2, CheckCircle2, XCircle, AlertTriangle, KeyRound, Rocket,
+  Download, ExternalLink, User, FileText, Target, Terminal, Zap, Package,
+} from "lucide-react"
+import {
+  activateWithCode, getSetupStatus, installTool, getInstallProgress,
+  type PreflightCheck, type SetupStatus, type InstallProgress,
+} from "@/lib/api"
 
 const CODE_PATTERN = /^AL-[A-Z0-9]{4}-[A-Z0-9]{4}$/
 
 function formatCodeInput(raw: string): string {
-  // Uppercase, strip anything that isn't alnum-or-dash.
   const cleaned = raw.toUpperCase().replace(/[^A-Z0-9-]/g, "")
-  // Strip all dashes so we can re-insert them at the right spots.
   const compact = cleaned.replace(/-/g, "")
-  // Prefix AL if the user didn't type it.
   let body = compact
   if (body.startsWith("AL")) body = body.slice(2)
   const seg1 = body.slice(0, 4)
@@ -31,63 +49,157 @@ function formatCodeInput(raw: string): string {
   return `AL-${seg1}-${seg2}`
 }
 
+// Icon per check id — keeps the checklist visually scannable.
+const CHECK_ICONS: Record<string, typeof User> = {
+  token: KeyRound,
+  profile: User,
+  resume: FileText,
+  preferences: Target,
+  claude_cli: Terminal,
+  openclaw_cli: Package,
+  openclaw_gateway: Zap,
+  git: Download,
+}
+
 export default function SetupPage() {
   const router = useRouter()
+
+  // Activation code state (shown on Step 1 only when no token yet)
   const [code, setCode] = useState("AL-")
-  const [loading, setLoading] = useState(false)
+  const [activating, setActivating] = useState(false)
+  const [activationError, setActivationError] = useState<string | null>(null)
+  const [activationSuccess, setActivationSuccess] = useState<{
+    email?: string | null
+    name?: string | null
+  } | null>(null)
+
+  // Full preflight state
+  const [status, setStatus] = useState<SetupStatus | null>(null)
   const [checking, setChecking] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<{ email?: string | null; name?: string | null } | null>(
-    null
-  )
 
-  // If we're already provisioned, bounce straight to the dashboard.
-  useEffect(() => {
-    let cancelled = false
-    getSetupStatus()
-      .then((res) => {
-        if (cancelled) return
-        if (res.setup_complete) {
-          router.replace("/")
-          return
-        }
-        setChecking(false)
-      })
-      .catch(() => {
-        if (!cancelled) setChecking(false)
-      })
-    return () => {
-      cancelled = true
+  // Per-tool install progress (keyed by tool name)
+  const [installing, setInstalling] = useState<Record<string, InstallProgress>>({})
+  const installTimersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({})
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const res = await getSetupStatus()
+      setStatus(res)
+    } catch {
+      /* ignore transient errors */
+    } finally {
+      setChecking(false)
     }
-  }, [router])
+  }, [])
 
-  const onSubmit = useCallback(
-    async (e?: React.FormEvent) => {
-      if (e) e.preventDefault()
-      setError(null)
-      setLoading(true)
-      try {
-        const res = await activateWithCode(code)
-        if (res.ok) {
-          setSuccess(res.user || null)
-          setTimeout(() => router.replace("/"), 1800)
-        } else {
-          setError(res.suggestion || res.message || "Activation failed — try again.")
-        }
-      } catch (err) {
-        setError(
-          `Can't reach the ApplyLoop server: ${err instanceof Error ? err.message : String(err)}`
+  // Initial fetch + poll every 3s so checks auto-refresh as the user
+  // completes steps elsewhere (Settings edits, background installs).
+  useEffect(() => {
+    loadStatus()
+    const interval = setInterval(loadStatus, 3000)
+    return () => clearInterval(interval)
+  }, [loadStatus])
+
+  // Clean up install progress pollers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(installTimersRef.current).forEach((t) => clearInterval(t))
+    }
+  }, [])
+
+  // ── Activation code flow ──────────────────────────────────────────
+
+  const onActivate = useCallback(async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    setActivationError(null)
+    setActivating(true)
+    try {
+      const res = await activateWithCode(code)
+      if (res.ok) {
+        setActivationSuccess(res.user || null)
+        // Let the checklist poll pick up the new token state on next tick
+        setTimeout(loadStatus, 500)
+      } else {
+        setActivationError(
+          res.suggestion || res.message || "Activation failed — try again."
         )
-      } finally {
-        setLoading(false)
       }
-    },
-    [code, router]
-  )
+    } catch (err) {
+      setActivationError(
+        `Can't reach the ApplyLoop server: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      )
+    } finally {
+      setActivating(false)
+    }
+  }, [code, loadStatus])
 
-  const isValid = CODE_PATTERN.test(code)
+  // ── Install flow ──────────────────────────────────────────────────
 
-  if (checking) {
+  const startInstall = useCallback(async (tool: "claude" | "openclaw" | "git" | "brew") => {
+    setInstalling((prev) => ({
+      ...prev,
+      [tool]: { ok: true, running: true, exit_code: null, last_lines: [], started: true },
+    }))
+    try {
+      const res = await installTool(tool)
+      if (!res.ok) {
+        setInstalling((prev) => ({
+          ...prev,
+          [tool]: {
+            ok: false, running: false, exit_code: 1,
+            last_lines: [res.error || "install failed to start"],
+            started: true,
+          },
+        }))
+        return
+      }
+      // Poll install progress every 500ms until it stops running
+      const poll = async () => {
+        try {
+          const p = await getInstallProgress(tool)
+          setInstalling((prev) => ({ ...prev, [tool]: p }))
+          if (!p.running) {
+            clearInterval(installTimersRef.current[tool])
+            delete installTimersRef.current[tool]
+            // Refresh the overall status so the row flips green
+            setTimeout(loadStatus, 500)
+          }
+        } catch {
+          /* ignore transient errors */
+        }
+      }
+      installTimersRef.current[tool] = setInterval(poll, 500)
+      poll()
+    } catch (err) {
+      setInstalling((prev) => ({
+        ...prev,
+        [tool]: {
+          ok: false, running: false, exit_code: 1,
+          last_lines: [err instanceof Error ? err.message : String(err)],
+          started: true,
+        },
+      }))
+    }
+  }, [loadStatus])
+
+  // ── Derived state ─────────────────────────────────────────────────
+
+  const checks = status?.checks || []
+  const tokenCheck = checks.find((c) => c.id === "token")
+  const hasToken = tokenCheck?.ok === true
+  const otherChecks = checks.filter((c) => c.id !== "token")
+  const blockingFailed = checks.filter((c) => !c.ok && !c.optional && c.id !== "token")
+  const allReady = status?.setup_complete === true
+
+  const goToSettings = (tab: string) => {
+    router.push(`/settings?tab=${tab}`)
+  }
+
+  // ── Render ────────────────────────────────────────────────────────
+
+  if (checking && !status) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -95,27 +207,9 @@ export default function SetupPage() {
     )
   }
 
-  if (success) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background p-6">
-        <div className="w-full max-w-md rounded-xl border border-border bg-card p-8 text-center shadow-lg">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-success/10">
-            <CheckCircle2 className="h-8 w-8 text-success" />
-          </div>
-          <h1 className="mt-4 text-xl font-semibold text-foreground">
-            Welcome{success.name ? `, ${success.name}` : ""}!
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Activation successful. Loading your dashboard...
-          </p>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-6">
-      <div className="w-full max-w-md rounded-xl border border-border bg-card p-8 shadow-lg">
+      <div className="w-full max-w-2xl rounded-xl border border-border bg-card p-8 shadow-lg">
         {/* Logo */}
         <div className="mb-6 flex items-center justify-center">
           <span className="bg-gradient-to-r from-primary to-[#60a5fa] bg-clip-text text-3xl font-bold text-transparent">
@@ -123,68 +217,294 @@ export default function SetupPage() {
           </span>
         </div>
 
-        <div className="mb-6 flex items-start gap-3 rounded-lg border border-border bg-secondary/30 p-3">
-          <KeyRound className="h-4 w-4 flex-shrink-0 text-primary" />
-          <div className="text-xs text-muted-foreground">
-            <p className="font-medium text-foreground">Welcome! One-time setup</p>
-            <p className="mt-0.5">
-              Paste the activation code the admin sent you on Telegram or email.
-            </p>
-          </div>
-        </div>
-
-        <form onSubmit={onSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">
-              Activation code
-            </label>
-            <input
-              value={code}
-              onChange={(e) => setCode(formatCodeInput(e.target.value))}
-              placeholder="AL-XXXX-XXXX"
-              autoFocus
-              spellCheck={false}
-              autoComplete="off"
-              className="w-full rounded-lg border border-border bg-background px-4 py-3 text-center font-mono text-lg tracking-widest text-foreground shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-            />
-          </div>
-
-          {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-              <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-              <span>{error}</span>
+        {/* Step 1: Activation (full-width, shown when no token) */}
+        {!hasToken && !activationSuccess && (
+          <>
+            <div className="mb-6 flex items-start gap-3 rounded-lg border border-border bg-secondary/30 p-3">
+              <KeyRound className="h-4 w-4 flex-shrink-0 text-primary" />
+              <div className="text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">Step 1 of 2 — Activate</p>
+                <p className="mt-0.5">
+                  Paste the activation code the admin sent you on Telegram or email.
+                  We&apos;ll check the rest of your setup after that.
+                </p>
+              </div>
             </div>
-          )}
 
-          <button
-            type="submit"
-            disabled={!isValid || loading}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Activating...
-              </>
-            ) : (
-              "Activate"
-            )}
-          </button>
-        </form>
+            <form onSubmit={onActivate} className="space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  Activation code
+                </label>
+                <input
+                  value={code}
+                  onChange={(e) => setCode(formatCodeInput(e.target.value))}
+                  placeholder="AL-XXXX-XXXX"
+                  autoFocus
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-border bg-background px-4 py-3 text-center font-mono text-lg tracking-widest text-foreground shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
 
-        <p className="mt-6 text-center text-xs text-muted-foreground">
-          Don&apos;t have a code?{" "}
-          <a
-            href="https://applyloop.vercel.app/dashboard"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary hover:underline"
-          >
-            Check your dashboard
-          </a>{" "}
-          or ask the admin.
-        </p>
+              {activationError && (
+                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                  <span>{activationError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={!CODE_PATTERN.test(code) || activating}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {activating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Activating...
+                  </>
+                ) : (
+                  "Activate"
+                )}
+              </button>
+            </form>
+
+            {/* Show the checklist below even when no token, so the user
+                sees what's coming next. Local binaries can be installed
+                in parallel with activation. */}
+            <div className="mt-8 border-t border-border pt-6">
+              <p className="mb-3 text-xs font-medium text-muted-foreground">
+                Step 2 — these will be checked after activation
+              </p>
+              <ChecklistRows
+                checks={otherChecks}
+                installing={installing}
+                onFix={(check) => handleFix(check, { goToSettings, startInstall })}
+                disabled={true}
+              />
+            </div>
+          </>
+        )}
+
+        {/* Activation just succeeded — brief celebration before the
+            checklist re-renders with the token check flipped green */}
+        {activationSuccess && !allReady && (
+          <div className="mb-6 rounded-lg border border-success/30 bg-success/5 p-4">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="h-5 w-5 text-success" />
+              <div>
+                <p className="text-sm font-semibold text-foreground">
+                  Activated{activationSuccess.name ? `, ${activationSuccess.name}` : ""}!
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Checking the rest of your setup...
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Full checklist (shown once token is present) */}
+        {hasToken && (
+          <>
+            <div className="mb-6 flex items-start gap-3 rounded-lg border border-border bg-secondary/30 p-3">
+              <Rocket className="h-4 w-4 flex-shrink-0 text-primary" />
+              <div className="text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">Setup checklist</p>
+                <p className="mt-0.5">
+                  The apply loop will start automatically once every item below
+                  is green. Rows refresh every 3 seconds.
+                </p>
+              </div>
+            </div>
+
+            <ChecklistRows
+              checks={otherChecks}
+              installing={installing}
+              onFix={(check) => handleFix(check, { goToSettings, startInstall })}
+            />
+
+            {/* Bottom action row */}
+            <div className="mt-8 flex items-center justify-between gap-3 border-t border-border pt-6">
+              <div className="text-xs text-muted-foreground">
+                {allReady ? (
+                  <span className="text-success">
+                    All set — you&apos;re ready to launch.
+                  </span>
+                ) : (
+                  <span>
+                    {blockingFailed.length} item{blockingFailed.length === 1 ? "" : "s"} remaining
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => router.push("/")}
+                disabled={!allReady}
+                className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Rocket className="h-4 w-4" />
+                Start ApplyLoop
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
+}
+
+// ── Checklist row component ─────────────────────────────────────────
+
+function ChecklistRows({
+  checks,
+  installing,
+  onFix,
+  disabled,
+}: {
+  checks: PreflightCheck[]
+  installing: Record<string, InstallProgress>
+  onFix: (check: PreflightCheck) => void
+  disabled?: boolean
+}) {
+  return (
+    <ul className="space-y-2">
+      {checks.map((check) => {
+        const Icon = CHECK_ICONS[check.id] || FileText
+        const install = installing[check.id === "claude_cli" ? "claude" : check.id === "openclaw_cli" ? "openclaw" : check.id]
+        const installRunning = install?.running === true
+        return (
+          <li
+            key={check.id}
+            className={`rounded-lg border p-3 transition-colors ${
+              check.ok
+                ? "border-success/30 bg-success/5"
+                : check.optional
+                ? "border-border bg-background opacity-60"
+                : "border-border bg-background"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              {check.ok ? (
+                <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-success" />
+              ) : check.optional ? (
+                <AlertTriangle className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
+              ) : (
+                <XCircle className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
+              )}
+              <Icon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-foreground">
+                  {check.label}
+                  {check.optional && (
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                      optional
+                    </span>
+                  )}
+                </p>
+                <p className="truncate text-xs text-muted-foreground" title={check.detail}>
+                  {check.detail}
+                </p>
+              </div>
+              {!check.ok && !disabled && check.remediation && (
+                <FixButton
+                  check={check}
+                  running={installRunning}
+                  onClick={() => onFix(check)}
+                />
+              )}
+            </div>
+            {/* Streaming install log — visible while a subprocess is
+                running, collapses after success/failure. */}
+            {install && (install.running || install.exit_code !== null) && (
+              <div className="mt-2 ml-11">
+                <pre className="max-h-32 overflow-auto rounded bg-gray-900 p-2 text-[10px] text-green-400 font-mono whitespace-pre-wrap">
+{install.last_lines.slice(-8).join("\n") || (install.running ? "starting..." : "")}
+                </pre>
+                {!install.running && install.exit_code === 0 && (
+                  <p className="mt-1 text-[10px] text-success">Install complete.</p>
+                )}
+                {!install.running && install.exit_code !== 0 && install.exit_code !== null && (
+                  <p className="mt-1 text-[10px] text-destructive">
+                    Install failed (exit {install.exit_code}). Check log above.
+                  </p>
+                )}
+              </div>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function FixButton({
+  check,
+  running,
+  onClick,
+}: {
+  check: PreflightCheck
+  running: boolean
+  onClick: () => void
+}) {
+  if (running) {
+    return (
+      <span className="flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Installing...
+      </span>
+    )
+  }
+  const r = check.remediation
+  if (!r) return null
+
+  let label: React.ReactNode = "Fix"
+  if (r.type === "install") label = <><Download className="h-3 w-3" /> Install</>
+  else if (r.type === "link") label = <><ExternalLink className="h-3 w-3" /> Subscribe</>
+  else if (r.type === "route") label = "Fix →"
+
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+    >
+      {label}
+    </button>
+  )
+}
+
+// ── Dispatch a "fix" click to the right side-effect ─────────────────
+
+function handleFix(
+  check: PreflightCheck,
+  handlers: {
+    goToSettings: (tab: string) => void
+    startInstall: (tool: "claude" | "openclaw" | "git" | "brew") => void
+  }
+) {
+  const r = check.remediation
+  if (!r) return
+
+  if (r.type === "route") {
+    // /settings?tab=ai / /settings?tab=resume / /settings?tab=preferences
+    const match = r.target.match(/tab=(\w+)/)
+    if (match) {
+      handlers.goToSettings(match[1])
+    } else {
+      // Direct path
+      window.location.href = r.target
+    }
+  } else if (r.type === "install") {
+    // Map check id → install tool name (they differ: claude_cli → claude)
+    const toolMap: Record<string, "claude" | "openclaw" | "git" | "brew"> = {
+      claude_cli: "claude",
+      openclaw_cli: "openclaw",
+      git: "git",
+    }
+    const tool = toolMap[check.id]
+    if (tool) handlers.startInstall(tool)
+  } else if (r.type === "link") {
+    // Open in default browser via window.open
+    window.open(r.target, "_blank", "noopener,noreferrer")
+  }
 }

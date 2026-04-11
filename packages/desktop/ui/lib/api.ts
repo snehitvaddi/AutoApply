@@ -134,10 +134,66 @@ export async function focusBrowser() {
 
 // ── First-run setup ────────────────────────────────────────────────────────
 
+export interface PreflightCheck {
+  id:
+    | "token"
+    | "profile"
+    | "resume"
+    | "preferences"
+    | "claude_cli"
+    | "openclaw_cli"
+    | "openclaw_gateway"
+    | "git";
+  ok: boolean;
+  label: string;
+  detail: string;
+  remediation?: {
+    type: "route" | "install" | "link";
+    target: string;
+    command?: string;
+    fallback_url?: string;
+  };
+  optional?: boolean;
+}
+
 export interface SetupStatus {
   setup_complete: boolean;
-  reason?: "no_token" | "token_invalid" | "offline" | "token_revoked";
+  reason?: "no_token" | "token_invalid" | "offline" | "token_revoked" | string;
   detail?: string;
+  needs?: string[];
+  checks?: PreflightCheck[];
+}
+
+export interface InstallProgress {
+  ok: boolean;
+  running: boolean;
+  exit_code: number | null;
+  last_lines: string[];
+  started: boolean;
+  log_path?: string;
+}
+
+export async function installTool(
+  tool: "claude" | "openclaw" | "git" | "brew"
+) {
+  return apiFetch<{
+    ok: boolean;
+    error?: string;
+    pid?: number;
+    log_path?: string;
+    needs_brew?: boolean;
+    needs_node?: boolean;
+    already_running?: boolean;
+  }>("/setup/install-tool", {
+    method: "POST",
+    body: JSON.stringify({ tool }),
+  });
+}
+
+export async function getInstallProgress(tool: string) {
+  return apiFetch<InstallProgress>(
+    `/setup/install-progress?tool=${encodeURIComponent(tool)}`
+  );
 }
 
 export interface AuthState {

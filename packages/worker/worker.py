@@ -599,23 +599,84 @@ def main():
             time.sleep(5)
             continue
 
-        # Pre-flight resume check. The worker would previously claim a job,
-        # call download_resume() in the middle of its happy-path try block,
-        # catch the "No resume found" ValueError in the outer except, and
-        # mark the job FAILED forever. Net effect: a user with no resume
-        # watched 100% of their queue get burned on the first cycle, with
-        # no way to recover even after they uploaded one.
+        # ── Pre-flight: profile, preferences, resume ──────────────────
         #
-        # Now: probe download_resume FIRST. If the user has no resume on
-        # file, push the job back to 'pending' (re-claimable the moment
-        # they upload), surface the state via heartbeat + local SQLite
-        # status, and sleep 120s to avoid spinning. On upload success,
-        # the desktop's upload handler also auto-starts the PTY, so the
-        # apply loop picks up seamlessly on the next cycle.
+        # Before claiming expensive work, verify the user has the minimum
+        # data the appliers need. Any failure pushes the job BACK to
+        # 'pending' (not failed) + heartbeats the specific missing piece
+        # + sleeps 120s so we don't spin. When the user completes the
+        # missing step in the desktop Settings UI, the next cycle picks
+        # the job right back up.
+        #
+        # v1.0.3 only checked resume. v1.0.4 also checks profile fields
+        # + target_titles — matches packages/desktop/server/preflight.py
+        # so the desktop wizard, lifespan PTY guard, and worker all
+        # enforce the same "setup done" rules.
+
+        # Profile: first_name + last_name + email must exist
+        try:
+            preflight_profile = load_user_profile(user_id) or {}
+        except WorkerAuthError:
+            raise
+        except Exception as e:
+            logger.debug(f"Profile preflight load failed: {e}")
+            preflight_profile = {}
+        missing_profile_fields = [
+            f for f in ("first_name", "last_name", "email")
+            if not (preflight_profile.get(f) or "").strip()
+        ]
+        if missing_profile_fields:
+            logger.info(
+                f"User {user_id} profile incomplete "
+                f"(missing {', '.join(missing_profile_fields)}) — "
+                f"job {job['id']} returned to queue, backing off 120s"
+            )
+            update_queue_status(
+                job['id'], 'pending',
+                error=f"awaiting_profile ({', '.join(missing_profile_fields)})",
+            )
+            try:
+                update_local_status(job, 'queued', 'awaiting profile completion')
+            except Exception:
+                pass
+            update_heartbeat(
+                user_id, "awaiting_profile",
+                f"Profile missing: {', '.join(missing_profile_fields)}",
+            )
+            time.sleep(120)
+            continue
+
+        # Preferences: target_titles must have at least one entry
+        try:
+            preflight_prefs = fetch_user_job_preferences(user_id) or {}
+        except WorkerAuthError:
+            raise
+        except Exception as e:
+            logger.debug(f"Preferences preflight load failed: {e}")
+            preflight_prefs = {}
+        if not (preflight_prefs.get("target_titles") or []):
+            logger.info(
+                f"User {user_id} has no target_titles — "
+                f"job {job['id']} returned to queue, backing off 120s"
+            )
+            update_queue_status(
+                job['id'], 'pending', error='awaiting_preferences',
+            )
+            try:
+                update_local_status(job, 'queued', 'awaiting preferences')
+            except Exception:
+                pass
+            update_heartbeat(
+                user_id, "awaiting_preferences",
+                "No target roles set — configure via Settings → Preferences",
+            )
+            time.sleep(120)
+            continue
+
+        # Resume: probe download_resume. Wave 3 fix preserved.
         try:
             resume_path = download_resume(user_id, job.get('title'))
         except WorkerAuthError:
-            # Auth errors are fatal — let the outer handler exit the loop.
             raise
         except Exception as e:
             msg = str(e).lower()
@@ -638,8 +699,8 @@ def main():
                 )
                 time.sleep(120)
                 continue
-            # Other download errors (network, auth, etc.) — fail this job
-            # but keep the worker alive.
+            # Other download errors (network, etc.) — fail this job only,
+            # keep the worker loop alive.
             logger.warning(f"Resume download failed for job {job['id']}: {e}")
             update_queue_status(job['id'], 'failed', error=f"resume download: {e}")
             update_local_status(job, 'failed', f"resume download: {e}")

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import {
   getProfile, updateProfile, getPreferences, updatePreferences,
@@ -123,7 +124,14 @@ function TextArea({
 }
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("ai")
+  const searchParams = useSearchParams()
+  // Honor ?tab=<id> so the /setup wizard can deep-link to the right tab.
+  // Validated against the known tab list so a typo in the query string
+  // can't put us in an undefined state.
+  const tabParam = searchParams?.get("tab") as Tab | null
+  const initialTab: Tab =
+    tabParam && tabs.some((t) => t.id === tabParam) ? tabParam : "ai"
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)

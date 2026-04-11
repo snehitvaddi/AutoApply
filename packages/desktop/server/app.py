@@ -16,7 +16,7 @@ import json
 import httpx
 
 from .config import load_token, APP_URL, TOKEN_FILE, WORKSPACE_DIR
-from . import local_data
+from . import local_data, preflight
 from .pty_terminal import pty_terminal_websocket, session_manager
 
 # Static UI build directory (Next.js static export → /out)
@@ -96,53 +96,24 @@ async def lifespan(app: FastAPI):
 
     # Auto-start the Claude Code PTY session so users don't have to
     # manually click "Start Session" on the Terminal tab every time
-    # they relaunch. Guards, in this order:
+    # they relaunch.
     #
-    #   1. Skip in headless mode — CI runners don't have `claude`
-    #      installed and don't need the agent loop.
-    #   2. Skip if there's no worker token — nothing useful to do.
-    #   3. Skip if the user has no uploaded resume — the worker will
-    #      fail every apply without one, so starting the agent loop is
-    #      counterproductive. Tell the user to upload via Settings →
-    #      Resume; the upload handler auto-starts the PTY on success
-    #      so they don't have to relaunch.
-    #   4. Skip if `claude` CLI isn't findable on PATH — log the
-    #      install hint instead of trying to spawn a missing binary.
+    # v1.0.4: delegate the decision to preflight.run_preflight(). The
+    # single source of truth for "setup is ready" lives in one module
+    # (preflight.py), reused by /api/setup/status, the wizard UI, and
+    # the worker main loop. If ANY non-optional check fails, we don't
+    # spawn the PTY — logging the list of missing pieces instead so
+    # the operator can see exactly why the agent didn't start.
     #
-    # Failures at any layer are swallowed with a warning. The server
-    # must never fail to start because the agent loop is broken — the
-    # rest of the app (dashboard, Kanban, Settings, Telegram gateway)
-    # stays functional.
+    # Still gated by headless mode (CI runners have none of these
+    # tools installed and don't need the agent loop).
     import os as _os
-    if not _os.environ.get("APPLYLOOP_HEADLESS") and token:
+    if not _os.environ.get("APPLYLOOP_HEADLESS"):
         try:
-            from .pty_terminal import PTYSession as _PTYSession
-            # Check resume existence via worker proxy — one round-trip,
-            # ~50ms in practice. Cheap insurance against spinning up a
-            # doomed apply loop.
-            resume_result = await stats._proxy("list_resumes")
-            resume_rows = (
-                (resume_result or {}).get("data", {}).get("resumes", [])
-                if not (resume_result or {}).get("error")
-                else []
-            )
-            has_resume = len(resume_rows) > 0
-
-            if not has_resume:
-                logger.warning(
-                    "No resume uploaded yet — skipping PTY auto-start. "
-                    "Open Settings → Resume to upload one; the apply loop "
-                    "will start automatically when the upload succeeds."
-                )
-            elif not _PTYSession._find_claude():
-                logger.warning(
-                    "claude CLI not found on PATH — skipping PTY auto-start. "
-                    "Install from https://claude.com/product/claude-code "
-                    "and click Start Session on the Terminal tab after."
-                )
-            elif session_manager.pty.is_alive:
+            pf = await preflight.run_preflight()
+            if session_manager.pty.is_alive:
                 logger.info("PTY already alive; skipping auto-start")
-            else:
+            elif pf.get("ready"):
                 result = session_manager.new_session()
                 if result.get("alive"):
                     logger.info(
@@ -154,6 +125,16 @@ async def lifespan(app: FastAPI):
                         "PTY auto-start did not bring the session up — "
                         "user can click Start Session on the Terminal tab"
                     )
+            else:
+                missing = [
+                    c["id"] for c in pf.get("checks", [])
+                    if not c["ok"] and not c.get("optional")
+                ]
+                logger.warning(
+                    "Setup not ready — skipping PTY auto-start. "
+                    f"Missing: {', '.join(missing) or '(unknown)'}. "
+                    "Complete the wizard at /setup/ to continue."
+                )
         except Exception as e:
             logger.warning(f"PTY auto-start failed: {e}")
 
@@ -489,39 +470,98 @@ async def _download_default_resume(token: str) -> bool:
 
 @app.get("/api/setup/status")
 async def setup_status():
-    """First-run check: is this desktop install provisioned with a worker token?
+    """Comprehensive readiness check.
 
-    We force the setup wizard when:
-      - No token file on disk
-      - The worker or desktop dropped a .needs-reauth marker after a 401
-      - stats._proxy has flipped its in-memory auth state to "revoked"
+    v1.0.4 upgrade: instead of just "does a token file exist?", this now
+    delegates to preflight.run_preflight() which runs 8 checks covering
+    cloud data (token / profile / resume / prefs) + local binaries
+    (claude CLI / openclaw CLI / openclaw gateway / git). The same
+    preflight module is reused by the lifespan PTY auto-start guard and
+    the worker main loop so the three enforcement points can't drift.
 
-    Transient network errors are ignored — only a positive 401/403 from
-    the remote API (or a totally missing token) forces re-activation.
+    Response shape (breaking but additive — old clients still see
+    setup_complete):
+      {
+        "setup_complete": bool,            # true iff every non-optional check ok
+        "needs": [ "profile", "resume", ...],   # list of failing check ids
+        "checks": [                         # full per-check detail
+          {
+            "id": str,
+            "ok": bool,
+            "label": str,
+            "detail": str,
+            "remediation"?: {"type": str, "target": str, "command"?: str},
+            "optional"?: bool,
+          },
+          ...
+        ],
+        "reason"?: "no_token" | "token_revoked"  # back-compat shim
+      }
     """
-    token = load_token()
-    if not token:
-        return {"setup_complete": False, "reason": "no_token"}
-
-    # Worker-side reauth marker: dropped by worker/db.py::_api_call on 401/403.
+    # Worker-side reauth marker takes precedence — it's a hard signal
+    # from the worker that the token is already dead. Short-circuit the
+    # full preflight so the UI doesn't render a misleading checklist.
     reauth_marker = WORKSPACE_DIR / ".needs-reauth"
     if reauth_marker.exists():
         try:
             detail = reauth_marker.read_text().strip()
         except Exception:
             detail = "worker reported 401/403"
-        return {"setup_complete": False, "reason": "token_revoked", "detail": detail}
-
-    # Desktop-side auth state: flipped by stats._proxy on 401/403.
-    state = stats.get_auth_state()
-    if state.get("status") == "revoked":
         return {
             "setup_complete": False,
             "reason": "token_revoked",
-            "detail": state.get("last_error") or "desktop proxy saw 401/403",
+            "detail": detail,
+            "needs": ["token"],
+            "checks": [{
+                "id": "token", "ok": False,
+                "label": "Activation code",
+                "detail": f"Token revoked: {detail}",
+                "remediation": {"type": "route", "target": "/setup/"},
+            }],
         }
 
-    return {"setup_complete": True}
+    pf = await preflight.run_preflight()
+    needs = [c["id"] for c in pf["checks"] if not c["ok"] and not c.get("optional")]
+
+    # Back-compat shim: older clients looked at `reason`. Populate it
+    # with the most actionable missing check id so they still route
+    # sensibly if they haven't been updated to read `needs`.
+    reason: str | None = None
+    if not pf["ready"]:
+        if "token" in needs:
+            reason = "no_token"
+        else:
+            reason = needs[0] if needs else "incomplete"
+
+    return {
+        "setup_complete": pf["ready"],
+        "needs": needs,
+        "checks": pf["checks"],
+        **({"reason": reason} if reason else {}),
+    }
+
+
+@app.post("/api/setup/install-tool")
+async def install_tool_route(body: dict):
+    """Start a background install for a local CLI tool. Non-blocking.
+
+    Body: {"tool": "claude" | "openclaw" | "git" | "brew"}
+    Returns immediately with ok=true + pid, or ok=false + error.
+    The client polls /api/setup/install-progress?tool=<name> to get
+    live output + exit code.
+    """
+    tool = (body or {}).get("tool", "")
+    if not tool:
+        return {"ok": False, "error": "tool is required"}
+    return preflight.start_install(tool)
+
+
+@app.get("/api/setup/install-progress")
+async def install_progress(tool: str = ""):
+    """Return install status + last 40 lines of log for a running install."""
+    if not tool:
+        return {"ok": False, "error": "tool query param required"}
+    return {"ok": True, **preflight.install_tool_status(tool)}
 
 
 @app.post("/api/setup/clear-reauth")
