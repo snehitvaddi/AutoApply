@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import platform
 import signal
 import subprocess
 import time
@@ -11,6 +12,9 @@ from collections import deque
 from pathlib import Path
 
 from .config import WORKER_DIR, WORKER_PID_FILE, get_worker_env
+
+_IS_DARWIN = platform.system() == "Darwin"
+_IS_WINDOWS = platform.system() == "Windows"
 
 logger = logging.getLogger(__name__)
 
@@ -95,24 +99,40 @@ class WorkerProcess:
                 break
 
     def _check_existing(self) -> bool:
-        """Check if a worker is already running from a PID file."""
+        """Check if a worker is already running from a PID file.
+
+        Liveness check uses os.kill(pid, 0) which works identically on
+        Unix and Windows — raises ProcessLookupError on Unix and OSError
+        on Windows if the PID isn't alive, and does nothing otherwise.
+        The command-name verification step uses `ps` on Unix and `tasklist`
+        on Windows; if either is unavailable we just trust the os.kill
+        result rather than failing the whole startup.
+        """
         if not WORKER_PID_FILE.exists():
             return False
         try:
             pid = int(WORKER_PID_FILE.read_text().strip())
-            os.kill(pid, 0)  # Check if process exists
+            os.kill(pid, 0)  # cross-platform liveness check
             # Verify it's actually a python/worker process, not a reused PID
             try:
-                result = subprocess.run(
-                    ["ps", "-p", str(pid), "-o", "command="],
-                    capture_output=True, text=True, timeout=2
-                )
-                cmd = result.stdout.strip()
+                if _IS_WINDOWS:
+                    result = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                        capture_output=True, text=True, timeout=2,
+                    )
+                    cmd = result.stdout.strip().lower()
+                else:
+                    result = subprocess.run(
+                        ["ps", "-p", str(pid), "-o", "command="],
+                        capture_output=True, text=True, timeout=2,
+                    )
+                    cmd = result.stdout.strip()
                 if "worker" not in cmd.lower() and "python" not in cmd.lower():
                     logger.info(f"PID {pid} exists but is not a worker: {cmd[:50]}")
                     WORKER_PID_FILE.unlink(missing_ok=True)
                     return False
             except Exception:
+                # Can't verify command name — trust the liveness check
                 pass
             logger.info(f"Worker already running with PID {pid}")
             return True
@@ -133,17 +153,29 @@ class WorkerProcess:
             return {"ok": False, "error": f"worker.py not found at {worker_script}"}
 
         env = get_worker_env()
-        # Use /usr/bin/env to find python3 via the user's PATH, and
-        # use 'script' command to allocate a PTY — this bypasses
-        # macOS TCC restrictions that block .app-spawned processes
-        # from accessing user files in Downloads/Desktop/etc.
-        script_wrapper = f"""cd '{str(WORKER_DIR)}' && exec python3 '{str(worker_script)}'"""
-        self.process = subprocess.Popen(
-            ["/usr/bin/script", "-q", "/dev/null", "/bin/bash", "-l", "-c", script_wrapper],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=env,
-        )
+        # macOS: wrap the worker in `script(1)` to allocate a PTY — this
+        # bypasses macOS TCC restrictions that would otherwise block
+        # .app-spawned processes from reading user files in Downloads/
+        # Desktop/etc. (Those restrictions don't exist on Windows/Linux,
+        # so we spawn the Python interpreter directly there.)
+        if _IS_DARWIN:
+            script_wrapper = f"""cd '{str(WORKER_DIR)}' && exec python3 '{str(worker_script)}'"""
+            self.process = subprocess.Popen(
+                ["/usr/bin/script", "-q", "/dev/null", "/bin/bash", "-l", "-c", script_wrapper],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+        else:
+            # Windows + Linux: direct spawn, no PTY wrapper needed.
+            import sys as _sys
+            self.process = subprocess.Popen(
+                [_sys.executable, str(worker_script)],
+                cwd=str(WORKER_DIR),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
         self.started_at = time.time()
 
         # Write PID file

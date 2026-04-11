@@ -301,24 +301,67 @@ async def get_screenshot(job_id: int):
 
 @app.post("/api/browser/focus")
 async def focus_browser():
-    """Bring the live Chromium/Chrome window to the foreground via osascript.
+    """Bring the live Chromium/Chrome window to the foreground.
 
-    Tries common macOS browser bundle names. Used by the Dashboard
-    "Currently Applying" banner so the user can jump straight to the
-    browser where the applier is filling out a form.
+    Used by the Dashboard "Currently Applying" banner so the user can
+    jump straight to the browser where the applier is filling out a
+    form. macOS uses osascript to activate the app by bundle name;
+    Windows uses PowerShell + Win32 SetForegroundWindow; Linux has no
+    universal equivalent so we return an informative error there.
+
+    This endpoint is a QoL feature, not critical to the apply loop —
+    users can always alt-tab manually. Non-Darwin platforms degrade
+    gracefully without breaking the dashboard.
     """
+    import platform as _platform
     import subprocess
-    for app_name in ("Chromium", "Google Chrome", "Chrome"):
+    system = _platform.system()
+
+    if system == "Darwin":
+        for app_name in ("Chromium", "Google Chrome", "Chrome"):
+            try:
+                r = subprocess.run(
+                    ["osascript", "-e", f'tell application "{app_name}" to activate'],
+                    capture_output=True, text=True, timeout=3,
+                )
+                if r.returncode == 0:
+                    return {"ok": True, "focused": app_name}
+            except Exception:
+                continue
+        return {"ok": False, "error": "no Chrome/Chromium window found"}
+
+    if system == "Windows":
+        # PowerShell one-liner: find a top-level window whose title contains
+        # "Chrome" or "Chromium", call the Win32 SetForegroundWindow API
+        # on its handle. If none found, return cleanly so the UI shows
+        # the "not found" state instead of hanging or crashing.
+        ps_script = (
+            "Add-Type @'\n"
+            "using System;\n"
+            "using System.Runtime.InteropServices;\n"
+            "public class Win32 {\n"
+            "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);\n"
+            "}\n"
+            "'@;\n"
+            "$p = Get-Process | Where-Object { $_.MainWindowTitle -match 'Chrome|Chromium' } | Select-Object -First 1;\n"
+            "if ($p) { [Win32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Write-Output $p.ProcessName } else { exit 1 }"
+        )
         try:
             r = subprocess.run(
-                ["osascript", "-e", f'tell application "{app_name}" to activate'],
-                capture_output=True, text=True, timeout=3,
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True, text=True, timeout=5,
             )
             if r.returncode == 0:
-                return {"ok": True, "focused": app_name}
-        except Exception:
-            continue
-    return {"ok": False, "error": "no Chrome/Chromium window found"}
+                return {"ok": True, "focused": (r.stdout or "").strip() or "chrome"}
+        except Exception as e:
+            return {"ok": False, "error": f"powershell focus failed: {e}"}
+        return {"ok": False, "error": "no Chrome/Chromium window found"}
+
+    # Linux or unknown platform
+    return {
+        "ok": False,
+        "error": f"browser-focus not implemented on {system}",
+    }
 
 
 # ── First-run setup (activation code redemption) ─────────────────────────────
