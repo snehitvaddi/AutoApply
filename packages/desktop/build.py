@@ -27,7 +27,7 @@ UI_DIR = HERE / "ui"
 UI_OUT = UI_DIR / "out"  # Static export output
 DIST_DIR = HERE / "dist"
 APP_NAME = "ApplyLoop"
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 BUNDLE_ID = "com.applyloop.desktop"
 
 
@@ -111,13 +111,17 @@ def build_mac_app():
         # the running interpreter directly.
         subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
     venv_pip = venv_dir / "bin" / "pip"
-    pip_cmd = ["arch", arch_flag, str(venv_pip), "install", "-q",
-               "fastapi", "uvicorn", "httpx", "websockets", "pywebview"]
+    # NOTE: keep this list in sync with packages/desktop/requirements.txt
+    # Missing python-multipart caused v1.0.4 to crash on launch because
+    # FastAPI imports the UploadFile/Form resume-upload route at module
+    # load time, which requires python-multipart. Learned the hard way.
+    _pip_pkgs = ["fastapi", "uvicorn", "httpx", "websockets",
+                 "pywebview", "python-multipart"]
+    pip_cmd = ["arch", arch_flag, str(venv_pip), "install", "-q"] + _pip_pkgs
     try:
         subprocess.check_call(pip_cmd)
     except (subprocess.CalledProcessError, FileNotFoundError):
-        subprocess.check_call([str(venv_pip), "install", "-q",
-                               "fastapi", "uvicorn", "httpx", "websockets", "pywebview"])
+        subprocess.check_call([str(venv_pip), "install", "-q"] + _pip_pkgs)
     print("[Build] Venv created with all deps")
 
     # Info.plist
@@ -169,10 +173,13 @@ mkdir -p "$HOME/.autoapply"
 mkdir -p "$HOME/.autoapply/workspace"
 
 ARCH_FLAG="-{host_arch}"
-# Install deps to user site-packages if missing. Fall back to plain
-# python3 on any non-native arch or older macOS that doesn't grok the flag.
-if ! arch $ARCH_FLAG python3 -m pip install -q fastapi uvicorn httpx websockets pywebview 2>/dev/null; then
-  python3 -m pip install -q --user fastapi uvicorn httpx websockets pywebview 2>/dev/null
+# Install deps to user site-packages if missing. Keep this list in sync
+# with packages/desktop/requirements.txt. python-multipart is required
+# because the server registers a multipart resume-upload route at import
+# time — without it the server crashes on launch.
+_PIP_PKGS="fastapi uvicorn httpx websockets pywebview python-multipart"
+if ! arch $ARCH_FLAG python3 -m pip install -q $_PIP_PKGS 2>/dev/null; then
+  python3 -m pip install -q --user $_PIP_PKGS 2>/dev/null
 fi
 
 # Run the app — pywebview creates native window, server runs in thread

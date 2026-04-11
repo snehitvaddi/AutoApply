@@ -4,3 +4,8 @@ websockets>=14.0
 httpx>=0.28.0
 ptyprocess>=0.7.0
 pywebview>=5.0
+# Required by POST /api/resumes/upload — FastAPI pulls this in at route
+# registration time via File(...)/Form(...) deps, so the whole server
+# crashes on import if it's missing (not a lazy error). Missing this
+# dep was the cause of the v1.0.4 crash-on-launch bug.
+python-multipart>=0.0.18
