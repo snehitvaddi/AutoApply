@@ -105,12 +105,31 @@ def _install_shutdown_handlers() -> None:
 
 
 def check_deps():
-    """Ensure Python deps are installed."""
+    """Ensure Python deps are importable.
+
+    If we're running under the bundled .app venv (sys.executable lives inside
+    the .app bundle at Contents/Resources/venv/...), a missing dep means the
+    build itself is broken — pip-installing at launch time won't fix it and
+    will fail anyway because pywebview needs a C compiler the user doesn't
+    have. Just print a clear error and exit so the log is actionable instead
+    of a pyobjc-core traceback dump.
+    """
     try:
         import fastapi  # noqa: F401
         import uvicorn  # noqa: F401
         import httpx    # noqa: F401
-    except ImportError:
+    except ImportError as exc:
+        running_in_bundled_venv = ".app/Contents/Resources/venv" in sys.executable
+        if running_in_bundled_venv:
+            print(
+                f"[ApplyLoop] FATAL: bundled venv is missing '{exc.name}'. "
+                f"This is a build bug — please reinstall the latest .dmg from "
+                f"https://github.com/snehitvaddi/AutoApply/releases",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        # Dev mode (user ran `python launch.py` from a checkout) — fall back
+        # to installing into the current interpreter.
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "-q", "-r",
              str(HERE / "requirements.txt")],

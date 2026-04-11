@@ -27,7 +27,7 @@ UI_DIR = HERE / "ui"
 UI_OUT = UI_DIR / "out"  # Static export output
 DIST_DIR = HERE / "dist"
 APP_NAME = "ApplyLoop"
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 BUNDLE_ID = "com.applyloop.desktop"
 
 
@@ -157,13 +157,17 @@ def build_mac_app():
 </plist>
 """)
 
-    # Launcher script — uses system Python for pywebview (needs system pyobjc).
-    # Detect host arch at install time and bake it into the wrapper; fall
-    # back to plain python3 if `arch` isn't available or the flag fails.
+    # Launcher script — executes the bundled venv's python directly so we
+    # never touch system python3. Before v1.0.6 this ran `arch -arm64 python3
+    # launch.py` against Xcode's /usr/bin/python3, which has no fastapi, so
+    # launch.py::check_deps() would try to pip install from requirements.txt,
+    # which pulls pywebview → pyobjc-core → needs a C compiler the user
+    # doesn't have → the whole app dies on first launch. The venv we ship
+    # inside the .app bundle already has every dep baked in, so just use it.
     launcher = macos / "launcher"
-    launcher.write_text(f"""\
+    launcher.write_text("""\
 #!/bin/bash
-# ApplyLoop Desktop — macOS Launcher (pywebview native window)
+# ApplyLoop Desktop — macOS Launcher (uses bundled venv python)
 
 RESOURCES="$(dirname "$0")/../Resources"
 cd "$RESOURCES"
@@ -172,21 +176,25 @@ LOG="$HOME/.autoapply/desktop.log"
 mkdir -p "$HOME/.autoapply"
 mkdir -p "$HOME/.autoapply/workspace"
 
-ARCH_FLAG="-{host_arch}"
-# Install deps to user site-packages if missing. Keep this list in sync
-# with packages/desktop/requirements.txt. python-multipart is required
-# because the server registers a multipart resume-upload route at import
-# time — without it the server crashes on launch.
-_PIP_PKGS="fastapi uvicorn httpx websockets pywebview python-multipart"
-if ! arch $ARCH_FLAG python3 -m pip install -q $_PIP_PKGS 2>/dev/null; then
-  python3 -m pip install -q --user $_PIP_PKGS 2>/dev/null
-fi
+VENV_PY="$RESOURCES/venv/bin/python3"
 
-# Run the app — pywebview creates native window, server runs in thread
-if arch $ARCH_FLAG python3 -c "import sys" 2>/dev/null; then
-  exec arch $ARCH_FLAG python3 launch.py >> "$LOG" 2>&1
+# Record what we're doing so users can paste the log if something breaks.
+{
+  echo "[launcher] $(date '+%Y-%m-%d %H:%M:%S') starting"
+  echo "[launcher] RESOURCES=$RESOURCES"
+  echo "[launcher] VENV_PY=$VENV_PY"
+} >> "$LOG" 2>&1
+
+# Prefer the bundled venv. Fall back to system python3 only if the venv
+# is somehow missing (broken install, user copied the launcher out of the
+# bundle, etc.) — in that fallback we STILL skip pip install at launch
+# because downloading fresh wheels from a double-click is too fragile.
+if [ -x "$VENV_PY" ]; then
+  echo "[launcher] using bundled venv" >> "$LOG" 2>&1
+  exec "$VENV_PY" launch.py >> "$LOG" 2>&1
 else
-  exec python3 launch.py >> "$LOG" 2>&1
+  echo "[launcher] venv missing — falling back to system python3" >> "$LOG" 2>&1
+  exec /usr/bin/env python3 launch.py >> "$LOG" 2>&1
 fi
 """)
     os.chmod(str(launcher), 0o755)

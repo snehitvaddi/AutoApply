@@ -41,10 +41,16 @@ test('cold visit redirects to /setup wizard', async ({ page }) => {
   await page.waitForURL(/\/setup\/?$/, { timeout: 15_000 });
   // Wave 4 wizard copy. The old "One-time setup" / "Welcome! One-time"
   // headers got replaced by the two-step checklist-driven UI.
+  // .first() because the page renders both the step heading ("Step 1 of
+  // 2 — Activate") and its caption ("Paste the activation code...") —
+  // the alternation below matches both, which is a strict-mode violation
+  // without .first().
   await expect(
-    page.getByText(
-      /Step 1 of 2 — Activate|Paste the activation code|One-time setup/i
-    )
+    page
+      .getByText(
+        /Step 1 of 2 — Activate|Paste the activation code|One-time setup/i
+      )
+      .first()
   ).toBeVisible({ timeout: 10_000 });
   // The activation input must be on the page regardless of copy.
   await expect(page.getByPlaceholder(/AL-XXXX-XXXX/)).toBeVisible();
@@ -61,8 +67,11 @@ test('bogus activation code shows not_found remediation', async ({ page }) => {
   await page.getByRole('button', { name: /activate/i }).click();
   // Matches _SETUP_REMEDIATION["not_found"] in server/app.py:
   //   "This code doesn't exist. Double-check the letters and numbers..."
+  // .first() because the remediation string shows up twice — once in the
+  // inline <activationError> span next to the Activate button, and again
+  // as the detail line under the token check row in the checklist below.
   await expect(
-    page.getByText(/doesn.t exist|not found|Invalid activation/i)
+    page.getByText(/doesn.t exist|not found|Invalid activation/i).first()
   ).toBeVisible({ timeout: 15_000 });
 });
 

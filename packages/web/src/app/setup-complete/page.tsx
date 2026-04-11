@@ -16,14 +16,20 @@ type ActivationCode = {
 // not in hiding the artifact: the app is useless until the user pastes a
 // valid AL-XXXX-XXXX that the admin generated for their account.
 //
-// When cutting a new release, update RELEASE_TAG and DMG_NAME in lockstep.
-// The SHA256 is fetched at runtime from the sidecar file on the release, so
-// the hash is always in sync without having to edit this file per release.
-const RELEASE_TAG = "v1.0.5";
-const DMG_NAME = "ApplyLoop-1.0.5.dmg";
-const RELEASE_BASE = `https://github.com/snehitvaddi/AutoApply/releases/download/${RELEASE_TAG}`;
-const DMG_URL = `${RELEASE_BASE}/${DMG_NAME}`;
-const DMG_SHA256_URL = `${RELEASE_BASE}/${DMG_NAME}.sha256`;
+// The page auto-syncs with whichever release is tagged "latest" on GitHub.
+// We hit api.github.com/repos/.../releases/latest on mount, parse out the
+// .dmg asset + sha256 sidecar, and wire the buttons to those URLs. No code
+// change required when cutting a new release — just push the tag.
+//
+// FALLBACK values below are only used if the API call fails (rate-limit,
+// offline, GitHub outage). Keep them pointing at the most recent known-good
+// release so the page still works in the degraded case.
+const FALLBACK_TAG = "v1.0.4";
+const FALLBACK_DMG = "ApplyLoop-1.0.4.dmg";
+const GH_LATEST_API =
+  "https://api.github.com/repos/snehitvaddi/AutoApply/releases/latest";
+const releaseBase = (tag: string) =>
+  `https://github.com/snehitvaddi/AutoApply/releases/download/${tag}`;
 
 export default function SetupCompletePage() {
   const router = useRouter();
@@ -33,6 +39,8 @@ export default function SetupCompletePage() {
   const [activationError, setActivationError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [dmgSha256, setDmgSha256] = useState<string | null>(null);
+  const [releaseTag, setReleaseTag] = useState<string>(FALLBACK_TAG);
+  const [dmgName, setDmgName] = useState<string>(FALLBACK_DMG);
 
   useEffect(() => {
     const platform = navigator.platform.toLowerCase();
@@ -40,25 +48,48 @@ export default function SetupCompletePage() {
     else if (platform.includes("win")) setOs("windows");
   }, []);
 
-  // Pull the SHA256 sidecar from the release so the displayed hash is always
-  // in sync with whatever binary is currently at DMG_URL.
+  // Fetch the latest release from GitHub on mount and extract the .dmg asset
+  // + sha256 sidecar. On any failure we keep the FALLBACK_* constants, which
+  // point at the last known-good release.
   useEffect(() => {
     let cancelled = false;
-    fetch(DMG_SHA256_URL, { cache: "no-store" })
-      .then((r) => (r.ok ? r.text() : null))
-      .then((text) => {
-        if (cancelled || !text) return;
-        // File format is `<hash>  <filename>` per `shasum -a 256` output.
-        const hash = text.trim().split(/\s+/)[0];
-        if (hash && /^[a-f0-9]{64}$/.test(hash)) setDmgSha256(hash);
-      })
-      .catch(() => {
-        /* best-effort — page still works without the hash */
-      });
+    (async () => {
+      try {
+        const r = await fetch(GH_LATEST_API, { cache: "no-store" });
+        if (!r.ok) return;
+        const body = await r.json();
+        const tag: string | undefined = body?.tag_name;
+        type GhAsset = { name: string; browser_download_url: string };
+        const assets: GhAsset[] = Array.isArray(body?.assets) ? body.assets : [];
+        const dmg = assets.find((a) => a.name?.endsWith(".dmg"));
+        const shaAsset = assets.find((a) => a.name?.endsWith(".dmg.sha256"));
+        if (cancelled || !tag || !dmg) return;
+
+        setReleaseTag(tag);
+        setDmgName(dmg.name);
+
+        if (shaAsset) {
+          const sr = await fetch(shaAsset.browser_download_url, {
+            cache: "no-store",
+          });
+          if (!sr.ok) return;
+          const text = await sr.text();
+          const hash = text.trim().split(/\s+/)[0];
+          if (!cancelled && hash && /^[a-f0-9]{64}$/.test(hash)) {
+            setDmgSha256(hash);
+          }
+        }
+      } catch {
+        /* best-effort — page still works with fallback values */
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const dmgUrl = `${releaseBase(releaseTag)}/${dmgName}`;
+  const dmgSha256Url = `${releaseBase(releaseTag)}/${dmgName}.sha256`;
 
   // Fetch the authenticated user's current activation code so we can render
   // it inline. Falls back to a "contact admin" path if there isn't one yet.
@@ -95,8 +126,8 @@ export default function SetupCompletePage() {
   }
 
   const verifyCommand = dmgSha256
-    ? `shasum -a 256 ~/Downloads/${DMG_NAME}\n# expected: ${dmgSha256}`
-    : `shasum -a 256 ~/Downloads/${DMG_NAME}\n# compare against the sha256 shown on the release page`;
+    ? `shasum -a 256 ~/Downloads/${dmgName}\n# expected: ${dmgSha256}`
+    : `shasum -a 256 ~/Downloads/${dmgName}\n# compare against the sha256 shown on the release page`;
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
@@ -206,17 +237,17 @@ export default function SetupCompletePage() {
                 )}
               </div>
               <a
-                href={DMG_URL}
-                download={DMG_NAME}
+                href={dmgUrl}
+                download={dmgName}
                 className="px-5 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
               >
-                Download {RELEASE_TAG}
+                Download {releaseTag}
               </a>
             </div>
 
             <ol className="text-sm text-gray-700 space-y-1 list-decimal list-inside mb-4">
               <li>
-                Click <strong>Download {RELEASE_TAG}</strong> above (~15 MB)
+                Click <strong>Download {releaseTag}</strong> above (~15 MB)
               </li>
               <li>
                 Double-click the <code>.dmg</code> and drag{" "}
@@ -241,7 +272,7 @@ export default function SetupCompletePage() {
                 {dmgSha256 ?? "loading…"}
               </span>{" "}
               <a
-                href={DMG_SHA256_URL}
+                href={dmgSha256Url}
                 target="_blank"
                 rel="noopener"
                 className="underline"
