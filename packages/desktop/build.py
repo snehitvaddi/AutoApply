@@ -95,13 +95,29 @@ def build_mac_app():
     if icon_src.exists():
         shutil.copy2(icon_src, resources / "AppIcon.icns")
 
-    # Create venv with all deps pre-installed (force arm64 for Apple Silicon)
-    print("[Build] Creating Python venv inside .app (arm64)...")
+    # Create venv with all deps pre-installed. Previously this was hardcoded
+    # to `arch -arm64`, which crashed on Intel Macs ("Bad CPU type in
+    # executable"). Detect the host arch and use it instead.
+    host_arch = platform.machine()  # "arm64" on Apple Silicon, "x86_64" on Intel
+    arch_flag = f"-{host_arch}"
+    print(f"[Build] Creating Python venv inside .app ({host_arch})...")
     venv_dir = resources / "venv"
-    subprocess.check_call(["arch", "-arm64", sys.executable, "-m", "venv", str(venv_dir)])
+    try:
+        subprocess.check_call(
+            ["arch", arch_flag, sys.executable, "-m", "venv", str(venv_dir)]
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # `arch` unavailable (non-macOS) or unsupported flag: fall back to
+        # the running interpreter directly.
+        subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
     venv_pip = venv_dir / "bin" / "pip"
-    subprocess.check_call(["arch", "-arm64", str(venv_pip), "install", "-q",
-                           "fastapi", "uvicorn", "httpx", "websockets", "pywebview"])
+    pip_cmd = ["arch", arch_flag, str(venv_pip), "install", "-q",
+               "fastapi", "uvicorn", "httpx", "websockets", "pywebview"]
+    try:
+        subprocess.check_call(pip_cmd)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        subprocess.check_call([str(venv_pip), "install", "-q",
+                               "fastapi", "uvicorn", "httpx", "websockets", "pywebview"])
     print("[Build] Venv created with all deps")
 
     # Info.plist
@@ -137,9 +153,11 @@ def build_mac_app():
 </plist>
 """)
 
-    # Launcher script — uses system Python for pywebview (needs system pyobjc)
+    # Launcher script — uses system Python for pywebview (needs system pyobjc).
+    # Detect host arch at install time and bake it into the wrapper; fall
+    # back to plain python3 if `arch` isn't available or the flag fails.
     launcher = macos / "launcher"
-    launcher.write_text("""\
+    launcher.write_text(f"""\
 #!/bin/bash
 # ApplyLoop Desktop — macOS Launcher (pywebview native window)
 
@@ -150,12 +168,19 @@ LOG="$HOME/.autoapply/desktop.log"
 mkdir -p "$HOME/.autoapply"
 mkdir -p "$HOME/.autoapply/workspace"
 
-# Use system Python (has working pyobjc for native window)
-# Install deps to user site-packages if missing
-arch -arm64 python3 -m pip install -q fastapi uvicorn httpx websockets pywebview 2>/dev/null
+ARCH_FLAG="-{host_arch}"
+# Install deps to user site-packages if missing. Fall back to plain
+# python3 on any non-native arch or older macOS that doesn't grok the flag.
+if ! arch $ARCH_FLAG python3 -m pip install -q fastapi uvicorn httpx websockets pywebview 2>/dev/null; then
+  python3 -m pip install -q --user fastapi uvicorn httpx websockets pywebview 2>/dev/null
+fi
 
 # Run the app — pywebview creates native window, server runs in thread
-exec arch -arm64 python3 launch.py >> "$LOG" 2>&1
+if arch $ARCH_FLAG python3 -c "import sys" 2>/dev/null; then
+  exec arch $ARCH_FLAG python3 launch.py >> "$LOG" 2>&1
+else
+  exec python3 launch.py >> "$LOG" 2>&1
+fi
 """)
     os.chmod(str(launcher), 0o755)
 
