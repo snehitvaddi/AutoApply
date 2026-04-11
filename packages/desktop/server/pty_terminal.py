@@ -134,14 +134,17 @@ class PTYSession:
             logger.error("Claude CLI not found")
             return False
 
-        # Use the openclaw workspace (has SOUL.md, AGENTS.md, PROFILE.md, etc.)
-        openclaw_ws = Path.home() / ".openclaw" / "agents" / "job-bot" / "workspace"
-        if openclaw_ws.exists():
-            cwd = str(openclaw_ws)
-        elif WORKSPACE_DIR.exists():
+        # Use the configured ApplyLoop workspace. (Legacy ~/.openclaw fallback
+        # removed — honoring it broke multi-tenancy because every instance
+        # would fight over the same directory regardless of APPLYLOOP_WORKSPACE.)
+        if WORKSPACE_DIR.exists():
             cwd = str(WORKSPACE_DIR)
         else:
-            cwd = os.path.expanduser("~")
+            try:
+                WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+                cwd = str(WORKSPACE_DIR)
+            except Exception:
+                cwd = os.path.expanduser("~")
 
         env = {**os.environ}
         token = load_token()
