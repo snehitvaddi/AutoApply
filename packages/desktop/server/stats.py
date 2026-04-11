@@ -156,13 +156,28 @@ async def get_heartbeat() -> dict:
 
 
 async def update_profile(profile_data: dict) -> dict:
-    """Update not available via worker token — return error."""
-    return {"error": "Profile updates require the web dashboard"}
+    """Persist profile edits from the desktop Settings page back to Supabase.
+
+    The server-side update_profile action on the worker proxy derives
+    user_id from the worker token header, so we just forward the column
+    values. The proxy applies a column allowlist — fields we don't know
+    about will be dropped silently (intended).
+    """
+    result = await _proxy("update_profile", profile_data)
+    if "error" in result:
+        return result
+    return result.get("data", {"updated": True})
 
 
 async def update_preferences(prefs_data: dict) -> dict:
-    """Update not available via worker token — return error."""
-    return {"error": "Preference updates require the web dashboard"}
+    """Persist job-preference edits back to Supabase via the worker proxy.
+
+    Same contract as update_profile: allowlisted columns, user-scoped upsert.
+    """
+    result = await _proxy("update_preferences", prefs_data)
+    if "error" in result:
+        return result
+    return result.get("data", {"updated": True})
 
 
 async def get_settings_profile() -> dict:

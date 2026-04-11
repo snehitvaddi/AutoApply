@@ -137,6 +137,65 @@ export async function POST(request: NextRequest) {
         return apiSuccess({ preferences: data || {} });
       }
 
+      case "update_profile": {
+        // Upsert the authenticated user's profile row. user_id is derived
+        // from the worker token server-side, NOT from params — a worker
+        // token can never write another user's profile. Column allowlist
+        // prevents setting is_admin / approval_status / other sensitive
+        // fields that only belong in other tables.
+        const PROFILE_COLUMNS = [
+          "first_name", "last_name", "phone",
+          "linkedin_url", "github_url", "portfolio_url",
+          "current_company", "current_title", "years_experience",
+          "education_level", "school_name", "degree", "graduation_year",
+          "work_authorization", "requires_sponsorship",
+          "gender", "race_ethnicity", "veteran_status", "disability_status",
+          "cover_letter_template", "answer_key_json",
+          "work_experience", "education", "skills",
+        ] as const;
+        const payload: Record<string, unknown> = {
+          user_id: userId,
+          updated_at: new Date().toISOString(),
+        };
+        const incoming = (params.profile || params) as Record<string, unknown>;
+        for (const key of PROFILE_COLUMNS) {
+          if (key in incoming) payload[key] = incoming[key];
+        }
+        const { error } = await supabase
+          .from("user_profiles")
+          .upsert(payload, { onConflict: "user_id" });
+        if (error) {
+          return apiError("internal_server_error", error.message);
+        }
+        return apiSuccess({ updated: true });
+      }
+
+      case "update_preferences": {
+        // Upsert the authenticated user's job preferences. Same scoping +
+        // allowlist pattern as update_profile.
+        const PREFERENCE_COLUMNS = [
+          "target_titles", "target_keywords",
+          "excluded_titles", "excluded_companies",
+          "min_salary", "preferred_locations",
+          "remote_only", "auto_apply", "max_daily",
+        ] as const;
+        const payload: Record<string, unknown> = {
+          user_id: userId,
+          updated_at: new Date().toISOString(),
+        };
+        const incoming = (params.preferences || params) as Record<string, unknown>;
+        for (const key of PREFERENCE_COLUMNS) {
+          if (key in incoming) payload[key] = incoming[key];
+        }
+        const { error } = await supabase
+          .from("user_job_preferences")
+          .upsert(payload, { onConflict: "user_id" });
+        if (error) {
+          return apiError("internal_server_error", error.message);
+        }
+        return apiSuccess({ updated: true });
+      }
+
       case "check_daily_limit": {
         const { data: user } = await supabase
           .from("users")
