@@ -1,7 +1,44 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
+
+// Persistent onboarding draft. We key by user id so switching Google accounts
+// on the same machine doesn't show a stranger's data. The draft is a single
+// JSON blob in localStorage, re-read on mount and re-saved after every form
+// state mutation. Only serializable form state goes in — no File objects.
+const DRAFT_VERSION = 1;
+type OnboardingDraft = {
+  v: number;
+  step?: number;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  linkedinUrl?: string;
+  githubUrl?: string;
+  portfolioUrl?: string;
+  currentCompany?: string;
+  currentTitle?: string;
+  yearsExperience?: string;
+  educationLevel?: string;
+  schoolName?: string;
+  degree?: string;
+  graduationYear?: string;
+  workAuthorization?: string;
+  requiresSponsorship?: boolean;
+  gender?: string;
+  raceEthnicity?: string;
+  targetTitles?: string[];
+  excludedCompanies?: string;
+  minSalary?: string;
+  remoteOnly?: boolean;
+  autoApply?: boolean;
+};
+
+function draftKey(userId: string) {
+  return `applyloop.onboarding.draft.${userId}`;
+}
 
 const ROLE_PRESETS = [
   "AI Engineer", "ML Engineer", "Data Scientist", "Data Engineer",
@@ -97,6 +134,8 @@ export default function OnboardingPage() {
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [userId, setUserId] = useState<string | null>(null);
+  const [draftRestored, setDraftRestored] = useState(false);
 
   // Step 1: AI prompt paste
   const [aiResponse, setAiResponse] = useState("");
@@ -133,6 +172,81 @@ export default function OnboardingPage() {
   // Step 5: Resume
   const [resumeFile, setResumeFile] = useState<File | null>(null);
 
+  // Resolve current user id once on mount and restore any existing draft.
+  // Runs only in the browser (useEffect) so SSR is not affected.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data } = await supabase.auth.getUser();
+        const uid = data.user?.id || null;
+        if (cancelled) return;
+        setUserId(uid);
+        if (!uid) return;
+        const raw = localStorage.getItem(draftKey(uid));
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as OnboardingDraft;
+        if (!parsed || parsed.v !== DRAFT_VERSION) return;
+        if (parsed.firstName) setFirstName(parsed.firstName);
+        if (parsed.lastName) setLastName(parsed.lastName);
+        if (parsed.phone) setPhone(parsed.phone);
+        if (parsed.linkedinUrl) setLinkedinUrl(parsed.linkedinUrl);
+        if (parsed.githubUrl) setGithubUrl(parsed.githubUrl);
+        if (parsed.portfolioUrl) setPortfolioUrl(parsed.portfolioUrl);
+        if (parsed.currentCompany) setCurrentCompany(parsed.currentCompany);
+        if (parsed.currentTitle) setCurrentTitle(parsed.currentTitle);
+        if (parsed.yearsExperience) setYearsExperience(parsed.yearsExperience);
+        if (parsed.educationLevel) setEducationLevel(parsed.educationLevel);
+        if (parsed.schoolName) setSchoolName(parsed.schoolName);
+        if (parsed.degree) setDegree(parsed.degree);
+        if (parsed.graduationYear) setGraduationYear(parsed.graduationYear);
+        if (parsed.workAuthorization) setWorkAuthorization(parsed.workAuthorization);
+        if (parsed.requiresSponsorship !== undefined) setRequiresSponsorship(parsed.requiresSponsorship);
+        if (parsed.gender) setGender(parsed.gender);
+        if (parsed.raceEthnicity) setRaceEthnicity(parsed.raceEthnicity);
+        if (parsed.targetTitles?.length) setTargetTitles(parsed.targetTitles);
+        if (parsed.excludedCompanies) setExcludedCompanies(parsed.excludedCompanies);
+        if (parsed.minSalary) setMinSalary(parsed.minSalary);
+        if (parsed.remoteOnly !== undefined) setRemoteOnly(parsed.remoteOnly);
+        if (parsed.autoApply !== undefined) setAutoApply(parsed.autoApply);
+        if (parsed.step && parsed.step >= 1 && parsed.step <= 5) setStep(parsed.step as Step);
+        setDraftRestored(true);
+      } catch {
+        // Corrupt draft — drop it silently.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist draft after every relevant field change. localStorage writes are
+  // synchronous and cheap (< 2KB payload), so we don't bother debouncing.
+  useEffect(() => {
+    if (!userId) return;
+    const draft: OnboardingDraft = {
+      v: DRAFT_VERSION,
+      step,
+      firstName, lastName, phone, linkedinUrl, githubUrl, portfolioUrl,
+      currentCompany, currentTitle, yearsExperience,
+      educationLevel, schoolName, degree, graduationYear,
+      workAuthorization, requiresSponsorship, gender, raceEthnicity,
+      targetTitles, excludedCompanies, minSalary, remoteOnly, autoApply,
+    };
+    try {
+      localStorage.setItem(draftKey(userId), JSON.stringify(draft));
+    } catch {
+      // Quota exceeded or disabled — not fatal, just skip persistence.
+    }
+  }, [
+    userId, step, firstName, lastName, phone, linkedinUrl, githubUrl, portfolioUrl,
+    currentCompany, currentTitle, yearsExperience, educationLevel, schoolName, degree,
+    graduationYear, workAuthorization, requiresSponsorship, gender, raceEthnicity,
+    targetTitles, excludedCompanies, minSalary, remoteOnly, autoApply,
+  ]);
+
   function copyPrompt() {
     navigator.clipboard.writeText(AI_PROFILE_PROMPT);
     setPromptCopied(true);
@@ -140,43 +254,78 @@ export default function OnboardingPage() {
   }
 
   function parseAiResponse() {
-    try {
-      // Extract JSON from the response (handle markdown code blocks)
-      let jsonStr = aiResponse.trim();
-      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) jsonStr = jsonMatch[1].trim();
-
-      const data = JSON.parse(jsonStr);
-
-      // Populate all fields
-      if (data.first_name) setFirstName(data.first_name);
-      if (data.last_name) setLastName(data.last_name);
-      if (data.phone) setPhone(data.phone);
-      if (data.linkedin_url) setLinkedinUrl(data.linkedin_url);
-      if (data.github_url) setGithubUrl(data.github_url);
-      if (data.portfolio_url) setPortfolioUrl(data.portfolio_url);
-      if (data.current_company) setCurrentCompany(data.current_company);
-      if (data.current_title) setCurrentTitle(data.current_title);
-      if (data.years_experience) setYearsExperience(String(data.years_experience));
-      if (data.education_level) setEducationLevel(data.education_level);
-      if (data.school_name) setSchoolName(data.school_name);
-      if (data.degree) setDegree(data.degree);
-      if (data.graduation_year) setGraduationYear(String(data.graduation_year));
-      if (data.work_authorization) setWorkAuthorization(data.work_authorization);
-      if (data.requires_sponsorship !== undefined) setRequiresSponsorship(data.requires_sponsorship);
-      if (data.gender) setGender(data.gender);
-      if (data.race_ethnicity) setRaceEthnicity(data.race_ethnicity);
-      if (data.target_titles?.length) setTargetTitles(data.target_titles);
-      if (data.excluded_companies?.length) setExcludedCompanies(data.excluded_companies.join(", "));
-      if (data.salary_min) setMinSalary(String(data.salary_min));
-      if (data.remote_only !== undefined) setRemoteOnly(data.remote_only);
-      if (data.auto_apply !== undefined) setAutoApply(data.auto_apply);
-
-      setError("");
-      setStep(2); // Move to review step
-    } catch {
-      setError("Could not parse the response. Make sure you pasted valid JSON.");
+    // Extract JSON from the response (handle markdown code blocks). We try
+    // a few recovery strategies before giving up so the user doesn't have
+    // to hand-edit the AI's output: strip ``` fences, trim leading/trailing
+    // prose, fall back to the first { ... } block.
+    let jsonStr = aiResponse.trim();
+    if (!jsonStr) {
+      setError("Please paste the AI response first.");
+      return;
     }
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) jsonStr = fenceMatch[1].trim();
+    // If there's prose wrapping the JSON, grab the first top-level {...} block.
+    if (!jsonStr.startsWith("{")) {
+      const braceStart = jsonStr.indexOf("{");
+      const braceEnd = jsonStr.lastIndexOf("}");
+      if (braceStart !== -1 && braceEnd > braceStart) {
+        jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let data: any;
+    try {
+      data = JSON.parse(jsonStr);
+    } catch (e) {
+      const snippet = jsonStr.slice(0, 60).replace(/\s+/g, " ");
+      const reason = e instanceof Error ? e.message : "unknown error";
+      // Log the full payload for debugging in the browser devtools, but only
+      // show a safe, short preview in the UI.
+      console.warn("[onboarding] AI JSON parse failed:", reason, jsonStr);
+      setError(
+        `Could not parse the AI response as JSON (${reason}). ` +
+          `Starts with: "${snippet}${jsonStr.length > 60 ? "..." : ""}". ` +
+          `Make sure you copied only the JSON block.`
+      );
+      return;
+    }
+    if (!data || typeof data !== "object") {
+      setError("AI response must be a JSON object (got " + typeof data + ").");
+      return;
+    }
+
+    // Populate all fields. Every assignment is gated so partially-filled
+    // AI responses (e.g. user pasted a resume with some fields missing)
+    // don't clobber existing draft state with empty strings.
+    if (data.first_name) setFirstName(data.first_name);
+    if (data.last_name) setLastName(data.last_name);
+    if (data.phone) setPhone(data.phone);
+    if (data.linkedin_url) setLinkedinUrl(data.linkedin_url);
+    if (data.github_url) setGithubUrl(data.github_url);
+    if (data.portfolio_url) setPortfolioUrl(data.portfolio_url);
+    if (data.current_company) setCurrentCompany(data.current_company);
+    if (data.current_title) setCurrentTitle(data.current_title);
+    if (data.years_experience) setYearsExperience(String(data.years_experience));
+    if (data.education_level) setEducationLevel(data.education_level);
+    if (data.school_name) setSchoolName(data.school_name);
+    if (data.degree) setDegree(data.degree);
+    if (data.graduation_year) setGraduationYear(String(data.graduation_year));
+    if (data.work_authorization) setWorkAuthorization(data.work_authorization);
+    if (data.requires_sponsorship !== undefined) setRequiresSponsorship(Boolean(data.requires_sponsorship));
+    if (data.gender) setGender(data.gender);
+    if (data.race_ethnicity) setRaceEthnicity(data.race_ethnicity);
+    if (Array.isArray(data.target_titles) && data.target_titles.length) setTargetTitles(data.target_titles);
+    if (Array.isArray(data.excluded_companies) && data.excluded_companies.length) {
+      setExcludedCompanies(data.excluded_companies.join(", "));
+    }
+    if (data.salary_min) setMinSalary(String(data.salary_min));
+    if (data.remote_only !== undefined) setRemoteOnly(Boolean(data.remote_only));
+    if (data.auto_apply !== undefined) setAutoApply(Boolean(data.auto_apply));
+
+    setError("");
+    setStep(2); // Move to review step
   }
 
   function toggleTitle(title: string) {
@@ -237,6 +386,12 @@ export default function OnboardingPage() {
         formData.append("resume", resumeFile);
         const res = await fetch("/api/onboarding/resume", { method: "POST", body: formData });
         if (!res.ok) throw new Error((await res.json()).message);
+        // Wipe the draft on successful finish so reopening /onboarding after
+        // completion doesn't surface stale data (this happens if a user ever
+        // circles back to the page for re-uploads, etc).
+        if (userId) {
+          try { localStorage.removeItem(draftKey(userId)); } catch { /* ignore */ }
+        }
         router.push("/setup-complete");
         return;
       }
@@ -451,6 +606,9 @@ export default function OnboardingPage() {
           </div>
         )}
 
+        {draftRestored && !error && (
+          <p className="mt-4 text-xs text-gray-500">Restored your in-progress setup from this browser.</p>
+        )}
         {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
 
         <div className="flex justify-between mt-8">
