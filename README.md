@@ -99,21 +99,41 @@ Three processes, one cloud store, one local cache:
 
 ## Install (macOS)
 
-Paste this in Terminal:
+First, get your activation code from [applyloop.vercel.app/setup-complete](https://applyloop.vercel.app/setup-complete) after admin approval — it's `AL-XXXX-XXXX`. Then paste this in Terminal (replace with your code):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash -s -- AL-XXXX-XXXX
 ```
 
-That's it. The installer takes ~3-5 minutes on a fresh Mac and:
+The setup-complete page on the web already generates this command with your code baked in — just copy from there.
 
-- Installs Homebrew, Node.js, Python 3.11, Claude Code, and OpenClaw if you don't have them
-- Clones AutoApply to `~/.applyloop`
-- Creates an isolated Python venv (no system Python pollution)
-- Builds the static UI bundle locally
+The installer takes ~3-5 minutes on a fresh Mac and:
+
+- **Validates your activation code FIRST** (`POST /api/activate`) — invalid code = abort before any machine changes
+- Installs Homebrew, Python 3.11, Node.js, Claude Code, and OpenClaw if you don't have them
+- Clones AutoApply to `~/.applyloop` with an isolated Python venv + isolated npm cache
+- Writes `~/.openclaw/openclaw.json` directly (gateway + browser profile, no auth profile, no model backend — OpenClaw is just the browser executor)
+- Fetches your profile from the cloud, writes `~/.applyloop/profile.json` pre-populated
+- Writes `~/.applyloop/.env` with worker token + Telegram + optional integrations
+- Prompts for optional integrations: Telegram chat ID, AgentMail API key, Finetune Resume API key, Gmail app password (Enter to skip any)
+- Writes `~/.applyloop/AGENTS.md` — the system context Claude Code reads on first launch (greets you by name, lists configured services, rules)
 - Generates `/Applications/ApplyLoop.app` directly on your machine — no Gatekeeper popup, no codesigning, no `xattr -cr` workaround
+- Registers a launchd plist for daily auto-updates at 3 AM
 
-Then double-click **ApplyLoop** in `/Applications` (or Spotlight-search it) to launch the wizard.
+Then double-click **ApplyLoop** in `/Applications`. The wizard is already activated (your worker token is on disk from install), profile is synced, OpenClaw gateway is running — just click **Start ApplyLoop**.
+
+### Non-interactive install (CI / scripted)
+
+Skip all prompts and provide integrations via env vars:
+
+```bash
+APPLYLOOP_CODE=AL-X1Y2-Z3W4 \
+APPLYLOOP_TELEGRAM_CHAT_ID=123456789 \
+APPLYLOOP_AGENTMAIL_KEY=am_... \
+APPLYLOOP_FINETUNE_RESUME_KEY=... \
+APPLYLOOP_SKIP_PROMPTS=1 \
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh)"
+```
 
 ### Updating
 
@@ -121,7 +141,7 @@ Then double-click **ApplyLoop** in `/Applications` (or Spotlight-search it) to l
 applyloop update
 ```
 
-Pulls latest from `main`, reinstalls Python deps if `requirements.txt` changed, rebuilds the UI, and regenerates the .app bundle.
+Pulls latest from `main`, reinstalls Python deps if `requirements.txt` changed, rebuilds the UI, regenerates the `.app` bundle. Also runs daily at 3 AM via launchd.
 
 ### Uninstalling
 
@@ -129,21 +149,17 @@ Pulls latest from `main`, reinstalls Python deps if `requirements.txt` changed, 
 applyloop uninstall
 ```
 
-(Your runtime workspace at `~/.autoapply` is preserved — delete manually if you want a clean wipe.)
+Tears down the launchd plist, removes `~/.applyloop`, `/Applications/ApplyLoop.app`, and the `~/.local/bin/applyloop` shim. Your runtime workspace at `~/.autoapply` is preserved — delete manually for a clean wipe.
 
-### Why this approach?
+### Why the code-gated install?
+
+The activation code is validated against `applyloop.vercel.app/api/activate` before any machine changes. Stranger with the curl URL but no code = immediate abort, zero machine impact. Code verification also seeds the install with your profile + worker token + Telegram config in one call, so the desktop wizard opens green instead of empty.
+
+### Why the local-build approach?
 
 Earlier releases (v1.0.4 → v1.0.7) shipped as a downloadable `.dmg`. Each release hit a new variant of the same problem: macOS Gatekeeper attaching a quarantine bit on the bundled venv's Python symlinks, App Translocation moving the app to a random temp folder, hardened runtime requirements, etc. The "real" fix is paying Apple $99/year for a Developer ID + notarization, which also requires re-signing every binary in the bundle.
 
-The local-build approach sidesteps this entirely: macOS only quarantines files **downloaded** via the browser. Files created locally by a script never get a quarantine bit. So the .app generated on your machine works on first double-click — no Gatekeeper popup, no fees, no friction.
-
-### Activate
-
-- Sign in at [applyloop.vercel.app](https://applyloop.vercel.app)
-- Complete the 5-step onboarding (personal info, work, preferences, resume)
-- Wait for admin approval → you'll receive an activation code (`AL-XXXX-XXXX`) on Telegram or email
-- Paste that code into the ApplyLoop desktop wizard on first launch
-- Dashboard loads with your profile already populated — you're done
+The local-build approach sidesteps this entirely: macOS only quarantines files **downloaded** via the browser. Files created locally by a script never get a quarantine bit. So the `.app` generated on your machine works on first double-click — no Gatekeeper popup, no fees, no friction.
 
 ### Daily use
 

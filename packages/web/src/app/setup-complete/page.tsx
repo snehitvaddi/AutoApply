@@ -218,43 +218,65 @@ export default function SetupCompletePage() {
             </div>
 
             <p className="text-sm text-gray-700 mb-2">
-              Open Terminal and paste:
+              Open Terminal and paste this — your activation code is
+              already baked in:
             </p>
-            <div className="flex items-center gap-2 mb-4">
-              <code className="flex-1 bg-gray-900 text-green-400 border border-gray-800 rounded-lg px-4 py-2 text-xs font-mono overflow-x-auto whitespace-nowrap select-all">
-                curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash
-              </code>
-              <button
-                onClick={() =>
-                  copy(
-                    "install",
-                    "curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash",
-                  )
-                }
-                className="px-3 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
-              >
-                {copied === "install" ? "Copied" : "Copy"}
-              </button>
-            </div>
+            {(() => {
+              // install.sh v1.0.9+ requires the activation code up front
+              // (POST /api/activate gate before touching the machine).
+              // We pre-fill the user's code so they only paste ONE thing
+              // instead of copy/paste/edit. If no active code is on their
+              // account, fall back to AL-XXXX-XXXX so the command is
+              // still copy-safe and the user can edit it.
+              const userCode = activation?.code || "AL-XXXX-XXXX";
+              const installCmd =
+                `curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash -s -- ${userCode}`;
+              return (
+                <div className="flex items-center gap-2 mb-4">
+                  <code className="flex-1 bg-gray-900 text-green-400 border border-gray-800 rounded-lg px-4 py-2 text-xs font-mono overflow-x-auto whitespace-nowrap select-all">
+                    {installCmd}
+                  </code>
+                  <button
+                    onClick={() => copy("install", installCmd)}
+                    className="px-3 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
+                  >
+                    {copied === "install" ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              );
+            })()}
 
             <p className="text-sm text-gray-700 mb-2">The installer will:</p>
             <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside mb-4">
-              <li>Install Homebrew + Node + Claude + OpenClaw</li>
               <li>
-                Clone the ApplyLoop source to{" "}
-                <code className="text-xs">~/.applyloop</code>
+                Verify your activation code (before touching anything on
+                your machine)
+              </li>
+              <li>Install Homebrew + Python + Node + Claude + OpenClaw</li>
+              <li>
+                Clone ApplyLoop to{" "}
+                <code className="text-xs">~/.applyloop</code> and build
+                the UI locally
               </li>
               <li>
-                Build the UI locally (no Apple notarization or Gatekeeper
-                popups)
+                Configure OpenClaw gateway + sync your profile from
+                this account
               </li>
               <li>
-                Generate <code className="text-xs">/Applications/ApplyLoop.app</code>
+                Prompt for optional integrations (Telegram, Gmail,
+                AgentMail, Finetune Resume — Enter to skip any)
+              </li>
+              <li>
+                Generate{" "}
+                <code className="text-xs">/Applications/ApplyLoop.app</code>
+                {" "}and schedule daily auto-updates
               </li>
             </ul>
             <p className="text-sm text-gray-700">
               Double-click <strong>ApplyLoop</strong> in{" "}
-              <strong>/Applications</strong> to launch the wizard.
+              <strong>/Applications</strong> — the wizard is already
+              activated, profile is synced, you just click{" "}
+              <strong>Start</strong>.
             </p>
 
             <hr className="my-4 border-gray-200" />
