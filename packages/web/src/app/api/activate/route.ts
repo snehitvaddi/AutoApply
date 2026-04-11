@@ -211,6 +211,46 @@ export async function POST(request: NextRequest) {
   const defaultResume =
     resumes.find((r) => (r as { is_default?: boolean }).is_default) || resumes[0] || null;
 
+  // Synthesis fallback: if the DB profile has empty work_experience/education
+  // arrays but has the flat fields (current_company, current_title,
+  // school_name, degree, graduation_year), build minimal array entries from
+  // them before serializing. This keeps /api/activate in sync with
+  // /api/settings/cli-config so installers don't have to hit both endpoints
+  // to get the richer shape, and keeps the shipping profile.json useful even
+  // when the onboarding flow only captured the flat fields.
+  const profileRow = profileRes.data
+    ? ({ ...(profileRes.data as Record<string, unknown>) })
+    : null;
+  if (profileRow) {
+    const wx = profileRow.work_experience;
+    const hasFlatWork =
+      typeof profileRow.current_company === "string" && profileRow.current_company.length > 0;
+    if ((!Array.isArray(wx) || wx.length === 0) && hasFlatWork) {
+      profileRow.work_experience = [{
+        company: profileRow.current_company || "",
+        title: profileRow.current_title || "",
+        location: "",
+        start_date: "",
+        end_date: "Present",
+        current: true,
+        achievements: [],
+      }];
+    }
+    const ed = profileRow.education;
+    const hasFlatEd =
+      typeof profileRow.school_name === "string" && profileRow.school_name.length > 0;
+    if ((!Array.isArray(ed) || ed.length === 0) && hasFlatEd) {
+      profileRow.education = [{
+        school: profileRow.school_name || "",
+        degree: profileRow.degree || "",
+        field: "",
+        start_date: "",
+        end_date: profileRow.graduation_year ? String(profileRow.graduation_year) : "",
+        gpa: "",
+      }];
+    }
+  }
+
   // 8) Optional: log the install_id + app_version for admin visibility (best effort).
   if (install_id || app_version) {
     try {
@@ -230,7 +270,7 @@ export async function POST(request: NextRequest) {
     tier: userRow.tier,
     daily_apply_limit: userRow.daily_apply_limit,
     telegram_chat_id: userRow.telegram_chat_id,
-    profile: profileRes.data || null,
+    profile: profileRow || null,
     preferences: prefsRes.data || null,
     default_resume: defaultResume,
     remaining_uses_after_this_redemption: remainingUsesAfterRedemption,

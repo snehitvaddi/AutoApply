@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
     "education_level", "school_name", "degree", "graduation_year",
     "work_authorization", "requires_sponsorship", "gender", "race_ethnicity",
     "veteran_status", "disability_status", "cover_letter_template", "answer_key_json",
+    "work_experience", "skills", "education",
   ];
   for (const field of allowedFields) {
     if (body[field] !== undefined) profileFields[field] = body[field];

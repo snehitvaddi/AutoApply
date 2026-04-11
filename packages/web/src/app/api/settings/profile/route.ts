@@ -42,7 +42,8 @@ export async function PUT(request: NextRequest) {
     "portfolio_url", "current_company", "current_title", "years_experience",
     "education_level", "school_name", "degree", "graduation_year",
     "work_authorization", "requires_sponsorship", "gender", "race_ethnicity",
-    "veteran_status", "disability_status", "cover_letter_template",
+    "veteran_status", "disability_status", "cover_letter_template", "answer_key_json",
+    "work_experience", "skills", "education",
   ];
   const updates: Record<string, unknown> = {};
   for (const field of allowedFields) {

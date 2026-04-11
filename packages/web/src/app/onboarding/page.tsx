@@ -29,6 +29,13 @@ type OnboardingDraft = {
   requiresSponsorship?: boolean;
   gender?: string;
   raceEthnicity?: string;
+  veteranStatus?: string;
+  disabilityStatus?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  parsedWorkExperience?: any[];
+  parsedSkills?: string[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  parsedStandardAnswers?: Record<string, any>;
   targetTitles?: string[];
   excludedCompanies?: string;
   minSalary?: string;
@@ -161,6 +168,18 @@ export default function OnboardingPage() {
   const [requiresSponsorship, setRequiresSponsorship] = useState(true);
   const [gender, setGender] = useState("");
   const [raceEthnicity, setRaceEthnicity] = useState("");
+  const [veteranStatus, setVeteranStatus] = useState("");
+  const [disabilityStatus, setDisabilityStatus] = useState("");
+
+  // Parsed arrays from AI step — these are never shown in the form, just
+  // round-tripped from step 1 into the POST in step 2/3. Without this the
+  // onboarding flow persists empty work_experience/skills even though the
+  // AI step extracted them from the user's resume.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [parsedWorkExperience, setParsedWorkExperience] = useState<any[]>([]);
+  const [parsedSkills, setParsedSkills] = useState<string[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [parsedStandardAnswers, setParsedStandardAnswers] = useState<Record<string, any>>({});
 
   // Step 4: Job Preferences
   const [targetTitles, setTargetTitles] = useState<string[]>([]);
@@ -205,6 +224,13 @@ export default function OnboardingPage() {
         if (parsed.requiresSponsorship !== undefined) setRequiresSponsorship(parsed.requiresSponsorship);
         if (parsed.gender) setGender(parsed.gender);
         if (parsed.raceEthnicity) setRaceEthnicity(parsed.raceEthnicity);
+        if (parsed.veteranStatus) setVeteranStatus(parsed.veteranStatus);
+        if (parsed.disabilityStatus) setDisabilityStatus(parsed.disabilityStatus);
+        if (Array.isArray(parsed.parsedWorkExperience)) setParsedWorkExperience(parsed.parsedWorkExperience);
+        if (Array.isArray(parsed.parsedSkills)) setParsedSkills(parsed.parsedSkills);
+        if (parsed.parsedStandardAnswers && typeof parsed.parsedStandardAnswers === "object") {
+          setParsedStandardAnswers(parsed.parsedStandardAnswers);
+        }
         if (parsed.targetTitles?.length) setTargetTitles(parsed.targetTitles);
         if (parsed.excludedCompanies) setExcludedCompanies(parsed.excludedCompanies);
         if (parsed.minSalary) setMinSalary(parsed.minSalary);
@@ -233,6 +259,8 @@ export default function OnboardingPage() {
       currentCompany, currentTitle, yearsExperience,
       educationLevel, schoolName, degree, graduationYear,
       workAuthorization, requiresSponsorship, gender, raceEthnicity,
+      veteranStatus, disabilityStatus,
+      parsedWorkExperience, parsedSkills, parsedStandardAnswers,
       targetTitles, excludedCompanies, minSalary, remoteOnly, autoApply,
     };
     try {
@@ -244,6 +272,8 @@ export default function OnboardingPage() {
     userId, step, firstName, lastName, phone, linkedinUrl, githubUrl, portfolioUrl,
     currentCompany, currentTitle, yearsExperience, educationLevel, schoolName, degree,
     graduationYear, workAuthorization, requiresSponsorship, gender, raceEthnicity,
+    veteranStatus, disabilityStatus,
+    parsedWorkExperience, parsedSkills, parsedStandardAnswers,
     targetTitles, excludedCompanies, minSalary, remoteOnly, autoApply,
   ]);
 
@@ -316,6 +346,13 @@ export default function OnboardingPage() {
     if (data.requires_sponsorship !== undefined) setRequiresSponsorship(Boolean(data.requires_sponsorship));
     if (data.gender) setGender(data.gender);
     if (data.race_ethnicity) setRaceEthnicity(data.race_ethnicity);
+    if (data.veteran_status) setVeteranStatus(data.veteran_status);
+    if (data.disability_status) setDisabilityStatus(data.disability_status);
+    if (Array.isArray(data.work_experience)) setParsedWorkExperience(data.work_experience);
+    if (Array.isArray(data.skills)) setParsedSkills(data.skills);
+    if (data.standard_answers && typeof data.standard_answers === "object") {
+      setParsedStandardAnswers(data.standard_answers);
+    }
     if (Array.isArray(data.target_titles) && data.target_titles.length) setTargetTitles(data.target_titles);
     if (Array.isArray(data.excluded_companies) && data.excluded_companies.length) {
       setExcludedCompanies(data.excluded_companies.join(", "));
@@ -360,6 +397,10 @@ export default function OnboardingPage() {
             work_authorization: workAuthorization,
             requires_sponsorship: requiresSponsorship,
             gender, race_ethnicity: raceEthnicity,
+            veteran_status: veteranStatus, disability_status: disabilityStatus,
+            work_experience: parsedWorkExperience,
+            skills: parsedSkills,
+            answer_key_json: parsedStandardAnswers,
           }),
         });
         if (!res.ok) throw new Error((await res.json()).message);
@@ -491,25 +532,26 @@ export default function OnboardingPage() {
         {step === 3 && (
           <div className="space-y-4">
             <h2 className="text-xl font-bold">Work & Education</h2>
+            <p className="text-xs text-gray-500">All fields required — ATS forms need these to auto-apply.</p>
             <div className="grid grid-cols-2 gap-4">
-              <input placeholder="Current Company" value={currentCompany} onChange={(e) => setCurrentCompany(e.target.value)} className="px-3 py-2 border rounded-lg" />
-              <input placeholder="Current Title" value={currentTitle} onChange={(e) => setCurrentTitle(e.target.value)} className="px-3 py-2 border rounded-lg" />
+              <input placeholder="Current Company *" value={currentCompany} onChange={(e) => setCurrentCompany(e.target.value)} required className="px-3 py-2 border rounded-lg" />
+              <input placeholder="Current Title *" value={currentTitle} onChange={(e) => setCurrentTitle(e.target.value)} required className="px-3 py-2 border rounded-lg" />
             </div>
-            <input placeholder="Years of Experience" type="number" value={yearsExperience} onChange={(e) => setYearsExperience(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
-            <input placeholder="School Name" value={schoolName} onChange={(e) => setSchoolName(e.target.value)} className="w-full px-3 py-2 border rounded-lg" />
+            <input placeholder="Years of Experience *" type="number" value={yearsExperience} onChange={(e) => setYearsExperience(e.target.value)} required className="w-full px-3 py-2 border rounded-lg" />
+            <input placeholder="School Name *" value={schoolName} onChange={(e) => setSchoolName(e.target.value)} required className="w-full px-3 py-2 border rounded-lg" />
             <div className="grid grid-cols-2 gap-4">
-              <input placeholder="Degree" value={degree} onChange={(e) => setDegree(e.target.value)} className="px-3 py-2 border rounded-lg" />
-              <input placeholder="Graduation Year" type="number" value={graduationYear} onChange={(e) => setGraduationYear(e.target.value)} className="px-3 py-2 border rounded-lg" />
+              <input placeholder="Degree *" value={degree} onChange={(e) => setDegree(e.target.value)} required className="px-3 py-2 border rounded-lg" />
+              <input placeholder="Graduation Year *" type="number" value={graduationYear} onChange={(e) => setGraduationYear(e.target.value)} required className="px-3 py-2 border rounded-lg" />
             </div>
-            <select value={educationLevel} onChange={(e) => setEducationLevel(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
-              <option value="">Education Level</option>
+            <select value={educationLevel} onChange={(e) => setEducationLevel(e.target.value)} required className="w-full px-3 py-2 border rounded-lg">
+              <option value="">Education Level *</option>
               <option value="bachelors">Bachelor&apos;s</option>
               <option value="masters">Master&apos;s</option>
               <option value="phd">PhD</option>
               <option value="other">Other</option>
             </select>
-            <select value={workAuthorization} onChange={(e) => setWorkAuthorization(e.target.value)} className="w-full px-3 py-2 border rounded-lg">
-              <option value="">Work Authorization</option>
+            <select value={workAuthorization} onChange={(e) => setWorkAuthorization(e.target.value)} required className="w-full px-3 py-2 border rounded-lg">
+              <option value="">Work Authorization *</option>
               <option value="us_citizen">US Citizen</option>
               <option value="green_card">Green Card</option>
               <option value="h1b">H-1B</option>
@@ -521,17 +563,17 @@ export default function OnboardingPage() {
               <input type="checkbox" checked={requiresSponsorship} onChange={(e) => setRequiresSponsorship(e.target.checked)} />
               <span className="text-sm">Will require visa sponsorship</span>
             </label>
-            <p className="text-sm text-gray-500 mt-4">EEO Information (optional)</p>
+            <p className="text-sm text-gray-500 mt-4">EEO information (required — ATS forms ask; choose &ldquo;Decline&rdquo; if you prefer not to say).</p>
             <div className="grid grid-cols-2 gap-4">
-              <select value={gender} onChange={(e) => setGender(e.target.value)} className="px-3 py-2 border rounded-lg">
-                <option value="">Gender</option>
+              <select value={gender} onChange={(e) => setGender(e.target.value)} required className="px-3 py-2 border rounded-lg">
+                <option value="">Gender *</option>
                 <option value="male">Male</option>
                 <option value="female">Female</option>
                 <option value="non_binary">Non-binary</option>
                 <option value="decline">Decline to self-identify</option>
               </select>
-              <select value={raceEthnicity} onChange={(e) => setRaceEthnicity(e.target.value)} className="px-3 py-2 border rounded-lg">
-                <option value="">Race/Ethnicity</option>
+              <select value={raceEthnicity} onChange={(e) => setRaceEthnicity(e.target.value)} required className="px-3 py-2 border rounded-lg">
+                <option value="">Race/Ethnicity *</option>
                 <option value="asian">Asian</option>
                 <option value="black">Black or African American</option>
                 <option value="hispanic">Hispanic or Latino</option>
@@ -539,6 +581,18 @@ export default function OnboardingPage() {
                 <option value="native_american">Native American</option>
                 <option value="pacific_islander">Pacific Islander</option>
                 <option value="two_or_more">Two or More Races</option>
+                <option value="decline">Decline to self-identify</option>
+              </select>
+              <select value={veteranStatus} onChange={(e) => setVeteranStatus(e.target.value)} required className="px-3 py-2 border rounded-lg">
+                <option value="">Veteran Status *</option>
+                <option value="not_veteran">Not a veteran</option>
+                <option value="veteran">Veteran</option>
+                <option value="decline">Decline to self-identify</option>
+              </select>
+              <select value={disabilityStatus} onChange={(e) => setDisabilityStatus(e.target.value)} required className="px-3 py-2 border rounded-lg">
+                <option value="">Disability Status *</option>
+                <option value="no_disability">No disability</option>
+                <option value="has_disability">Has disability</option>
                 <option value="decline">Decline to self-identify</option>
               </select>
             </div>
