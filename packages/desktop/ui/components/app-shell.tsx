@@ -24,25 +24,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isSetupRoute = pathname?.startsWith("/setup") ?? false
 
   // First-run setup check: block the main UI and route to /setup if the
-  // desktop isn't provisioned with a valid worker token.
+  // desktop isn't provisioned with a valid worker token. Re-runs every 15s
+  // so a mid-session token revocation (detected by the server's 401 handler)
+  // also bounces the user to the activation wizard instead of trapping them
+  // on a silently-empty dashboard.
   useEffect(() => {
     let cancelled = false
-    getSetupStatus()
-      .then((res) => {
-        if (cancelled) return
-        if (res.setup_complete) {
-          setSetupState("ok")
-        } else {
-          setSetupState("needed")
-          if (!isSetupRoute) router.replace("/setup")
-        }
-      })
-      .catch(() => {
-        // On error (rare), assume ok so we don't trap the user.
-        if (!cancelled) setSetupState("ok")
-      })
+    const check = () => {
+      getSetupStatus()
+        .then((res) => {
+          if (cancelled) return
+          if (res.setup_complete) {
+            setSetupState("ok")
+          } else {
+            setSetupState("needed")
+            if (!isSetupRoute) router.replace("/setup")
+          }
+        })
+        .catch(() => {
+          // On transient errors, don't flip state — just skip this tick.
+        })
+    }
+    check()
+    const interval = setInterval(check, 15000)
     return () => {
       cancelled = true
+      clearInterval(interval)
     }
   }, [isSetupRoute, router])
 

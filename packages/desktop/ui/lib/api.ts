@@ -136,7 +136,22 @@ export async function focusBrowser() {
 
 export interface SetupStatus {
   setup_complete: boolean;
-  reason?: "no_token" | "token_invalid" | "offline";
+  reason?: "no_token" | "token_invalid" | "offline" | "token_revoked";
+  detail?: string;
+}
+
+export interface AuthState {
+  status: "ok" | "revoked" | "unknown" | "no_token";
+  last_checked?: number;
+  last_error?: string | null;
+}
+
+export async function getAuthState() {
+  return apiFetch<AuthState>("/auth/state");
+}
+
+export async function clearReauthMarker() {
+  return apiFetch<{ ok: boolean }>("/setup/clear-reauth", { method: "POST" });
 }
 
 export interface ActivateResult {
