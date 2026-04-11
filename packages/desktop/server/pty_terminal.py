@@ -133,36 +133,52 @@ class PTYSession:
         return None
 
     @staticmethod
-    def _extract_resume_server_side(env: dict) -> bool:
-        """Trigger the server-side resume parser when we detect the profile
-        is 'stub-only' — i.e. work_experience is either empty or has the
-        single-entry synthesis fallback from cli-config. Calling this
-        endpoint reads the user's default resume PDF from Supabase Storage,
-        sends it to OpenAI for structured extraction, and upserts the
-        result into user_profiles. The next _pull_profile_from_cloud will
-        then see the multi-entry data.
+    def _download_resume_locally(env: dict) -> str | None:
+        """Fetch the user's default resume PDF from the cloud and stash it
+        at ~/.autoapply/workspace/resumes/default.pdf so the Claude PTY
+        session can read it with its built-in Read tool.
 
-        Best-effort: never blocks session start. Logs outcome and returns
-        True on HTTP 200, False otherwise."""
+        This is how we turn the resume parser into a local, free-of-third-
+        party-keys flow: instead of calling a Vercel endpoint that needs an
+        OpenAI key, we let the user's already-authenticated Claude Code CLI
+        (their Max subscription) read the PDF directly and PUT the
+        structured result back to /api/settings/profile. Much cleaner
+        architecture — no extra LLM dependency, and the user pays for it
+        via their existing Claude plan.
+
+        Returns the local path on success, None on failure. Idempotent:
+        re-downloads every session start so the local file mirrors
+        whatever's on Supabase (handles the "user replaced their resume"
+        case without a marker-invalidation dance).
+        """
         import urllib.request
         token = (env.get("WORKER_TOKEN") or "").strip().strip('"').strip("'")
         if not token:
-            return False
+            return None
         app_url = os.environ.get("APPLYLOOP_APP_URL", "https://applyloop.vercel.app")
+        target_dir = os.path.expanduser("~/.autoapply/workspace/resumes")
+        target = os.path.join(target_dir, "default.pdf")
         try:
+            os.makedirs(target_dir, exist_ok=True)
             req = urllib.request.Request(
-                f"{app_url}/api/profile/extract-resume",
-                data=b"",
-                method="POST",
-                headers={"X-Worker-Token": token, "Content-Type": "application/json"},
+                f"{app_url}/api/onboarding/resume/download",
+                headers={"X-Worker-Token": token},
             )
-            with urllib.request.urlopen(req, timeout=55) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 body = resp.read()
-                logger.info(f"Resume extraction succeeded: {body[:200].decode('utf-8', errors='replace')}")
-                return True
+            # Sanity: must be a real PDF (4-byte magic).
+            if not body.startswith(b"%PDF"):
+                logger.warning(
+                    f"Resume download returned non-PDF bytes ({len(body)}B) — not caching"
+                )
+                return None
+            with open(target, "wb") as f:
+                f.write(body)
+            logger.info(f"Resume cached locally: {target} ({len(body)}B)")
+            return target
         except Exception as e:
-            logger.warning(f"Resume extraction failed: {e}")
-            return False
+            logger.warning(f"Resume download failed: {e}")
+            return None
 
     @staticmethod
     def _profile_is_stub(profile: dict) -> bool:
@@ -562,29 +578,14 @@ class PTYSession:
                 with open(profile_path, "r", encoding="utf-8") as f:
                     out["profile"] = json.load(f) or {}
 
-            # Step 3.5: stub-detection. If the profile looks like it came
-            # only from the flat-field cli-config synthesis (1 experience
-            # entry with no achievements, empty skills[]), fire the
-            # server-side PDF parser once. This populates the user_profiles
-            # row from their actual resume file in Supabase Storage. After
-            # the parse lands, re-pull so the session boots with the
-            # multi-entry data. Guarded so it only runs once per install
-            # (marker file prevents thrashing on every session start).
-            if PTYSession._profile_is_stub(out["profile"]):
-                marker = os.path.join(cwd, ".resume-extracted.marker")
-                if not os.path.isfile(marker):
-                    logger.info("Profile looks stub-only — calling /api/profile/extract-resume")
-                    if PTYSession._extract_resume_server_side(out["env"]):
-                        try:
-                            with open(marker, "w") as f:
-                                f.write("ok\n")
-                        except Exception:
-                            pass
-                        # Re-pull to pick up the newly-parsed fields.
-                        PTYSession._pull_profile_from_cloud(cwd, out["env"])
-                        if os.path.isfile(profile_path):
-                            with open(profile_path, "r", encoding="utf-8") as f:
-                                out["profile"] = json.load(f) or {}
+            # Step 3.5: download the user's resume PDF locally EVERY
+            # session so Claude can always read it via its built-in Read
+            # tool. No marker/sentinel — we always refresh, so if the user
+            # replaces their resume the next session picks up the new one
+            # automatically. Also records the path so the initial prompt
+            # can inject it into the self-heal instructions.
+            local_resume = PTYSession._download_resume_locally(out["env"])
+            out["resume_path"] = local_resume or ""
         except Exception as e:
             logger.warning(f"profile snapshot read failed: {e}")
             return out
@@ -710,6 +711,8 @@ class PTYSession:
 
         missing = snapshot.get("missing", [])
         is_complete = snapshot.get("complete", False)
+        resume_path = snapshot.get("resume_path") or ""
+        profile_stub = PTYSession._profile_is_stub(p)
 
         lines: list[str] = []
         lines.append("You are the ApplyLoop agent booting fresh for the user.")
@@ -727,6 +730,28 @@ class PTYSession:
         lines.append("")
 
         worker_token_hint = "$(grep ^WORKER_TOKEN= ./.env | cut -d= -f2- | tr -d '\"')"
+
+        # If the profile is stub-only AND the user's resume PDF is sitting
+        # locally, the fastest path is: use your own Read tool to parse the
+        # PDF, extract multi-entry work_experience/skills/education, and
+        # PUT it all to /api/settings/profile in one call. This replaces
+        # asking the user for each field and saves them 10 minutes of typing.
+        if profile_stub and resume_path and os.path.isfile(resume_path):
+            lines.append("RESUME PARSE SHORTCUT:")
+            lines.append(f"  The user's resume PDF is available at: {resume_path}")
+            lines.append("  Your FIRST action, before asking any questions:")
+            lines.append(f"    1. Use the Read tool on {resume_path} to load the PDF")
+            lines.append("    2. Extract multi-entry work_experience[], skills[], education[]")
+            lines.append("       matching the schema in profile.json")
+            lines.append("    3. PUT the extracted arrays to /api/settings/profile via:")
+            lines.append("         curl -sS -X PUT 'https://applyloop.vercel.app/api/settings/profile' \\")
+            lines.append(f"              -H 'X-Worker-Token: {worker_token_hint}' \\")
+            lines.append("              -H 'Content-Type: application/json' \\")
+            lines.append("              -d '{\"work_experience\":[...],\"skills\":[...],\"education\":[...]}'")
+            lines.append("    4. On 200 OK, also update ./profile.json locally to mirror.")
+            lines.append("  Only after the PDF parse is complete should you ask the user")
+            lines.append("  about anything still missing (typically just EEO fields).")
+            lines.append("")
 
         if not is_complete:
             lines.append("PROFILE IS INCOMPLETE on the cloud source. Missing fields:")

@@ -1005,6 +1005,33 @@ chmod 600 "$ENV_FILE" 2>/dev/null || true
 # Also create the worker's runtime dirs so it doesn't crash on first write
 mkdir -p "$HOME/.autoapply/workspace/resumes" "$HOME/.autoapply/workspace/screenshots"
 
+# Cache the user's default resume locally so the Claude Code PTY can read
+# it with its built-in Read tool. This is the file the session-start
+# stub-detection path passes into the initial prompt when profile.json
+# looks thin: Claude parses the PDF, extracts multi-entry work_experience
+# / skills / education, and PUTs them straight back to /api/settings/
+# profile. Keeps resume parsing off the server (no OpenAI key required).
+if [[ -n "$WORKER_TOKEN" ]]; then
+  log "Downloading resume PDF for local Claude parsing"
+  RESUME_TARGET="$HOME/.autoapply/workspace/resumes/default.pdf"
+  RESUME_HTTP="$(curl -sS -o "$RESUME_TARGET" -w "%{http_code}" \
+    -H "X-Worker-Token: $WORKER_TOKEN" \
+    "$APP_URL/api/onboarding/resume/download" 2>/dev/null || echo "000")"
+  if [[ "$RESUME_HTTP" == "200" ]] && [[ -s "$RESUME_TARGET" ]]; then
+    # Magic-byte sniff: real PDFs start with "%PDF".
+    _head="$(head -c 4 "$RESUME_TARGET" 2>/dev/null)"
+    if [[ "$_head" == "%PDF" ]]; then
+      log "  ${C_GREEN}Resume cached${C_RESET} — $(wc -c < "$RESUME_TARGET" | tr -d ' ') bytes"
+    else
+      warn "Downloaded resume isn't a valid PDF (got '${_head}...'), deleting"
+      rm -f "$RESUME_TARGET"
+    fi
+  else
+    warn "Resume download returned HTTP $RESUME_HTTP — Claude will ask for fields interactively on first launch"
+    rm -f "$RESUME_TARGET"
+  fi
+fi
+
 # ------------------------------------------------------------------ Phase E: ~/.applyloop/AGENTS.md
 #
 # Claude Code reads this on its first PTY session spawn (per the updated
