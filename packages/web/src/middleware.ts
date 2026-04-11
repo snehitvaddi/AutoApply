@@ -28,11 +28,27 @@ export async function middleware(request: NextRequest) {
 
   // Allow API routes with their own auth
   if (pathname.startsWith("/api/")) {
+    // Resolve the CORS allowed origin ONCE. In production we refuse to fall
+    // back to http://localhost:3000 — if NEXT_PUBLIC_APP_URL is unset in the
+    // Vercel environment, that's a config bug we want to surface, not a quiet
+    // "let any localhost through" default. In non-production the localhost
+    // default is kept so dev loops work without env setup.
+    const configuredOrigin = process.env.NEXT_PUBLIC_APP_URL?.trim();
+    const isProd = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production";
+    const allowedOrigin = configuredOrigin && /^https?:\/\//.test(configuredOrigin)
+      ? configuredOrigin.replace(/\/+$/, "")
+      : isProd
+        ? null
+        : "http://localhost:3000";
+
     if (request.method === "OPTIONS") {
+      if (!allowedOrigin) {
+        return new NextResponse("CORS origin not configured", { status: 500 });
+      }
       return new NextResponse(null, {
         status: 200,
         headers: {
-          "Access-Control-Allow-Origin": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+          "Access-Control-Allow-Origin": allowedOrigin,
           "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, Authorization",
           "Access-Control-Allow-Credentials": "true",
@@ -40,8 +56,12 @@ export async function middleware(request: NextRequest) {
       });
     }
     const response = NextResponse.next();
-    response.headers.set("Access-Control-Allow-Origin", process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000");
-    response.headers.set("Access-Control-Allow-Credentials", "true");
+    if (allowedOrigin) {
+      response.headers.set("Access-Control-Allow-Origin", allowedOrigin);
+      response.headers.set("Access-Control-Allow-Credentials", "true");
+    }
+    // If allowedOrigin is null (prod + misconfig), we simply emit no CORS
+    // headers. Same-origin calls still work; cross-origin calls fail closed.
     return response;
   }
 
