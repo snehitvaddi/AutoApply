@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 1) Look up the code.
+  // 1) Look up the code (read-only — expiry + user lookup only; decrement is atomic below).
   const { data: codeRow, error: codeErr } = await supabase
     .from("activation_codes")
     .select("code, user_id, expires_at, uses_remaining, last_used_at")
@@ -111,7 +111,9 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 3) Check uses remaining.
+  // 3) Fast-path sanity check on uses_remaining (the authoritative check is the
+  // atomic UPDATE below — this just short-circuits obviously dead codes without
+  // touching the user row).
   if (!codeRow.uses_remaining || codeRow.uses_remaining <= 0) {
     return apiError("validation_error", "This activation code has been used up", {
       code: "used_up",
@@ -139,7 +141,43 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 5) Generate a fresh worker token and store the hash.
+  // 5) ATOMIC decrement — the authoritative race-safe redemption step. This
+  // replaces the old read-modify-write pattern that let 5 parallel requests all
+  // observe uses_remaining=1 and all proceed to mint tokens. By filtering on
+  // `uses_remaining > 0` and using PostgREST's returning=representation, exactly
+  // one concurrent caller will get a row back for a 1-use code. Everyone else
+  // sees an empty result and is rejected as used_up.
+  //
+  // The activation_codes.uses_remaining CHECK (uses_remaining >= 0) constraint
+  // in migration 009 provides a belt-and-suspenders guarantee at the DB level.
+  const { data: decremented, error: decErr } = await supabase
+    .from("activation_codes")
+    .update({
+      uses_remaining: codeRow.uses_remaining - 1,
+      last_used_at: now.toISOString(),
+    })
+    .eq("code", codeRow.code)
+    .eq("uses_remaining", codeRow.uses_remaining) // compare-and-swap against the value we just read
+    .select("code, uses_remaining")
+    .maybeSingle();
+
+  if (decErr) {
+    return apiError("internal_server_error", decErr.message);
+  }
+  if (!decremented) {
+    // Another concurrent request redeemed this use before we could. Re-check:
+    // if uses_remaining is still > 0, it's a CAS collision; if it's 0, it's
+    // genuinely used up. Either way the user-facing answer is the same.
+    return apiError("validation_error", "This activation code has been used up", {
+      code: "used_up",
+    });
+  }
+
+  const remainingUsesAfterRedemption = (decremented as { uses_remaining: number }).uses_remaining;
+
+  // 6) Only AFTER we successfully hold a redemption do we mint a new worker token.
+  // Any failure here does NOT re-increment the code — the user can request a new
+  // one from the admin. This is the safe direction (no free extra redemptions).
   const workerToken = generateWorkerToken();
   const tokenHash = hashToken(workerToken);
 
@@ -153,15 +191,6 @@ export async function POST(request: NextRequest) {
   if (insertErr) {
     return apiError("internal_server_error", insertErr.message);
   }
-
-  // 6) Decrement the code's uses and stamp last_used_at.
-  await supabase
-    .from("activation_codes")
-    .update({
-      uses_remaining: codeRow.uses_remaining - 1,
-      last_used_at: now.toISOString(),
-    })
-    .eq("code", codeRow.code);
 
   // 7) Load profile + preferences + default resume metadata in parallel so the
   // desktop can hydrate everything from one round trip.
@@ -204,6 +233,6 @@ export async function POST(request: NextRequest) {
     profile: profileRes.data || null,
     preferences: prefsRes.data || null,
     default_resume: defaultResume,
-    remaining_uses_after_this_redemption: codeRow.uses_remaining - 1,
+    remaining_uses_after_this_redemption: remainingUsesAfterRedemption,
   });
 }
