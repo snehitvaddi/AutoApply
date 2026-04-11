@@ -39,3 +39,19 @@ build/
 # Misc
 *.log
 /tmp/
+
+# Claude Code workspace
+.claude/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Raw v0 exports (kept locally for reference, never committed)
+v0-ApplyLoop-UI.zip
+v0-ui-export/
+
+# Supabase local CLI state
+supabase/.temp/
+
+# Stray screenshots
+/image.png
