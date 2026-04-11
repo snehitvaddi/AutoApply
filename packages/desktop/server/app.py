@@ -385,19 +385,48 @@ async def _download_default_resume(token: str) -> bool:
 async def setup_status():
     """First-run check: is this desktop install provisioned with a worker token?
 
-    We deliberately only force the setup wizard when there's NO token on disk.
-    An invalid/revoked token will still surface as 401 errors inside the main
-    dashboard's proxy calls (which is fine — the user can see those and react),
-    but we won't trap them in the setup wizard and prevent normal usage during
-    transient outages or revocation events.
+    We force the setup wizard when:
+      - No token file on disk
+      - The worker or desktop dropped a .needs-reauth marker after a 401
+      - stats._proxy has flipped its in-memory auth state to "revoked"
 
-      - No token file on disk → setup needed
-      - Token file present → setup complete (validity is checked on each proxy call)
+    Transient network errors are ignored — only a positive 401/403 from
+    the remote API (or a totally missing token) forces re-activation.
     """
     token = load_token()
     if not token:
         return {"setup_complete": False, "reason": "no_token"}
+
+    # Worker-side reauth marker: dropped by worker/db.py::_api_call on 401/403.
+    reauth_marker = WORKSPACE_DIR / ".needs-reauth"
+    if reauth_marker.exists():
+        try:
+            detail = reauth_marker.read_text().strip()
+        except Exception:
+            detail = "worker reported 401/403"
+        return {"setup_complete": False, "reason": "token_revoked", "detail": detail}
+
+    # Desktop-side auth state: flipped by stats._proxy on 401/403.
+    state = stats.get_auth_state()
+    if state.get("status") == "revoked":
+        return {
+            "setup_complete": False,
+            "reason": "token_revoked",
+            "detail": state.get("last_error") or "desktop proxy saw 401/403",
+        }
+
     return {"setup_complete": True}
+
+
+@app.post("/api/setup/clear-reauth")
+async def clear_reauth():
+    """Delete the .needs-reauth marker — called after a successful re-activate."""
+    marker = WORKSPACE_DIR / ".needs-reauth"
+    try:
+        marker.unlink(missing_ok=True)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True}
 
 
 @app.post("/api/setup/activate")
@@ -478,6 +507,16 @@ async def setup_activate(body: dict):
         TOKEN_FILE.write_text(worker_token)
         try:
             TOKEN_FILE.chmod(0o600)
+        except Exception:
+            pass
+        # Clear any prior reauth marker + reset the in-memory auth state so
+        # the dashboard stops redirecting to /setup on the next poll.
+        try:
+            (WORKSPACE_DIR / ".needs-reauth").unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            stats._mark_auth_ok()
         except Exception:
             pass
         logger.info("Activation successful — worker token saved")
