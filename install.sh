@@ -779,7 +779,35 @@ else
   echo "${C_BOLD}Optional integrations${C_RESET} — press Enter to skip any field."
   echo ""
 
-  # 1) Telegram chat ID. Chat IDs are integers; group chats can be
+  # 1a) Telegram bot token. The cloud's cli-config returns an admin-global
+  # bot token in TELEGRAM_BOT_TOKEN_VAL, but when that admin slot is empty
+  # or stubbed with a placeholder the user needs their own bot. Real tokens
+  # are shaped "<bot_id>:<secret>" and are at least ~45 chars. Anything
+  # shorter (e.g. "placeholder") we treat as absent and re-prompt.
+  _tg_bot_valid="no"
+  if [[ -n "$TELEGRAM_BOT_TOKEN_VAL" ]]; then
+    if [[ ${#TELEGRAM_BOT_TOKEN_VAL} -ge 30 && "$TELEGRAM_BOT_TOKEN_VAL" == *:* ]]; then
+      _tg_bot_valid="yes"
+    fi
+  fi
+  if [[ "$_tg_bot_valid" == "no" ]]; then
+    echo "${C_BOLD}  Telegram bot token${C_RESET} - required if you want ApplyLoop to message you"
+    echo "    (if you already have a bot, paste its token; otherwise skip)"
+    echo ""
+    echo "    How to get a bot token in 45 seconds:"
+    echo "      1. Open Telegram → search for @BotFather → /start"
+    echo "      2. Send /newbot, pick a name (anything), pick a username ending in 'bot'"
+    echo "      3. BotFather replies with a line like: 1234567890:ABCdefGHIjklMNOpqrsTUV..."
+    echo "      4. Paste that full line below. Press Enter to skip."
+    TELEGRAM_BOT_TOKEN_VAL="$(reuse_or_prompt \
+      TELEGRAM_BOT_TOKEN \
+      'Telegram Bot Token' \
+      '^[0-9]{6,}:[A-Za-z0-9_-]{25,}$' \
+      'format is <bot_id>:<secret>, e.g. 1234567890:ABCdef...')"
+    echo ""
+  fi
+
+  # 1b) Telegram chat ID. Chat IDs are integers; group chats can be
   # negative (e.g. -1001234567890). Precedence:
   #   1. env var APPLYLOOP_TELEGRAM_CHAT_ID (non-interactive override)
   #   2. value already in the activation response (cli-config)
@@ -788,16 +816,23 @@ else
   if [[ -n "${APPLYLOOP_TELEGRAM_CHAT_ID:-}" ]]; then
     ACTIVATION_TELEGRAM_CHAT_ID="$APPLYLOOP_TELEGRAM_CHAT_ID"
   elif [[ -z "$ACTIVATION_TELEGRAM_CHAT_ID" ]]; then
-    echo "${C_BOLD}  Telegram notifications${C_RESET}"
-    echo "    1. Open Telegram, find @ApplyLoopBot"
-    echo "    2. Send /start to the bot"
-    echo "    3. Bot replies with your Chat ID"
-    echo "    4. Paste the number below (or Enter to skip)"
-    ACTIVATION_TELEGRAM_CHAT_ID="$(reuse_or_prompt \
-      TELEGRAM_CHAT_ID \
-      'Telegram Chat ID' \
-      '^-?[0-9]+$' \
-      'digits only (may start with - for group chats)')"
+    if [[ -n "$TELEGRAM_BOT_TOKEN_VAL" ]]; then
+      echo "${C_BOLD}  Telegram chat ID${C_RESET}"
+      echo "    1. Open Telegram, start a chat with YOUR bot (the one you just made)"
+      echo "    2. Send it any message (e.g. 'hello')"
+      echo "    3. Visit: https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN_VAL:0:12}.../getUpdates"
+      echo "       and look for 'chat':{'id': NUMBER — that's your chat ID"
+      echo "    4. Paste the number below (or Enter to skip)"
+    else
+      echo "${C_BOLD}  Telegram chat ID${C_RESET} - skipping (no bot token provided)"
+    fi
+    if [[ -n "$TELEGRAM_BOT_TOKEN_VAL" ]]; then
+      ACTIVATION_TELEGRAM_CHAT_ID="$(reuse_or_prompt \
+        TELEGRAM_CHAT_ID \
+        'Telegram Chat ID' \
+        '^-?[0-9]+$' \
+        'digits only (may start with - for group chats)')"
+    fi
     echo ""
   fi
 
