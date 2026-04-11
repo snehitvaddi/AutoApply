@@ -4,8 +4,10 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { AppShell } from "@/components/app-shell"
 import { Play, Square, RotateCcw, Wifi, WifiOff } from "lucide-react"
 import { cn } from "@/lib/utils"
+import type { Terminal as XTerm } from "xterm"
+import type { FitAddon as XFitAddon } from "@xterm/addon-fit"
+import "xterm/css/xterm.css"
 
-// WebSocket URL for the real PTY terminal
 const WS_URL = typeof window !== "undefined"
   ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/pty`
   : "ws://localhost:18790/ws/pty"
@@ -13,10 +15,12 @@ const WS_URL = typeof window !== "undefined"
 export default function TerminalPage() {
   const [connected, setConnected] = useState(false)
   const [sessionAlive, setSessionAlive] = useState(false)
-  const termRef = useRef<HTMLDivElement>(null)
+  const [initError, setInitError] = useState<string | null>(null)
+  const [termEl, setTermEl] = useState<HTMLDivElement | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const xtermRef = useRef<unknown>(null)
-  const fitAddonRef = useRef<unknown>(null)
+  const xtermRef = useRef<XTerm | null>(null)
+  const fitAddonRef = useRef<XFitAddon | null>(null)
+  const pendingWritesRef = useRef<Uint8Array[]>([])
 
   const connectWs = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -25,128 +29,153 @@ export default function TerminalPage() {
     ws.binaryType = "arraybuffer"
     wsRef.current = ws
 
-    ws.onopen = () => {
-      setConnected(true)
-    }
+    ws.onopen = () => setConnected(true)
 
     ws.onmessage = (event) => {
       if (typeof event.data === "string") {
-        // JSON control message
         try {
           const msg = JSON.parse(event.data)
-          if (msg.type === "status") {
-            setSessionAlive(msg.alive)
-          }
+          if (msg.type === "status") setSessionAlive(msg.alive)
         } catch { /* not JSON */ }
       } else {
-        // Binary PTY output → write to xterm
-        const term = xtermRef.current as { write: (data: Uint8Array) => void } | null
+        const bytes = new Uint8Array(event.data)
+        const term = xtermRef.current
         if (term) {
-          term.write(new Uint8Array(event.data))
+          term.write(bytes)
+        } else {
+          pendingWritesRef.current.push(bytes)
         }
       }
     }
 
     ws.onclose = () => {
       setConnected(false)
-      // Auto-reconnect after 3s
       setTimeout(connectWs, 3000)
     }
 
     ws.onerror = () => ws.close()
   }, [])
 
-  // Initialize xterm.js
   useEffect(() => {
-    if (!termRef.current) return
+    connectWs()
+    return () => {
+      wsRef.current?.close()
+    }
+  }, [connectWs])
 
-    let term: unknown
-    let fitAddon: unknown
+  useEffect(() => {
+    if (!termEl) return
+
+    let term: XTerm | null = null
+    let fitAddon: XFitAddon | null = null
+    let disposed = false
+
+    const handleResize = () => {
+      try { fitAddonRef.current?.fit() } catch { /* ignore */ }
+    }
+    window.addEventListener("resize", handleResize)
+    const ro = new ResizeObserver(handleResize)
+    ro.observe(termEl)
 
     const initTerm = async () => {
-      const { Terminal } = await import("xterm")
-      const { FitAddon } = await import("@xterm/addon-fit")
-      const { WebLinksAddon } = await import("@xterm/addon-web-links")
+      try {
+        const xtermMod = await import("xterm")
+        const fitMod = await import("@xterm/addon-fit")
+        const linksMod = await import("@xterm/addon-web-links")
 
-      term = new Terminal({
-        cursorBlink: true,
-        fontSize: 13,
-        fontFamily: "'Geist Mono', 'SF Mono', 'Menlo', monospace",
-        theme: {
-          background: "#0d1117",
-          foreground: "#c9d1d9",
-          cursor: "#58a6ff",
-          selectionBackground: "#3b82f640",
-          black: "#0d1117",
-          red: "#f85149",
-          green: "#3fb950",
-          yellow: "#d29922",
-          blue: "#58a6ff",
-          magenta: "#bc8cff",
-          cyan: "#39d2c0",
-          white: "#c9d1d9",
-          brightBlack: "#484f58",
-          brightRed: "#f85149",
-          brightGreen: "#3fb950",
-          brightYellow: "#d29922",
-          brightBlue: "#58a6ff",
-          brightMagenta: "#bc8cff",
-          brightCyan: "#39d2c0",
-          brightWhite: "#f0f6fc",
-        },
-        allowProposedApi: true,
-      })
+        const TerminalCtor =
+          (xtermMod as { Terminal?: new (opts: unknown) => XTerm }).Terminal ??
+          (xtermMod as { default?: { Terminal?: new (opts: unknown) => XTerm } }).default?.Terminal
+        const FitAddonCtor =
+          (fitMod as { FitAddon?: new () => XFitAddon }).FitAddon ??
+          (fitMod as { default?: { FitAddon?: new () => XFitAddon } }).default?.FitAddon
+        const WebLinksAddonCtor =
+          (linksMod as { WebLinksAddon?: new () => unknown }).WebLinksAddon ??
+          (linksMod as { default?: { WebLinksAddon?: new () => unknown } }).default?.WebLinksAddon
 
-      fitAddon = new FitAddon()
-      const webLinksAddon = new WebLinksAddon()
+        if (!TerminalCtor) throw new Error("xterm: Terminal export missing")
+        if (!FitAddonCtor) throw new Error("@xterm/addon-fit: FitAddon export missing")
+        if (disposed) return
 
-      const t = term as { loadAddon: (a: unknown) => void; open: (e: HTMLElement) => void; onData: (cb: (data: string) => void) => void; onResize: (cb: (size: { cols: number; rows: number }) => void) => void }
-      t.loadAddon(fitAddon)
-      t.loadAddon(webLinksAddon)
-      t.open(termRef.current!)
+        term = new TerminalCtor({
+          cursorBlink: true,
+          fontSize: 13,
+          fontFamily: "'Geist Mono', 'SF Mono', 'Menlo', monospace",
+          theme: {
+            background: "#0d1117",
+            foreground: "#c9d1d9",
+            cursor: "#58a6ff",
+            selectionBackground: "#3b82f640",
+            black: "#0d1117",
+            red: "#f85149",
+            green: "#3fb950",
+            yellow: "#d29922",
+            blue: "#58a6ff",
+            magenta: "#bc8cff",
+            cyan: "#39d2c0",
+            white: "#c9d1d9",
+            brightBlack: "#484f58",
+            brightRed: "#f85149",
+            brightGreen: "#3fb950",
+            brightYellow: "#d29922",
+            brightBlue: "#58a6ff",
+            brightMagenta: "#bc8cff",
+            brightCyan: "#39d2c0",
+            brightWhite: "#f0f6fc",
+          },
+          allowProposedApi: true,
+        })
 
-      const fa = fitAddon as { fit: () => void }
-      fa.fit()
-
-      xtermRef.current = term
-      fitAddonRef.current = fitAddon
-
-      // Send keystrokes to PTY via WebSocket
-      t.onData((data: string) => {
-        const ws = wsRef.current
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data }))
+        fitAddon = new FitAddonCtor()
+        term.loadAddon(fitAddon as unknown as Parameters<XTerm["loadAddon"]>[0])
+        if (WebLinksAddonCtor) {
+          term.loadAddon(new WebLinksAddonCtor() as unknown as Parameters<XTerm["loadAddon"]>[0])
         }
-      })
+        term.open(termEl)
 
-      // Send resize events
-      t.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-        const ws = wsRef.current
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "resize", cols, rows }))
+        requestAnimationFrame(() => {
+          try { fitAddon?.fit() } catch (e) { console.error("[terminal] fit failed", e) }
+        })
+
+        xtermRef.current = term
+        fitAddonRef.current = fitAddon
+
+        if (pendingWritesRef.current.length > 0) {
+          for (const chunk of pendingWritesRef.current) term.write(chunk)
+          pendingWritesRef.current = []
         }
-      })
 
-      // Connect WebSocket after terminal is ready
-      connectWs()
+        term.onData((data: string) => {
+          const ws = wsRef.current
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "input", data }))
+          }
+        })
+
+        term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+          const ws = wsRef.current
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "resize", cols, rows }))
+          }
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error("[terminal] xterm init failed", err)
+        setInitError(msg)
+      }
     }
 
     initTerm()
 
-    // Handle window resize
-    const handleResize = () => {
-      const fa = fitAddonRef.current as { fit: () => void } | null
-      if (fa) fa.fit()
-    }
-    window.addEventListener("resize", handleResize)
-
     return () => {
+      disposed = true
       window.removeEventListener("resize", handleResize)
-      const t = term as { dispose: () => void } | undefined
-      if (t) t.dispose()
-      wsRef.current?.close()
+      ro.disconnect()
+      try { term?.dispose() } catch { /* ignore */ }
+      xtermRef.current = null
+      fitAddonRef.current = null
     }
-  }, [connectWs])
+  }, [termEl])
 
   const handleStart = async () => {
     const ws = wsRef.current
@@ -167,16 +196,13 @@ export default function TerminalPage() {
 
   const handleRestart = async () => {
     await fetch("/api/pty/restart", { method: "POST" })
-    // Clear terminal
-    const term = xtermRef.current as { clear: () => void } | null
-    if (term) term.clear()
+    xtermRef.current?.clear()
     connectWs()
   }
 
   return (
     <AppShell>
       <div className="flex h-[calc(100vh-48px)] flex-col gap-4">
-        {/* Toolbar */}
         <div className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3">
           <div className="flex items-center gap-2">
             <button
@@ -214,22 +240,25 @@ export default function TerminalPage() {
             </button>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            {connected ? (
+            {initError ? (
+              <span className="text-xs text-destructive">xterm error: {initError}</span>
+            ) : connected ? (
               <Wifi className="h-4 w-4 text-success" />
             ) : (
               <WifiOff className="h-4 w-4 text-destructive" />
             )}
-            <span className="text-xs text-muted-foreground">
-              {connected
-                ? sessionAlive
-                  ? "Session active"
-                  : "Click Start Session"
-                : "Connecting..."}
-            </span>
+            {!initError && (
+              <span className="text-xs text-muted-foreground">
+                {connected
+                  ? sessionAlive
+                    ? "Session active"
+                    : "Click Start Session"
+                  : "Connecting..."}
+              </span>
+            )}
           </div>
         </div>
 
-        {/* xterm.js Terminal */}
         <div className="flex-1 overflow-hidden rounded-xl border border-border bg-[#0d1117]">
           <div className="flex h-8 items-center gap-2 border-b border-[#21262d] px-4">
             <div className="h-3 w-3 rounded-full bg-[#ff5f57]" />
@@ -238,7 +267,7 @@ export default function TerminalPage() {
             <span className="ml-2 text-xs text-[#8b949e]">claude --dangerously-skip-permissions</span>
           </div>
           <div
-            ref={termRef}
+            ref={setTermEl}
             className="h-[calc(100%-32px)] w-full"
             style={{ padding: "4px" }}
           />

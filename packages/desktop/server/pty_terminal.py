@@ -8,6 +8,7 @@ Session persists across page refreshes (reconnect gets buffer backfill).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shlex
@@ -131,6 +132,480 @@ class PTYSession:
                 return p
         return None
 
+    @staticmethod
+    def _pull_profile_from_cloud(cwd: str, env: dict) -> bool:
+        """Sync profile.json FROM the cloud on every session start.
+
+        This is what makes "cloud is source of truth" real: every PTY spawn
+        re-hydrates local profile.json from /api/settings/cli-config, so
+        anything the user changed on applyloop.vercel.app (or anything Claude
+        pushed from a previous session) is reflected in this session.
+
+        Merge policy: cloud wins on any field that cloud has non-empty;
+        local preserves anything cloud hasn't set yet.
+
+        Best-effort: network failures log a warning and leave the file alone
+        so the session still boots offline."""
+        import urllib.request
+        token = (env.get("WORKER_TOKEN") or "").strip().strip('"').strip("'")
+        if not token:
+            return False
+        app_url = os.environ.get("APPLYLOOP_APP_URL", "https://applyloop.vercel.app")
+        try:
+            req = urllib.request.Request(
+                f"{app_url}/api/settings/cli-config",
+                headers={"X-Worker-Token": token},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                payload = json.loads(resp.read()) or {}
+        except Exception as e:
+            logger.warning(f"Cloud profile pull failed: {e}")
+            return False
+
+        data = payload.get("data") or {}
+        cloud_profile = data.get("profile") or {}
+        cloud_prefs = data.get("preferences") or {}
+        cloud_user = data.get("user") or {}
+        if not cloud_profile and not cloud_prefs:
+            return False
+
+        profile_path = os.path.join(cwd, "profile.json")
+        try:
+            with open(profile_path, "r", encoding="utf-8") as f:
+                local = json.load(f) or {}
+        except Exception:
+            local = {}
+
+        # Push-delta: any field where local has non-empty data but cloud
+        # doesn't. This catches data Claude collected in a previous session
+        # but failed to PUT up. We'll accumulate here then PUT at the end.
+        push_delta: dict = {}
+
+        def nonempty(v) -> bool:
+            if v is None: return False
+            if isinstance(v, str): return bool(v.strip())
+            if isinstance(v, (list, dict)): return bool(v)
+            return True
+
+        local.setdefault("user", {})
+        for src, dst in (("id", "id"), ("email", "email"), ("full_name", "full_name")):
+            if nonempty(cloud_user.get(src)):
+                local["user"][dst] = cloud_user.get(src)
+        if nonempty(data.get("tier")):
+            local["user"]["tier"] = data.get("tier")
+
+        # Three-way reconcile helper: cloud wins on non-empty, else local
+        # wins and goes into the push_delta for upload.
+        def reconcile(local_container: dict, local_key: str,
+                      cloud_val, server_field: str):
+            if nonempty(cloud_val):
+                local_container[local_key] = cloud_val
+            else:
+                lv = local_container.get(local_key)
+                if nonempty(lv):
+                    push_delta[server_field] = lv
+
+        personal = local.setdefault("personal", {})
+        for k in ("first_name", "last_name", "phone", "linkedin_url",
+                  "github_url", "portfolio_url"):
+            reconcile(personal, k, cloud_profile.get(k), k)
+        if nonempty(cloud_user.get("email")):
+            personal["email"] = cloud_user.get("email")
+
+        work = local.setdefault("work", {})
+        for k in ("current_company", "current_title", "years_experience"):
+            reconcile(work, k, cloud_profile.get(k), k)
+
+        legal = local.setdefault("legal", {})
+        for k in ("work_authorization", "requires_sponsorship"):
+            reconcile(legal, k, cloud_profile.get(k), k)
+
+        eeo = local.setdefault("eeo", {})
+        for k in ("gender", "race_ethnicity", "veteran_status", "disability_status"):
+            reconcile(eeo, k, cloud_profile.get(k), k)
+
+        # Top-level arrays (experience/skills) + education string.
+        # Server field names differ: experience → work_experience, but
+        # skills and education keep their names.
+        if nonempty(cloud_profile.get("work_experience")):
+            local["experience"] = cloud_profile.get("work_experience")
+        elif nonempty(local.get("experience")):
+            push_delta["work_experience"] = local["experience"]
+
+        if nonempty(cloud_profile.get("skills")):
+            local["skills"] = cloud_profile.get("skills")
+        elif nonempty(local.get("skills")):
+            push_delta["skills"] = local["skills"]
+
+        if nonempty(cloud_profile.get("education")):
+            local["education"] = cloud_profile.get("education")
+        elif nonempty(local.get("education")):
+            push_delta["education"] = local["education"]
+
+        edu_summary = local.setdefault("education_summary", {})
+        for k in ("education_level", "school_name", "degree", "graduation_year"):
+            reconcile(edu_summary, k, cloud_profile.get(k), k)
+
+        if nonempty(cloud_profile.get("answer_key_json")):
+            local["standard_answers"] = cloud_profile.get("answer_key_json")
+        elif nonempty(local.get("standard_answers")):
+            push_delta["answer_key_json"] = local["standard_answers"]
+
+        if nonempty(cloud_profile.get("cover_letter_template")):
+            local["cover_letter_template"] = cloud_profile.get("cover_letter_template")
+        elif nonempty(local.get("cover_letter_template")):
+            push_delta["cover_letter_template"] = local["cover_letter_template"]
+
+        if cloud_prefs:
+            local["preferences"] = cloud_prefs
+
+        try:
+            with open(profile_path, "w", encoding="utf-8") as f:
+                json.dump(local, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not write pulled profile: {e}")
+            return False
+
+        # Push-delta: ship local-only data up to the cloud so future pulls
+        # will have it. This is what reconciles prior sessions where Claude
+        # wrote to local but failed the curl PUT.
+        if push_delta:
+            pushed = PTYSession._push_profile_to_cloud(cwd, env, push_delta)
+            if pushed:
+                logger.info(f"Synced profile: pulled cloud, pushed local delta ({len(push_delta)} fields: {', '.join(push_delta.keys())})")
+            else:
+                logger.warning(f"Pulled cloud but delta push failed for {len(push_delta)} fields")
+        else:
+            logger.info("Pulled profile from cloud (local already in sync)")
+        return True
+
+    @staticmethod
+    def _push_profile_to_cloud(cwd: str, env: dict, fields: dict) -> bool:
+        """PUT a partial update to /api/settings/profile. Called after the
+        local normalization step inferred fields the cloud didn't have, and
+        available for Claude to invoke (via the prompt directive) after every
+        answer it collects from the user.
+
+        Silent on failure — never blocks the session."""
+        import urllib.request
+        token = (env.get("WORKER_TOKEN") or "").strip().strip('"').strip("'")
+        if not token or not fields:
+            return False
+        app_url = os.environ.get("APPLYLOOP_APP_URL", "https://applyloop.vercel.app")
+        try:
+            body = json.dumps(fields).encode("utf-8")
+            req = urllib.request.Request(
+                f"{app_url}/api/settings/profile",
+                data=body,
+                method="PUT",
+                headers={
+                    "X-Worker-Token": token,
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                resp.read()
+            logger.info(f"Pushed {len(fields)} field(s) to cloud profile")
+            return True
+        except Exception as e:
+            logger.warning(f"Cloud profile push failed: {e}")
+            return False
+
+    @staticmethod
+    def _normalize_profile_inplace(profile: dict) -> list:
+        """Infer missing fields from data the profile already has, so Claude
+        doesn't waste the user's time asking for things we can derive.
+
+        Returns a list of field paths we populated (for logging). The profile
+        dict is mutated in place. The caller writes it back to disk.
+
+        Inference rules:
+          - education_summary.education_level / .degree / .field from the
+            top-level `education` string (e.g. "MS in Computer & Information
+            Science" → masters / MS / Computer & Information Science).
+          - experience[0] from work.current_company + work.current_title
+            if experience[] is empty but the flat fields are populated
+            (mirrors the server-side synthesis in /api/settings/cli-config).
+        """
+        populated: list[str] = []
+        edu_str = profile.get("education") if isinstance(profile.get("education"), str) else ""
+        edu_summary = profile.setdefault("education_summary", {})
+
+        if edu_str and isinstance(edu_summary, dict):
+            import re
+            s = edu_str.strip()
+            s_lower = s.lower()
+
+            # education_level
+            if not edu_summary.get("education_level"):
+                if re.search(r"\b(phd|ph\.d|doctorate|doctoral)\b", s_lower):
+                    edu_summary["education_level"] = "phd"
+                    populated.append("education_summary.education_level=phd")
+                elif re.search(r"\b(ms|m\.s|ma|m\.a|mba|master'?s?|master of)\b", s_lower):
+                    edu_summary["education_level"] = "masters"
+                    populated.append("education_summary.education_level=masters")
+                elif re.search(r"\b(bs|b\.s|ba|b\.a|bachelor'?s?|bachelor of)\b", s_lower):
+                    edu_summary["education_level"] = "bachelors"
+                    populated.append("education_summary.education_level=bachelors")
+
+            # degree (short form at start of string, before " in " / " of ")
+            if not edu_summary.get("degree"):
+                m = re.match(r"^\s*(MS|M\.S\.?|MA|M\.A\.?|MBA|BS|B\.S\.?|BA|B\.A\.?|PhD|Ph\.D\.?|Master'?s?|Bachelor'?s?|Doctorate)\b", s)
+                if m:
+                    edu_summary["degree"] = m.group(1)
+                    populated.append(f"education_summary.degree={m.group(1)}")
+
+            # field of study ("in X" / "of X")
+            m = re.search(r"\b(?:in|of)\s+(.+?)(?:\s+at\s+|\s+from\s+|\s*\(|,|$)", s, re.IGNORECASE)
+            if m and not edu_summary.get("field"):
+                edu_summary["field"] = m.group(1).strip()
+                populated.append(f"education_summary.field={m.group(1).strip()[:40]}")
+
+        # experience[] synthesis from flat work fields
+        work = profile.get("work", {}) or {}
+        exp = profile.get("experience")
+        current_company = work.get("current_company")
+        current_title = work.get("current_title")
+        if (not exp or (isinstance(exp, list) and len(exp) == 0)) and current_company:
+            profile["experience"] = [{
+                "company": current_company,
+                "title": current_title or "",
+                "location": "",
+                "start_date": "",
+                "end_date": "Present",
+                "current": True,
+                "achievements": [],
+            }]
+            populated.append("experience[0] from work.current_company/title")
+
+        return populated
+
+    @staticmethod
+    def _read_profile_snapshot(cwd: str) -> dict:
+        """Load profile.json + .env from the cwd and return the minimal snapshot
+        the initial prompt needs. Returns {} on any read error so startup is
+        never blocked by a bad profile file."""
+        out: dict = {"complete": False, "missing": [], "profile": {}, "env": {}}
+        try:
+            # Step 1: read .env (needed for the cloud sync token).
+            env_path = os.path.join(cwd, ".env")
+            if os.path.isfile(env_path):
+                env_pairs = {}
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        env_pairs[k.strip()] = v.strip().strip('"').strip("'")
+                out["env"] = env_pairs
+
+            # Step 2: pull the latest profile from the cloud BEFORE reading
+            # the local file. This re-hydrates profile.json so any changes
+            # made on applyloop.vercel.app (or pushed by a previous session)
+            # are reflected in this session. Cloud is the source of truth.
+            PTYSession._pull_profile_from_cloud(cwd, out["env"])
+
+            # Step 3: read the (now freshly-synced) local profile.
+            profile_path = os.path.join(cwd, "profile.json")
+            if os.path.isfile(profile_path):
+                with open(profile_path, "r", encoding="utf-8") as f:
+                    out["profile"] = json.load(f) or {}
+        except Exception as e:
+            logger.warning(f"profile snapshot read failed: {e}")
+            return out
+
+        # Pre-infer fields Claude would otherwise ask about, so we don't
+        # waste the user's time on things the existing profile already
+        # implies (e.g. education_level="masters" from education="MS in ...").
+        p = out["profile"]
+        if p:
+            try:
+                inferred = PTYSession._normalize_profile_inplace(p)
+                if inferred:
+                    profile_path = os.path.join(cwd, "profile.json")
+                    try:
+                        with open(profile_path, "w", encoding="utf-8") as f:
+                            json.dump(p, f, indent=2)
+                        logger.info(f"Pre-inferred profile fields: {', '.join(inferred)}")
+                    except Exception as e:
+                        logger.warning(f"Could not persist inferred profile: {e}")
+                    # Push the inferred fields up to the cloud so the pull
+                    # side stays authoritative. Only push the subset we
+                    # actually inferred, mapped to server field names.
+                    edu = (p.get("education_summary") or {})
+                    patch: dict = {}
+                    if edu.get("education_level"):
+                        patch["education_level"] = edu["education_level"]
+                    if edu.get("degree"):
+                        patch["degree"] = edu["degree"]
+                    if edu.get("school_name"):
+                        patch["school_name"] = edu["school_name"]
+                    if edu.get("graduation_year"):
+                        patch["graduation_year"] = edu["graduation_year"]
+                    if patch:
+                        PTYSession._push_profile_to_cloud(cwd, out["env"], patch)
+            except Exception as e:
+                logger.warning(f"Profile normalization failed: {e}")
+
+        missing: list[str] = []
+        personal = p.get("personal", {}) or {}
+        if not personal.get("first_name"):
+            missing.append("personal.first_name")
+        work = p.get("work", {}) or {}
+        if not work.get("current_company"):
+            missing.append("work.current_company")
+        if not p.get("experience"):
+            missing.append("experience[]")
+        if not p.get("skills"):
+            missing.append("skills[]")
+        edu = p.get("education_summary", {}) or {}
+        for k in ("education_level", "school_name", "degree", "graduation_year"):
+            if not edu.get(k):
+                missing.append(f"education_summary.{k}")
+                break  # one is enough to flag
+        eeo = p.get("eeo", {}) or {}
+        for k in ("gender", "race_ethnicity", "veteran_status", "disability_status"):
+            if not eeo.get(k):
+                missing.append(f"eeo.{k}")
+                break
+        prefs = p.get("preferences", {}) or {}
+        if not prefs.get("target_titles"):
+            missing.append("preferences.target_titles")
+        out["missing"] = missing
+        out["complete"] = len(missing) == 0
+        return out
+
+    @staticmethod
+    def _build_initial_prompt(cwd: str, snapshot: dict) -> str:
+        """Construct the personalized, auto-start-capable prompt Claude sees
+        at session boot. Branches on whether profile.json is complete:
+
+          - complete  → Claude fires a Telegram startup announce, then kicks
+                        off the scout loop immediately without waiting for
+                        'start'.
+          - incomplete → Claude first collects the missing fields from the
+                        user interactively, PATCHes them to
+                        /api/settings/profile, rewrites ~/.applyloop/profile.json,
+                        then fires the same Telegram announce and auto-starts.
+        """
+        p = snapshot.get("profile", {}) or {}
+        env = snapshot.get("env", {}) or {}
+        personal = p.get("personal", {}) or {}
+        work = p.get("work", {}) or {}
+        prefs = p.get("preferences", {}) or {}
+
+        first_name = personal.get("first_name") or "there"
+        current_company = work.get("current_company") or "unknown company"
+        current_title = work.get("current_title") or "unknown role"
+        target_titles = ", ".join((prefs.get("target_titles") or [])[:6]) or "roles listed in profile.json"
+
+        # A real Telegram bot token is ~45+ chars in the shape
+        # "<bot_id>:<secret>" — anything shorter (e.g. "placeholder") is
+        # a stub from an incomplete admin-side config. Treat stubs as
+        # absent so Claude doesn't try to curl a 404.
+        tg_bot_raw = (env.get("TELEGRAM_BOT_TOKEN") or "").strip()
+        tg_chat = (env.get("TELEGRAM_CHAT_ID") or "").strip()
+        tg_bot_real = len(tg_bot_raw) >= 30 and ":" in tg_bot_raw
+        tg_bot = tg_bot_raw if tg_bot_real else ""
+        tg_available = bool(tg_bot and tg_chat)
+
+        missing = snapshot.get("missing", [])
+        is_complete = snapshot.get("complete", False)
+
+        lines: list[str] = []
+        lines.append("You are the ApplyLoop agent booting fresh for the user.")
+        lines.append(f"User: {first_name} — currently {current_title} at {current_company}.")
+        lines.append(f"Target roles: {target_titles}.")
+        lines.append("")
+        lines.append("ARCHITECTURE RULE — read once, apply everywhere:")
+        lines.append("  The SINGLE SOURCE OF TRUTH is the cloud profile at applyloop.vercel.app.")
+        lines.append("  Local ./profile.json is a CACHE — it was just re-pulled from the cloud")
+        lines.append("  before this session started. NEVER treat local as authoritative.")
+        lines.append("  Every profile change MUST be PUT to the server FIRST. Updating local")
+        lines.append("  only is forbidden — it will be overwritten on next boot.")
+        lines.append("")
+        lines.append("Playbook: ./packages/worker/SOUL.md.")
+        lines.append("")
+
+        worker_token_hint = "$(grep ^WORKER_TOKEN= ./.env | cut -d= -f2- | tr -d '\"')"
+
+        if not is_complete:
+            lines.append("PROFILE IS INCOMPLETE on the cloud source. Missing fields:")
+            lines.append("  " + ", ".join(missing))
+            lines.append("")
+            lines.append("STEP 1 — collect each missing field by asking the user one at a time.")
+            lines.append("  - skills[]: comma list of top 10-15 technical skills.")
+            lines.append("  - school_name: university name only.")
+            lines.append("  - graduation_year: 4-digit year.")
+            lines.append("  - eeo.gender/race_ethnicity/veteran_status/disability_status: 'decline' is valid.")
+            lines.append("  Do NOT re-ask for education_level/degree/field — already inferred from profile.education string.")
+            lines.append("")
+            lines.append("STEP 2 — persist every answer to the CLOUD FIRST (PUT), then mirror local:")
+            lines.append("    curl -sS -X PUT 'https://applyloop.vercel.app/api/settings/profile' \\")
+            lines.append(f"         -H 'X-Worker-Token: {worker_token_hint}' \\")
+            lines.append("         -H 'Content-Type: application/json' \\")
+            lines.append("         -d '{\"skills\": [\"Python\",\"PyTorch\"]}'")
+            lines.append("  Accepted field names: work_experience, skills, education, education_level,")
+            lines.append("  school_name, degree, graduation_year, gender, race_ethnicity,")
+            lines.append("  veteran_status, disability_status, cover_letter_template, answer_key_json.")
+            lines.append("  Only after the server returns 200, update ./profile.json to match.")
+            lines.append("")
+            lines.append("STEP 3 — once every missing field has a successful PUT, continue below.")
+            lines.append("")
+        else:
+            lines.append("Profile is complete on the cloud. Skip straight to the announce + loop steps.")
+            lines.append("")
+
+        if tg_available:
+            lines.append("STEP A — send a Telegram startup announcement now. Use curl:")
+            lines.append(f"  curl -sS 'https://api.telegram.org/bot{tg_bot}/sendMessage' -d 'chat_id={tg_chat}' --data-urlencode 'text=[ApplyLoop] Session started for {first_name}. Targets: {target_titles}. Beginning scout loop now.'")
+            lines.append("")
+        else:
+            lines.append("(Telegram bot not configured for this account — skip the Telegram step.)")
+            lines.append("")
+
+        lines.append("STEP B — greet the user in the terminal in ONE short line (first name only), then immediately")
+        lines.append("begin the scout loop by running: cd ./packages/worker && python3 worker.py")
+        lines.append("Do NOT wait for a 'start' or 'scout' command — this is an auto-run session. The user can")
+        lines.append("type 'stop' at any time to halt the loop.")
+        lines.append("")
+        lines.append("If profile.json is missing entirely (not just incomplete), tell the user the install is")
+        lines.append("broken and to run `applyloop update`. Otherwise proceed through the steps above in order.")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _ensure_claude_trust(cwd: str) -> None:
+        """Pre-populate ~/.claude.json so Claude Code doesn't ask for
+        workspace trust on first spawn. Schema observed from an existing
+        install: {"projects": {"/abs/path": {"hasTrustDialogAccepted": true}}}.
+        Merges into an existing file when present; creates the file otherwise.
+        All errors swallowed — if this fails the user sees the prompt once,
+        which is strictly better than failing to spawn Claude."""
+        try:
+            abs_cwd = os.path.abspath(cwd)
+            config_path = os.path.expanduser("~/.claude.json")
+            data: dict = {}
+            if os.path.isfile(config_path):
+                try:
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        data = json.load(f) or {}
+                except Exception:
+                    data = {}
+            projects = data.setdefault("projects", {})
+            entry = projects.setdefault(abs_cwd, {})
+            if entry.get("hasTrustDialogAccepted") is True:
+                return
+            entry["hasTrustDialogAccepted"] = True
+            tmp_path = f"{config_path}.applyloop.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, config_path)
+            logger.info(f"Pre-accepted Claude trust for {abs_cwd}")
+        except Exception as e:
+            logger.warning(f"Could not pre-accept Claude trust: {e}")
+
     def start(self) -> bool:
         """Spawn the PTY session."""
         if self.is_alive:
@@ -172,6 +647,25 @@ class PTYSession:
         except Exception as e:
             logger.warning(f"Could not create cwd {cwd}: {e}")
             cwd = os.path.expanduser("~")
+
+        # Pre-accept Claude Code's workspace-trust dialog for this cwd so
+        # the user isn't hit with "Is this a project you created or one you
+        # trust?" on every fresh install. --dangerously-skip-permissions
+        # bypasses tool-use prompts but NOT the one-time trust dialog;
+        # that's stored in ~/.claude.json under projects[<cwd>].
+        self._ensure_claude_trust(cwd)
+
+        # Build the personalized initial prompt from profile.json + .env.
+        # This is done in the parent (before fork) so we can log what we
+        # detected and so the child doesn't need file-IO racing the exec.
+        profile_snapshot = self._read_profile_snapshot(cwd)
+        if not profile_snapshot["complete"]:
+            logger.info(
+                f"Profile incomplete — missing: {', '.join(profile_snapshot['missing'])}. "
+                f"Claude will collect them interactively on first turn."
+            )
+        else:
+            logger.info("Profile complete — Claude will auto-start scout loop + fire Telegram announce.")
 
         env = {**os.environ}
         token = load_token()
@@ -254,16 +748,11 @@ class PTYSession:
             # wrapper, they always have a shell fallback.
             os.chdir(cwd)
 
-            initial_prompt = (
-                "Read ./AGENTS.md for your full context and system status. "
-                "Then read ./packages/worker/SOUL.md for the scout/apply playbook. "
-                "Read ./profile.json to know who the user is. "
-                "Greet the user by first name (from profile.json personal.first_name) ONCE, "
-                "describe your capabilities briefly, then WAIT for commands. "
-                "DO NOT auto-start the loop - the user must say 'start' or 'scout'. "
-                "If profile.json is missing, tell the user the install is incomplete "
-                "and point them at `applyloop update`."
-            )
+            # Built in the parent above from profile.json + .env snapshot.
+            # Auto-starts the loop, injects first_name/role/targets inline,
+            # and handles missing profile fields by instructing Claude to
+            # collect them interactively AND push them up to the server.
+            initial_prompt = self._build_initial_prompt(cwd, profile_snapshot)
             # Single-quote escape for the prompt inside the bash -c string:
             # any single-quote in the prompt becomes '"'"'. We don't have
             # any in the current prompt text, but defensive anyway.
