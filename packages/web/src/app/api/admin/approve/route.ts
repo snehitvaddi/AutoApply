@@ -97,12 +97,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 2. Auto-generate worker token
-    const { token, hash } = generateWorkerToken(user_id);
+    // 2. Auto-generate worker token (hash-only — raw token is NEVER returned)
+    //
+    // Prior to this fix, the raw token was placed on the response body so the
+    // admin UI could display it. That meant anyone with access to the network
+    // tab, a logging proxy, an HAR export, or the Vercel function logs got
+    // permanent worker credentials for the approved user. The correct delivery
+    // channel is the activation-code flow (/api/admin/activation-code +
+    // /api/activate), which the user redeems themselves. The token is
+    // generated here purely so existing pre-activation-code desktop installs
+    // continue to work via POST /api/admin/worker-token (which regenerates
+    // on demand and is admin-gated). The admin UI should use that endpoint
+    // explicitly if they need the plaintext.
+    const { hash } = generateWorkerToken(user_id);
     await supabase
       .from("worker_tokens")
       .upsert({ user_id, token_hash: hash, revoked_at: null }, { onConflict: "user_id" });
-    result.worker_token = token;
+    result.worker_token_provisioned = true;
   }
 
   return apiSuccess(result);
