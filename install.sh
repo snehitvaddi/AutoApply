@@ -116,6 +116,17 @@ ensure_openclaw() {
     log "Installing openclaw via $NPM"
     "$NPM" install -g openclaw || warn "npm install -g openclaw failed — wizard will retry later"
   fi
+
+  # OpenClaw is open source — no Pro tier, no subscription. The "gateway"
+  # is just a local WebSocket daemon registered as a user-scope launchd
+  # service. Install + start it now so the wizard's gateway preflight
+  # check passes immediately on first launch instead of showing a
+  # confusing red row.
+  if command -v openclaw >/dev/null 2>&1; then
+    log "Registering openclaw gateway launchd service"
+    openclaw gateway install >/dev/null 2>&1 || warn "openclaw gateway install failed — worker will spawn one on demand"
+    openclaw gateway start   >/dev/null 2>&1 || true
+  fi
 }
 
 # ------------------------------------------------------------------ run bootstrap

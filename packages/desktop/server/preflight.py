@@ -258,21 +258,27 @@ def _check_openclaw_cli() -> dict:
 
 
 def _check_openclaw_gateway() -> dict:
-    """7. `openclaw gateway status` returns a live gateway. Gateway
-    activation is tied to the Pro subscription — the CLI can be
-    installed without a valid Pro licence, and that would fail at
-    apply time with a confusing error. Catch it here instead."""
+    """7. `openclaw gateway status` — checks whether the local OpenClaw
+    gateway daemon (a WebSocket service that brokers between the CLI and
+    the browser) is reachable. OpenClaw is open source and 100% local;
+    there is no Pro tier, no subscription, no license — earlier versions
+    of this check incorrectly labelled it that way. The gateway is just
+    a local launchd service that the worker talks to.
+
+    The worker can spawn a transient gateway on demand if the launchd
+    service isn't installed, so this check is OPTIONAL — failure shows
+    a hint, not a blocker.
+    """
     openclaw = _find_binary("openclaw")
     if not openclaw:
-        # Already covered by _check_openclaw_cli. Mark this row hidden so
-        # the UI doesn't show two consecutive rows about the same missing
-        # CLI — once openclaw is installed, the gateway check runs for
-        # real and surfaces subscription state.
+        # Covered by _check_openclaw_cli — hide so the wizard doesn't show
+        # two consecutive rows about the same missing tool.
         return {
             "id": "openclaw_gateway",
             "ok": False,
             "hidden": True,
-            "label": "OpenClaw Pro subscription",
+            "optional": True,
+            "label": "OpenClaw gateway",
             "detail": "Pending OpenClaw CLI install",
             "remediation": {"type": "install", "target": "openclaw"},
         }
@@ -285,46 +291,56 @@ def _check_openclaw_gateway() -> dict:
         return {
             "id": "openclaw_gateway",
             "ok": False,
-            "label": "OpenClaw Pro subscription",
+            "optional": True,
+            "label": "OpenClaw gateway",
             "detail": "gateway status check timed out after 8s",
             "remediation": {
-                "type": "link",
-                "target": "https://openclaw.com/pricing",
+                "type": "install",
+                "target": "openclaw_gateway",
+                "command": "openclaw gateway install && openclaw gateway start",
             },
         }
     except Exception as e:
         return {
             "id": "openclaw_gateway",
             "ok": False,
-            "label": "OpenClaw Pro subscription",
+            "optional": True,
+            "label": "OpenClaw gateway",
             "detail": f"gateway status error: {e}",
             "remediation": {
-                "type": "link",
-                "target": "https://openclaw.com/pricing",
+                "type": "install",
+                "target": "openclaw_gateway",
+                "command": "openclaw gateway install && openclaw gateway start",
             },
         }
 
-    stdout = (r.stdout or "").strip().lower()
-    stderr = (r.stderr or "").strip().lower()
-    combined = f"{stdout}\n{stderr}"
-    # Heuristics — openclaw's exact output format may drift, so check for
-    # both a healthy marker ("running" / "active" / "ready") and error markers
-    # ("not running" / "expired" / "invalid license").
-    if r.returncode == 0 and any(k in combined for k in ("running", "active", "ready", "ok")):
+    stdout = (r.stdout or "").strip()
+    stderr = (r.stderr or "").strip()
+    combined = f"{stdout}\n{stderr}".lower()
+    # The launchd service might not be loaded but the RPC probe can still
+    # succeed if the worker spawned a transient gateway. Trust the probe.
+    rpc_ok = "rpc probe: ok" in combined
+    service_loaded = "service: launchagent" in combined and "(not loaded)" not in combined
+
+    if r.returncode == 0 and (rpc_ok or service_loaded):
+        first_line = next((ln for ln in stdout.splitlines() if ln.strip()), "gateway reachable")
         return {
             "id": "openclaw_gateway",
             "ok": True,
-            "label": "OpenClaw Pro subscription",
-            "detail": (stdout or "gateway healthy").splitlines()[0][:100],
+            "optional": True,
+            "label": "OpenClaw gateway",
+            "detail": first_line[:100],
         }
     return {
         "id": "openclaw_gateway",
         "ok": False,
-        "label": "OpenClaw Pro subscription",
-        "detail": (stdout or stderr or "gateway not running").splitlines()[-1][:140],
+        "optional": True,
+        "label": "OpenClaw gateway",
+        "detail": "Gateway service not running — auto-installable, the worker will spawn one on demand if missing",
         "remediation": {
-            "type": "link",
-            "target": "https://openclaw.com/pricing",
+            "type": "install",
+            "target": "openclaw_gateway",
+            "command": "openclaw gateway install && openclaw gateway start",
         },
     }
 
@@ -450,6 +466,16 @@ _INSTALL_COMMANDS = {
     },
     "openclaw": {
         "Darwin": ["npm", "install", "-g", "openclaw"],
+    },
+    # Register + start the openclaw gateway launchd service. This is the
+    # "Install" action wired to the openclaw_gateway preflight row when
+    # the gateway daemon isn't running. NOT a license activation — just
+    # a local launchd plist registration.
+    "openclaw_gateway": {
+        "Darwin": [
+            "bash", "-c",
+            "openclaw gateway install && openclaw gateway start",
+        ],
     },
     "git": {
         "Darwin": ["brew", "install", "git"],
