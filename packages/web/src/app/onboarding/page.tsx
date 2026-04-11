@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { AI_PROFILE_PROMPT } from "@/lib/profile-schema";
 
 // Persistent onboarding draft. We key by user id so switching Google accounts
 // on the same machine doesn't show a stranger's data. The draft is a single
@@ -55,84 +56,6 @@ const ROLE_PRESETS = [
   "Research Scientist", "Deep Learning Engineer", "Data Analyst",
   "BI Engineer", "Search Relevance Engineer",
 ];
-
-const AI_PROFILE_PROMPT = `I'm setting up ApplyLoop — an automated job application bot. I need my COMPLETE professional profile extracted as JSON. Use my resume (paste it below or reference from our past conversations).
-
-IMPORTANT: Include ALL work experiences, ALL education entries, skills, and generate professional answers for common application questions.
-
-Respond with ONLY this JSON (fill everything you know, leave "" for unknown):
-
-{
-  "first_name": "",
-  "last_name": "",
-  "email": "",
-  "phone": "",
-  "pronouns": "he/him",
-  "linkedin_url": "",
-  "github_url": "",
-  "portfolio_url": "",
-  "city": "",
-  "state": "",
-  "zip_code": "",
-  "street_address": "",
-
-  "current_company": "",
-  "current_title": "",
-  "years_experience": 0,
-
-  "work_experience": [
-    {"company": "", "title": "", "location": "", "start_date": "Mon YYYY", "end_date": "Present", "achievements": ["bullet 1", "bullet 2", "bullet 3"]},
-    {"company": "", "title": "", "location": "", "start_date": "Mon YYYY", "end_date": "Mon YYYY", "achievements": ["bullet 1", "bullet 2"]}
-  ],
-
-  "education": [
-    {"school": "", "degree": "", "field": "", "start_date": "Mon YYYY", "end_date": "Mon YYYY", "gpa": ""},
-    {"school": "", "degree": "", "field": "", "start_date": "Mon YYYY", "end_date": "Mon YYYY", "gpa": ""}
-  ],
-
-  "skills": ["Python", "PyTorch", "etc"],
-
-  "education_level": "masters",
-  "school_name": "",
-  "degree": "",
-  "graduation_year": 0,
-
-  "work_authorization": "opt",
-  "requires_sponsorship": true,
-  "gender": "male",
-  "race_ethnicity": "asian",
-  "veteran_status": "not_veteran",
-  "disability_status": "no_disability",
-  "hispanic_latino": "no",
-
-  "salary_min": 120000,
-  "salary_max": 180000,
-  "willing_to_relocate": true,
-
-  "target_titles": ["AI Engineer", "ML Engineer", "Data Scientist"],
-  "excluded_companies": [],
-  "preferred_locations": ["United States"],
-  "remote_only": false,
-  "auto_apply": true,
-
-  "standard_answers": {
-    "why_interested": "3-4 sentence answer about why you're interested in AI/ML roles, referencing your background",
-    "strengths": "3-4 sentence answer about your key technical strengths",
-    "career_goals": "2-3 sentence answer about your career direction",
-    "cover_letter_template": "4-5 sentence cover letter intro referencing your experience and what excites you about the role",
-    "additional_info": "Any relevant info: visa status, publications, certifications, etc."
-  }
-}
-
-Valid values:
-- education_level: "bachelors", "masters", "phd", "other"
-- work_authorization: "us_citizen", "green_card", "h1b", "opt", "tn", "other"
-- gender: "male", "female", "non_binary", "decline"
-- race_ethnicity: "asian", "black", "hispanic", "white", "native_american", "pacific_islander", "two_or_more", "decline"
-- veteran_status: "not_veteran", "veteran", "decline"
-- disability_status: "no_disability", "has_disability", "decline"
-
-Include ALL your work experiences (not just current). Include ALL education. Generate real professional answers for standard_answers based on your actual background.`;
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
