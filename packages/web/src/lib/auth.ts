@@ -17,7 +17,19 @@ export async function authenticateRequest(
   request: NextRequest
 ): Promise<AuthResult | { error: AuthError }> {
   // 0. Check for X-Worker-Token header
-  const workerToken = request.headers.get("x-worker-token");
+  //
+  // Worker tokens look like `al_<prefix>_<secret>`. We refuse to even hash
+  // obviously-bogus inputs (empty, short, whitespace-bearing) because:
+  //   - An empty or all-whitespace token would hash to a fixed value and a
+  //     sufficiently distributed attacker could plant that hash in a broken
+  //     deploy and gain auth for free.
+  //   - Whitespace in a bearer value is almost always a copy-paste accident
+  //     and never a legitimate token — fail loudly.
+  const rawWorkerToken = request.headers.get("x-worker-token");
+  const workerToken = rawWorkerToken?.trim() || null;
+  if (rawWorkerToken !== null && (!workerToken || workerToken.length < 20 || /\s/.test(workerToken))) {
+    return { error: "unauthorized" };
+  }
   if (workerToken) {
     const tokenHash = crypto.createHash("sha256").update(workerToken).digest("hex");
     const supabaseAdmin = createClient(
@@ -42,8 +54,23 @@ export async function authenticateRequest(
   }
 
   // 1. Check for Bearer token
+  //
+  // Validate the stripped token BEFORE calling Supabase:
+  //   - Empty string (header was exactly "Bearer "): reject.
+  //   - Whitespace-bearing: a real JWT or opaque token has no spaces.
+  //   - Shorter than 20 chars: no legitimate supabase session token is that
+  //     short; this blocks probe traffic from even hitting auth.getUser().
+  // Any of these used to silently fall through to cookie auth, which is
+  // surprising behaviour for a caller who explicitly set Authorization.
   const authHeader = request.headers.get("authorization");
-  const token = authHeader?.replace("Bearer ", "");
+  const rawToken = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length)
+    : undefined;
+  const token = rawToken?.trim();
+  const bearerPresent = authHeader !== null && authHeader.startsWith("Bearer ");
+  if (bearerPresent && (!token || token.length < 20 || /\s/.test(token))) {
+    return { error: "unauthorized" };
+  }
 
   if (token) {
     const supabaseAdmin = createClient(
