@@ -11,10 +11,10 @@ const supabase = createClient(
 );
 
 const GITHUB_TOKEN = process.env.GITHUB_PERSONAL_TOKEN || "";
-const GITHUB_REPO = "snehitvaddi/AutoApply";
+const GITHUB_REPO = process.env.GITHUB_COLLABORATOR_REPO || "";
 
 async function addGitHubCollaborator(githubUsername: string): Promise<boolean> {
-  if (!GITHUB_TOKEN || !githubUsername) return false;
+  if (!GITHUB_TOKEN || !GITHUB_REPO || !githubUsername) return false;
   try {
     const resp = await fetch(
       `https://api.github.com/repos/${GITHUB_REPO}/collaborators/${githubUsername}`,
