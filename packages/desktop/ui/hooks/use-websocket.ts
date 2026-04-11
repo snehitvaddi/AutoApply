@@ -19,6 +19,16 @@ export function useWebSocket(path: string, options: UseWebSocketOptions = {}) {
   const [connected, setConnected] = useState(false)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Stash the latest onMessage in a ref so the `connect` callback
+  // doesn't need it in its dep array. Without this, every caller that
+  // forgets to wrap their handler in useCallback([]) would cause the
+  // socket to disconnect + reconnect on every render — dropping messages
+  // and thrashing the backend.
+  const onMessageRef = useRef(onMessage)
+  useEffect(() => {
+    onMessageRef.current = onMessage
+  }, [onMessage])
+
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
@@ -30,9 +40,9 @@ export function useWebSocket(path: string, options: UseWebSocketOptions = {}) {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
-        onMessage?.(data)
+        onMessageRef.current?.(data)
       } catch {
-        onMessage?.(event.data)
+        onMessageRef.current?.(event.data)
       }
     }
 
@@ -44,7 +54,7 @@ export function useWebSocket(path: string, options: UseWebSocketOptions = {}) {
     }
 
     ws.onerror = () => ws.close()
-  }, [path, onMessage, autoReconnect, reconnectInterval])
+  }, [path, autoReconnect, reconnectInterval])
 
   useEffect(() => {
     connect()
