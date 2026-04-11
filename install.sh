@@ -41,9 +41,16 @@ if [[ -z "${APPLYLOOP_REEXEC:-}" ]] && [[ ! -t 0 ]]; then
   REEXEC_TMP="$(mktemp -t applyloop-install.XXXXXX)" || REEXEC_TMP="/tmp/applyloop-install.$$.sh"
   if curl -fsSL "$REEXEC_URL" -o "$REEXEC_TMP" 2>/dev/null && [[ -s "$REEXEC_TMP" ]]; then
     chmod +x "$REEXEC_TMP"
-    APPLYLOOP_REEXEC=1 exec bash "$REEXEC_TMP" </dev/null
+    # CRITICAL: pass "$@" through. When the user invokes us via
+    # `curl | bash -s -- AL-X1Y2-Z3W4`, the activation code is in $1
+    # of the ORIGINAL bash process. Without "$@" on the exec line, the
+    # re-exec'd tmpfile starts with no positional args and falls through
+    # to the interactive prompt, re-asking for a code the user already
+    # provided. Env vars (APPLYLOOP_CODE) are inherited automatically
+    # across exec — this fix is specifically for the positional-arg path.
+    APPLYLOOP_REEXEC=1 exec bash "$REEXEC_TMP" "$@" </dev/null
   fi
-  echo "WARNING: could not re-fetch install.sh for safe re-exec. If the install dies after 'Installing python@3.11', re-run as: curl -fsSL $REEXEC_URL -o /tmp/applyloop-install.sh && bash /tmp/applyloop-install.sh" >&2
+  echo "WARNING: could not re-fetch install.sh for safe re-exec. If the install dies after 'Installing python@3.11', re-run as: curl -fsSL $REEXEC_URL -o /tmp/applyloop-install.sh && bash /tmp/applyloop-install.sh -- $*" >&2
 fi
 
 set -euo pipefail
