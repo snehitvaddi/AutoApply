@@ -39,57 +39,23 @@ OFFSET_FILE = WORKSPACE_DIR / "telegram-offset.json"
 POLL_TIMEOUT_SEC = 30  # long-poll; Telegram holds the connection until a message arrives or timeout
 TELEGRAM_MAX_MSG_LEN = 4000  # keep below the 4096 API limit with a safety margin
 
-# ── Smart routing: PTY (default) vs qa_agent (fast-path for questions) ───
+# ── Message routing ──────────────────────────────────────────────────────
 #
-# Design: PTY is the default because Claude Code CAN answer questions too
-# (just slower), but qa_agent CANNOT execute commands. So the safe default
-# is PTY — any misclassification still works, just a bit slower.
+# ALL messages go to the PTY by default. Claude Code can both answer
+# questions AND execute commands — there's no need to classify intent.
 #
-# qa_agent fast-path is an OPTIMIZATION for obvious status questions where
-# we don't want to interrupt the apply loop. Prefix `?` forces qa_agent.
-
-_QUESTION_STARTERS = [
-    "how many", "how much", "what's", "what is", "what are",
-    "show me", "list", "status", "summary", "count",
-    "tell me about", "any update", "progress",
-]
+# The only exception: prefix `?` forces the qa_agent fast-path for a
+# quick stat lookup without touching the PTY. This is an explicit
+# user opt-in, not an auto-detection heuristic.
 
 
 def _is_question(text: str) -> bool:
-    """Return True if the message is an obvious status question that can be
-    answered from the SQLite snapshot without touching the PTY.
+    """Only returns True if the user explicitly prefixes with `?`.
 
-    The DEFAULT is False (→ route to PTY). This function only returns True
-    for clear read-only questions. Anything ambiguous goes to the PTY where
-    Claude can decide whether to act or just answer.
-
-    Prefix `?` forces question mode. Prefix `!` forces PTY/command mode.
-
-    Examples that return True (→ qa_agent fast path):
-      "how many applied today?"
-      "?what's the queue size"
-      "status"
-      "show me recent failures"
-
-    Examples that return False (→ PTY, Claude decides):
-      "stop scouting"
-      "I found this job https://... apply to it"
-      "defense companies aren't for me"
-      "the scouting seems slow, try Indeed too"
-      "!how many today" (forced PTY with !)
+    Everything else goes to the PTY where Claude Code decides what to do.
+    No heuristic classification — Claude is the classifier.
     """
-    t = text.strip()
-    # Prefix overrides
-    if t.startswith("!"):
-        return False  # forced PTY
-    if t.startswith("?"):
-        return True   # forced qa_agent
-    tl = t.lower()
-    # Ends with ? and is short → likely a question
-    if tl.endswith("?") and len(tl.split()) <= 10:
-        return True
-    # Starts with a known question pattern
-    return any(tl.startswith(q) for q in _QUESTION_STARTERS)
+    return text.strip().startswith("?")
 
 
 class TelegramClient:
