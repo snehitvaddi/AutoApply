@@ -60,36 +60,59 @@ SCOUT → FILTER → READ JD → FILL → VERIFY → SUBMIT → SCREENSHOT → T
 ```
 
 ### STEP 1: SCOUT (every 30 min)
-**HIGH (always):** Ashby API, Greenhouse API, Lever API
-**MEDIUM (80%):** Indeed, Himalayas
-**LOW (40%):** JSearch, LinkedIn, ZipRecruiter
+**HIGH (always):** Ashby API, Greenhouse API
+**MEDIUM (80%):** Indeed, Himalayas, LinkedIn, ZipRecruiter
+**LOW (40%):** JSearch
 
 Board slugs and API URLs → see `packages/worker/config.py`
 
 ### STEP 2: FILTER
 - Role matches user's target_titles from profile.json
 - Posted within 24h (verify after fetch)
-- Location matches preferences or "Remote"
-- Not blocked: staffing agencies, defense contractors, user's excluded list
-- Skip titles: staff, principal, director, vp, manager, intern, sales, legal, recruiter, designer
-- Senior at FAANG → skip. Senior at startups → keep.
+- Location matches user's preferred_locations or "Remote"
+- Not blocked: staffing agencies, user's excluded_companies list
 - Dedup: check local applications.db (SQLite) before applying
 - Rate limit: 2/day/company, 5/15days/company
-- AI keyword word-boundary for short words (ai, ml, nlp, llm, genai)
+- All filter criteria come from the user's profile — NO hardcoded role/level/location opinions
 
 ### STEP 3: READ JD
 Before opening form: check years required vs user's experience, domain match, skip if wrong fit.
 
-### STEP 4: FILL
+### STEP 4: FILL (UNIVERSAL — works on ANY ATS)
+
+You have OpenClaw (browser automation) as your hands and your own intelligence
+as the brain. You can apply to ANY job form on ANY platform — not just the 4
+coded appliers (Greenhouse, Ashby, Lever, SmartRecruiters). Those coded
+appliers are optimizations. For everything else, YOU drive the browser:
+
 ```
 openclaw browser open "<url>"
 openclaw browser wait --load networkidle --timeout-ms 5000
 openclaw browser snapshot --efficient --interactive
 ```
-Fill from profile.json: personal, links, resume, authorization, education, experience, EEO, answers.
-One `openclaw browser fill --fields` for all text. JS evaluate for dropdowns. Upload resume.
+
+1. **Snapshot the page** — read what fields are visible
+2. **Match fields to profile.json** — name, email, phone, experience, education, EEO, etc.
+3. **Fill using openclaw browser fill/type/select/click** — one field at a time if needed
+4. **Upload resume** via `openclaw browser upload`
+5. **Handle any ATS** — Workday, iCIMS, Taleo, Jobvite, BambooHR, custom forms, Google Forms
+6. **Handle login walls** — create account or sign in (see WORKDAY LOGIN WALL section)
+7. **Handle email verification** — read codes via himalaya
+8. If a field is unclear, use your judgment from the profile data. Never leave required fields empty.
+
+**The key insight: you are not limited to pre-coded appliers.** Every job URL
+is just a web page with form fields. You can read the snapshot, understand
+what's being asked, and fill it from the user's profile. That's what makes
+you better than a rigid script — you adapt to any form layout.
 
 **Resume tailoring:** If FINETUNE_RESUME_URL set → call API → use tailored PDF for this application.
+
+**ATS detection from aggregator URLs:** Indeed, Himalayas, LinkedIn, ZipRecruiter
+are job aggregators, not ATS platforms. Their apply_url often redirects to the
+real ATS (Greenhouse, Lever, Workday, etc.). After opening the URL:
+1. Check the final URL after redirect
+2. If it's a known ATS (greenhouse.io, lever.co, ashbyhq.com) → use the optimized applier
+3. If it's unknown → use the universal approach above (snapshot → fill → submit)
 
 ### STEP 5: VERIFY
 Re-snapshot. Check empty required fields. Fix (max 2 retries).
@@ -174,11 +197,16 @@ curl -s -X POST "https://api.telegram.org/bot${TOKEN}/sendPhoto" -F "chat_id=${C
 If empty → ask user to message bot → /start → copy Chat ID.
 Send test notification on first startup.
 
-## APPLICATION LOGGING (all 4 required)
-1. Local SQLite: `~/.autoapply/workspace/applications.db` (auto-created by worker on first write)
-2. Remote API: POST /api/worker/proxy with action=log_application
-3. Telegram screenshot
-4. Heartbeat: POST /api/worker/proxy with action=heartbeat
+## APPLICATION LOGGING
+
+**Local SQLite is the source of truth** for all job data:
+1. `~/.autoapply/workspace/applications.db` — every scouted, queued, applied, failed job lives here
+2. Telegram screenshot — proof of submission (send photo + caption)
+3. Cloud heartbeat — POST /api/worker/proxy with action=heartbeat (just status + counts, NOT job details)
+
+Job details (company, title, URL, form data) stay LOCAL. Only aggregate
+counts (scouted_today, applied_today, failed_today) sync to the cloud for
+the web dashboard. The cloud does NOT need every job row.
 
 ## INTERVIEW MONITORING (daily)
 Check Gmail via himalaya for: interview, phone screen, coding challenge, onsite, offer, next steps.

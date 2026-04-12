@@ -130,21 +130,32 @@ def update_queue_status(queue_id: str, status: str, error: str | None = None):
 # ── Application logging ───────────────────────────────────────────────────
 
 def log_application(user_id: str, job: dict, result: dict):
-    """Log a submitted/failed application to remote API + local SQLite."""
-    _api_call(
-        "log_application",
-        job_id=job.get("job_id"),
-        queue_id=job.get("id"),
-        company=job.get("company", ""),
-        title=job.get("title", ""),
-        ats=job.get("ats", ""),
-        apply_url=job.get("apply_url", ""),
-        status=result.get("status", "submitted"),
-        screenshot_url=result.get("screenshot_url"),
-        error=result.get("error"),
-    )
-    # Dual-write to local SQLite for desktop dashboard
+    """Log application to local SQLite (source of truth) + send only
+    aggregate counts to the cloud for the web dashboard.
+
+    Job details (company, title, URL) stay LOCAL. The cloud only gets:
+    - status (submitted/failed)
+    - count increment
+    This keeps client data private and reduces cloud dependency."""
+    # Primary: local SQLite (the source of truth for all job data)
     _log_to_local_db(job, result)
+    # Secondary: cloud gets just the status for aggregate counting.
+    # Best-effort — failure here doesn't lose data (it's in SQLite).
+    try:
+        _api_call(
+            "log_application",
+            job_id=job.get("job_id"),
+            queue_id=job.get("id"),
+            company=job.get("company", ""),
+            title=job.get("title", ""),
+            ats=job.get("ats", ""),
+            apply_url=job.get("apply_url", ""),
+            status=result.get("status", "submitted"),
+            screenshot_url=result.get("screenshot_url"),
+            error=result.get("error"),
+        )
+    except Exception as e:
+        logger.debug(f"Cloud log failed (non-fatal, local SQLite has the data): {e}")
 
 
 def _get_local_conn() -> sqlite3.Connection:

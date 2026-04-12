@@ -34,6 +34,7 @@ from applier.greenhouse import GreenhouseApplier
 from applier.lever import LeverApplier
 from applier.ashby import AshbyApplier
 from applier.smartrecruiters import SmartRecruitersApplier
+from applier.workday import WorkdayApplier
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message)s')
 logger = logging.getLogger(f'worker-{WORKER_ID}')
@@ -42,12 +43,41 @@ logger = logging.getLogger(f'worker-{WORKER_ID}')
 _seen_urls: set = set()
 _seen_urls_date: str = ""
 
+# Coded appliers — optimized form-fillers for specific ATS platforms.
+# For unknown ATS, the SOUL.md "universal applier" approach is used by
+# Claude Code directly (OpenClaw snapshot → fill → submit). These coded
+# ones are faster because they don't need LLM reasoning per field.
 APPLIERS = {
     'greenhouse': GreenhouseApplier,
     'lever': LeverApplier,
     'ashby': AshbyApplier,
     'smartrecruiters': SmartRecruitersApplier,
+    'workday': WorkdayApplier,
 }
+
+# ATS detection from apply URLs — aggregators (Indeed, Himalayas, LinkedIn)
+# link to the real ATS. Resolve before claiming so the right applier is used.
+_ATS_URL_PATTERNS = {
+    'greenhouse': ['greenhouse.io', 'boards-api.greenhouse.io'],
+    'lever': ['lever.co', 'jobs.lever.co'],
+    'ashby': ['ashbyhq.com', 'jobs.ashbyhq.com'],
+    'smartrecruiters': ['smartrecruiters.com'],
+    'workday': ['myworkdayjobs.com', 'myworkday.com', 'wd1.', 'wd2.', 'wd3.', 'wd4.', 'wd5.'],
+}
+
+
+def _resolve_ats_from_url(apply_url: str, tagged_ats: str) -> str:
+    """If the job was tagged with an aggregator ATS (indeed, himalayas, linkedin),
+    try to detect the real ATS from the apply URL. Returns the resolved ATS name
+    or the original tag if no match found."""
+    aggregators = {'indeed', 'himalayas', 'linkedin', 'jsearch', 'ziprecruiter'}
+    if tagged_ats not in aggregators:
+        return tagged_ats  # already a real ATS tag
+    url_lower = (apply_url or '').lower()
+    for ats_name, patterns in _ATS_URL_PATTERNS.items():
+        if any(p in url_lower for p in patterns):
+            return ats_name
+    return tagged_ats  # couldn't resolve — keep original
 
 running = True
 
@@ -631,14 +661,29 @@ def main():
             profile = load_user_profile(user_id)
             answer_key = build_answer_key(profile, global_template)
 
-            # Get ATS-specific cooldown
-            ats = job.get('ats', 'greenhouse')
+            # Resolve real ATS from aggregator URLs (Indeed/Himalayas/LinkedIn
+            # jobs link to real ATS pages — detect which one from the URL)
+            raw_ats = job.get('ats', 'greenhouse')
+            ats = _resolve_ats_from_url(apply_url, raw_ats)
+            if ats != raw_ats:
+                logger.info(f"ATS resolved: {raw_ats} → {ats} (from URL)")
             cooldown = ATS_COOLDOWNS.get(ats, APPLY_COOLDOWN)
 
-            # Get the right applier
+            # Get the right applier. If no coded applier exists for this ATS,
+            # skip it in the worker — Claude Code handles unknown ATS via the
+            # universal approach (OpenClaw snapshot → intelligent fill → submit)
+            # as described in SOUL.md STEP 4.
             ApplierClass = APPLIERS.get(ats)
             if not ApplierClass:
-                update_queue_status(job['id'], 'failed', error=f'Unknown ATS: {ats}')
+                logger.info(
+                    f"No coded applier for ATS '{ats}' — marking for Claude Code "
+                    f"universal fill (job {job['id']}: {company})"
+                )
+                # Don't fail the job — mark it as 'queued' so Claude Code can
+                # pick it up via the terminal and apply using OpenClaw directly.
+                # The nudge loop will surface these jobs to Claude.
+                update_queue_status(job['id'], 'pending', error=f'needs_universal_fill:{ats}')
+                update_local_status(job, 'queued', f'Needs Claude Code universal fill ({ats})')
                 continue
 
             try:

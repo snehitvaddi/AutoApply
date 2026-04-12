@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 class LinkedInPublicScout(ScoutSource):
     name = "linkedin_public"
-    priority = "low"
+    priority = "medium"
     requires_auth = False
 
     def scout(self, tenant: "TenantConfig") -> list[JobPost]:
