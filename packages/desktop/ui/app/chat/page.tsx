@@ -37,11 +37,12 @@ interface StatusEntry {
 }
 
 interface ChatItem {
-  type: "status" | "user" | "response" | "system" | "queue"
+  type: "status" | "user" | "response" | "system" | "queue" | "session_boundary"
   content: string
   entries?: StatusEntry[]
   timestamp?: string
   viaTelegram?: boolean
+  tsMs?: number  // unix ms — used for infinite-scroll-up pagination
 }
 
 function timeAgo(dateStr?: string): string {
@@ -81,11 +82,59 @@ function StatusCard({ entry }: { entry: StatusEntry }) {
   )
 }
 
+// Map a chat_log DB row from /api/chat/history into a ChatItem. One row
+// can become one of several visual shapes (system banner, session divider,
+// user bubble, Claude reply).
+interface HistoryRow {
+  id: string
+  session_id: string
+  ts_ms: number
+  sender: string
+  kind: string
+  content: string
+  meta?: Record<string, unknown> | null
+}
+
+function historyRowToItem(row: HistoryRow): ChatItem | null {
+  if (!row.content) return null
+  if (row.kind === "session_boundary") {
+    return {
+      type: "session_boundary",
+      content: row.content,
+      tsMs: row.ts_ms,
+      timestamp: new Date(row.ts_ms).toISOString(),
+    }
+  }
+  if (row.sender === "user:ui" || row.sender === "user:term") {
+    return { type: "user", content: row.content, tsMs: row.ts_ms }
+  }
+  if (row.sender === "user:tg") {
+    return { type: "user", content: row.content, tsMs: row.ts_ms, viaTelegram: true }
+  }
+  if (row.sender === "claude") {
+    const fromTelegram = (row.meta?.original_type as string) === "telegram"
+    return {
+      type: "response",
+      content: row.content,
+      tsMs: row.ts_ms,
+      viaTelegram: fromTelegram,
+    }
+  }
+  if (row.sender === "system") {
+    return { type: "system", content: row.content, tsMs: row.ts_ms }
+  }
+  return null
+}
+
 export default function ChatPage() {
   const [items, setItems] = useState<ChatItem[]>([])
   const [input, setInput] = useState("")
   const [isAsking, setIsAsking] = useState(false)
+  const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [hasMoreHistory, setHasMoreHistory] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const onMessage = useCallback((data: unknown) => {
     const msg = data as {
@@ -148,9 +197,82 @@ export default function ChatPage() {
 
   const { send, connected } = useWebSocket("/ws/chat", { onMessage })
 
+  // Initial history load on mount. Pulls the last ~200 messages from the
+  // local chat.db via GET /api/chat/history and paints them in chronological
+  // order. Runs exactly once; after this the WebSocket keeps things live.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [items])
+    let cancelled = false
+    fetch("/api/chat/history?limit=200")
+      .then((r) => r.json())
+      .then((body) => {
+        if (cancelled) return
+        const rows = (body?.data?.messages as HistoryRow[] | undefined) || []
+        const mapped = rows.map(historyRowToItem).filter((x): x is ChatItem => x !== null)
+        setItems(mapped)
+        setHasMoreHistory(rows.length >= 200)
+      })
+      .catch(() => {
+        // Empty DB / endpoint not ready — leave items empty, the user can still chat live.
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoaded(true)
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  // Scroll-to-bottom on live append, but NOT while user is reading history
+  // upward (detected by checking distance-from-bottom before the new append).
+  useEffect(() => {
+    if (!historyLoaded) return
+    const c = scrollContainerRef.current
+    if (!c) return
+    const distanceFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight
+    if (distanceFromBottom < 200) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [items, historyLoaded])
+
+  // Load older history when the user scrolls near the top. Remembers the
+  // anchor row so the visual scroll position doesn't jump after prepending.
+  const loadOlderHistory = useCallback(async () => {
+    if (loadingOlder || !hasMoreHistory) return
+    const oldest = items.find((it) => it.tsMs !== undefined)?.tsMs
+    if (!oldest) return
+    setLoadingOlder(true)
+    try {
+      const r = await fetch(`/api/chat/history?until_ms=${oldest}&limit=100`)
+      const body = await r.json()
+      const rows = (body?.data?.messages as HistoryRow[] | undefined) || []
+      if (rows.length === 0) {
+        setHasMoreHistory(false)
+        return
+      }
+      const mapped = rows.map(historyRowToItem).filter((x): x is ChatItem => x !== null)
+      const container = scrollContainerRef.current
+      const prevHeight = container?.scrollHeight ?? 0
+      setItems((prev) => [...mapped, ...prev])
+      requestAnimationFrame(() => {
+        if (container) {
+          const newHeight = container.scrollHeight
+          container.scrollTop = newHeight - prevHeight
+        }
+      })
+      setHasMoreHistory(rows.length >= 100)
+    } catch {
+      // ignore
+    } finally {
+      setLoadingOlder(false)
+    }
+  }, [items, loadingOlder, hasMoreHistory])
+
+  // Fire loadOlderHistory when the scroll container reaches the top.
+  const handleScroll = useCallback(() => {
+    const c = scrollContainerRef.current
+    if (!c) return
+    if (c.scrollTop < 60 && hasMoreHistory && !loadingOlder) {
+      loadOlderHistory()
+    }
+  }, [hasMoreHistory, loadingOlder, loadOlderHistory])
 
   const handleSend = () => {
     const text = input.trim()
@@ -170,8 +292,22 @@ export default function ChatPage() {
         )}
 
         {/* Chat feed */}
-        <div className="flex-1 space-y-3 overflow-y-auto px-2 pb-4">
-          {items.length === 0 && (
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 space-y-3 overflow-y-auto px-2 pb-4"
+        >
+          {loadingOlder && (
+            <div className="flex items-center justify-center py-2 text-xs text-muted-foreground">
+              <Loader2 className="mr-2 h-3 w-3 animate-spin" /> Loading older messages...
+            </div>
+          )}
+          {!hasMoreHistory && items.length > 0 && (
+            <div className="py-1 text-center text-[10px] text-muted-foreground/60">
+              Beginning of chat history
+            </div>
+          )}
+          {items.length === 0 && historyLoaded && (
             <div className="flex h-full items-center justify-center">
               <div className="text-center">
                 <Zap className="mx-auto h-8 w-8 text-muted-foreground/30" />
@@ -210,6 +346,22 @@ export default function ChatPage() {
                 <div key={i} className="flex items-center gap-2 rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                   <AlertTriangle className="h-3.5 w-3.5" />
                   {item.content}
+                </div>
+              )
+            }
+
+            // Full-width divider rendered when a fresh PTY session starts.
+            // Anchored to the moment the new Claude process was forked, so
+            // the user can visually tell "yesterday's conversation" from
+            // "today's conversation" without reading timestamps.
+            if (item.type === "session_boundary") {
+              return (
+                <div key={i} className="my-4 flex items-center gap-3">
+                  <div className="h-px flex-1 bg-border" />
+                  <div className="rounded-full border border-border bg-muted/40 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {item.content}
+                  </div>
+                  <div className="h-px flex-1 bg-border" />
                 </div>
               )
             }
