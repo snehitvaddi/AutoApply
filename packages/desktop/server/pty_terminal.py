@@ -1004,6 +1004,32 @@ class PTYSession:
             "with the exact next action to take. Act on those nudges."
         )
         lines.append("")
+        lines.append("USER COMMANDS (via /btw from chat UI or Telegram):")
+        lines.append(
+            "  Messages prefixed with 'USER COMMAND' are direct instructions from "
+            "the user — from the chat UI or Telegram. You MUST act on them, not "
+            "just acknowledge. Examples:"
+        )
+        lines.append(
+            "    'stop scouting' → kill the worker subprocess, confirm it stopped"
+        )
+        lines.append(
+            "    'start applying' → run the worker if it's not running"
+        )
+        lines.append(
+            "    'apply only to Stripe' → adjust the filter, scout Stripe jobs"
+        )
+        lines.append(
+            "    'skip this job' → mark current job as skipped, move to next"
+        )
+        lines.append(
+            "    'pause for 2 hours' → stop the worker, set a reminder, restart later"
+        )
+        lines.append(
+            "  After executing, confirm what you did in 1-2 lines. The response "
+            "goes back to the user via the same channel (chat or Telegram)."
+        )
+        lines.append("")
         lines.append("ARCHITECTURE RULE — read once, apply everywhere:")
         lines.append("  The SINGLE SOURCE OF TRUTH is the cloud profile at applyloop.vercel.app.")
         lines.append("  Local ./profile.json is a CACHE — it was just re-pulled from the cloud")

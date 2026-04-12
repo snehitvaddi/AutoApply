@@ -39,6 +39,33 @@ OFFSET_FILE = WORKSPACE_DIR / "telegram-offset.json"
 POLL_TIMEOUT_SEC = 30  # long-poll; Telegram holds the connection until a message arrives or timeout
 TELEGRAM_MAX_MSG_LEN = 4000  # keep below the 4096 API limit with a safety margin
 
+# ── Command vs question detection ────────────────────────────────────────
+# Commands route to the PTY (Claude acts). Questions route to qa_agent (fast Q&A).
+
+_COMMAND_PREFIXES = [
+    "stop", "start", "pause", "resume", "skip", "apply", "scout",
+    "focus", "ignore", "only", "restart", "kill", "run", "switch",
+    "change", "update", "set", "use", "don't", "do not", "cancel",
+]
+
+
+def _is_command(text: str) -> bool:
+    """Return True if the message looks like an actionable command rather
+    than a status question. The user can also force command mode with `!`.
+
+    Examples:
+      "!stop scouting"           → True (! prefix)
+      "stop scouting"            → True (starts with action verb)
+      "apply to Stripe only"     → True
+      "how many applied today?"  → False (question)
+      "what's in the queue?"     → False (question)
+    """
+    t = text.strip()
+    if t.startswith("!"):
+        return True
+    tl = t.lower()
+    return any(tl.startswith(prefix) for prefix in _COMMAND_PREFIXES)
+
 
 class TelegramClient:
     """Thin Telegram Bot API wrapper — send_message + get_updates."""
@@ -277,12 +304,34 @@ class TelegramGateway:
             except Exception as e:
                 logger.debug(f"on_message_in callback failed: {e}")
 
-        # 2) Route through the fire-and-forget Q&A agent (claude --print subprocess
-        # with pre-baked DB context). No PTY, no interleaved apply-loop noise.
-        try:
-            response = await qa_agent.answer(text)
-        except Exception as e:
-            response = f"⚠️ Error processing message: {e}"
+        # 2) Route: commands → PTY (Claude can act), questions → Q&A agent.
+        #
+        # Commands are messages the user wants Claude to ACT on — start/stop/
+        # apply/skip/pause/resume. They go through message_router into the main
+        # Claude Code PTY where Claude has full tool access and can actually
+        # control the worker, browser, filesystem.
+        #
+        # Questions are status inquiries — "how many applied?", "what's in
+        # queue?" — answered fast via a stateless subprocess (no PTY interleave).
+        #
+        # Detection: prefix `!` forces command mode. Otherwise, action verbs
+        # at the start of the message trigger command mode.
+        if _is_command(text):
+            cmd_text = text.lstrip("!").strip()
+            try:
+                response = await message_router.submit(
+                    "telegram",
+                    f"USER COMMAND (from Telegram — you MUST act on this, "
+                    f"not just acknowledge): {cmd_text}",
+                    timeout=60.0,
+                )
+            except Exception as e:
+                response = f"⚠️ Command delivery failed: {e}"
+        else:
+            try:
+                response = await qa_agent.answer(text)
+            except Exception as e:
+                response = f"⚠️ Error processing message: {e}"
 
         # 3) Send Claude's reply back to Telegram
         try:

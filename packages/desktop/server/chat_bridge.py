@@ -285,13 +285,25 @@ async def chat_websocket(ws: WebSocket):
 
                 await ws.send_json({"type": "thinking", "data": "Asking Claude..."})
 
-                # Route through the fire-and-forget Q&A agent (standalone claude --print
-                # subprocess with pre-baked DB context). The main PTY applier loop is
-                # untouched.
-                try:
-                    response = await qa_agent.answer(user_input)
-                except Exception as e:
-                    response = f"⚠️ Error processing message: {e}"
+                # Route: commands → PTY (Claude acts), questions → Q&A agent.
+                # Import the detector from telegram_gateway (same logic both channels).
+                from .telegram_gateway import _is_command
+                if _is_command(user_input):
+                    cmd_text = user_input.lstrip("!").strip()
+                    try:
+                        response = await message_router.submit(
+                            "chat_ui",
+                            f"USER COMMAND (from chat — you MUST act on this, "
+                            f"not just acknowledge): {cmd_text}",
+                            timeout=60.0,
+                        )
+                    except Exception as e:
+                        response = f"⚠️ Command delivery failed: {e}"
+                else:
+                    try:
+                        response = await qa_agent.answer(user_input)
+                    except Exception as e:
+                        response = f"⚠️ Error processing message: {e}"
 
                 await ws.send_json({"type": "btw_response", "data": response})
 
