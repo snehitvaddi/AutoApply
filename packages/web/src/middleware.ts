@@ -12,8 +12,26 @@ const PUBLIC_ROUTES = [
   "/api/auth/status",
 ];
 
-// Routes that should be accessible without authentication (exact match)
-const PUBLIC_EXACT_ROUTES = ["/"];
+// Routes that should be accessible without authentication (exact match).
+// Anything SEO-related MUST be here — Google's crawler doesn't log in,
+// Slack / Twitter / LinkedIn OG scrapers don't log in, and Next's
+// own App Router convention routes (icon.svg, opengraph-image, etc.)
+// are fetched by browsers during the initial page paint before any
+// auth cookie is attached. Gating these on auth produces 307 →
+// /auth/login redirects that break social previews AND the favicon.
+const PUBLIC_EXACT_ROUTES = [
+  "/",
+  "/icon.svg",
+  "/icon",
+  "/apple-icon",
+  "/apple-icon.png",
+  "/opengraph-image",
+  "/opengraph-image.png",
+  "/sitemap.xml",
+  "/robots.txt",
+  "/manifest.webmanifest",
+  "/favicon.ico",
+];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
