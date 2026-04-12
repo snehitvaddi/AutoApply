@@ -9,3 +9,6 @@ pywebview>=5.0
 # crashes on import if it's missing (not a lazy error). Missing this
 # dep was the cause of the v1.0.4 crash-on-launch bug.
 python-multipart>=0.0.18
+# Windows ConPTY backend — provides the same PTY interface as Unix pty.fork()
+# but using Windows Pseudo Console (ConPTY). Only installed on Windows.
+pywinpty>=2.0.0; sys_platform == "win32"
