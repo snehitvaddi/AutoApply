@@ -48,17 +48,23 @@ class BaseApplier(ABC):
         fill any form field.
         """
         p = self.profile
-        user = p.get("user", {})
-        work_exp = p.get("work_experience", []) or []
-        edu_entries = p.get("education", []) or []
+        # The API returns { user: {email,...}, profile: {first_name,...}, resumes: [...] }
+        # OR the profile may be flat (fields at top level). Check both shapes.
+        user = p.get("user", {}) or {}
+        prof = p.get("profile", {}) or {}
+        # Helper: check profile sub-object first, then top-level, then user
+        def _f(key: str, default: str = "") -> str:
+            return prof.get(key) or p.get(key) or user.get(key) or default
+        work_exp = prof.get("work_experience") or p.get("work_experience") or []
+        edu_entries = prof.get("education") or p.get("education") or []
         lines = [
-            f"Name: {user.get('first_name', '')} {user.get('last_name', '')}",
-            f"Email: {user.get('email', '')}",
-            f"Phone: {user.get('phone', '')}",
-            f"Location: {user.get('city', '')}, {user.get('state', '')} {user.get('zip_code', '')}",
-            f"LinkedIn: {user.get('linkedin_url', '')}",
-            f"GitHub: {user.get('github_url', '')}",
-            f"Portfolio: {user.get('portfolio_url', '')}",
+            f"Name: {_f('first_name')} {_f('last_name')}",
+            f"Email: {_f('email')}",
+            f"Phone: {_f('phone')}",
+            f"Location: {_f('city')}, {_f('state')} {_f('zip_code')}",
+            f"LinkedIn: {_f('linkedin_url')}",
+            f"GitHub: {_f('github_url')}",
+            f"Portfolio: {_f('portfolio_url')}",
             "",
             f"WORK EXPERIENCE (CRITICAL: fill ALL {len(work_exp)} positions below — never skip or abbreviate any):",
         ]
@@ -80,7 +86,7 @@ class BaseApplier(ABC):
 
         lines.append("")
         lines.append("SKILLS:")
-        skills = p.get("skills", [])
+        skills = prof.get("skills") or p.get("skills") or []
         if isinstance(skills, list):
             lines.append(f"  {', '.join(skills)}")
         elif isinstance(skills, dict):
@@ -89,20 +95,21 @@ class BaseApplier(ABC):
 
         lines.append("")
         lines.append("LEGAL:")
-        lines.append(f"  Work authorized: {user.get('work_authorization', 'Yes')}")
-        lines.append(f"  Requires sponsorship: {user.get('requires_sponsorship', True)}")
+        lines.append(f"  Work authorized: {_f('work_authorization', 'Yes')}")
+        lines.append(f"  Requires sponsorship: {_f('requires_sponsorship', 'True')}")
 
         lines.append("")
         lines.append("EEO:")
         for key in ("gender", "race_ethnicity", "veteran_status", "disability_status"):
-            if user.get(key):
-                lines.append(f"  {key}: {user[key]}")
+            val = _f(key)
+            if val:
+                lines.append(f"  {key}: {val}")
 
         lines.append("")
         lines.append("STANDARD ANSWERS:")
         ak = self.answer_key
         for key in ("cover_letter_template", "additional_info", "strengths", "why_leaving"):
-            val = ak.get("textarea_fields", {}).get(key) or user.get(key, "")
+            val = ak.get("textarea_fields", {}).get(key) or _f(key, "")
             if val:
                 lines.append(f"  {key}: {val[:250]}")
 
