@@ -1400,6 +1400,21 @@ exec /bin/zsh -l
             self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
             logger.info(f"PTY session started: PID {child_pid}, claude at {claude}")
+
+            # Persist a session-boundary row to chat_log so the chat UI
+            # renders a visible "── New session ──" divider between this
+            # spawn and any previous one. Best-effort — never blocks
+            # session start on a DB write error.
+            try:
+                from . import chat_log
+                chat_log.append_session_boundary(
+                    session_id=self.session_id or "unknown",
+                    pid=child_pid,
+                    cwd=cwd,
+                )
+            except Exception as _e:
+                logger.debug(f"session boundary write skipped: {_e}")
+
             return True
 
     def _set_size(self, cols: int, rows: int):

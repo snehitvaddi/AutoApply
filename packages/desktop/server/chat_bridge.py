@@ -39,6 +39,12 @@ async def broadcast_to_chat_ui(payload: dict) -> None:
     """Fan-out a payload to every connected /ws/chat client.
 
     Safe to call from any async context. Silently drops disconnected clients.
+
+    Side effect: every broadcast is also persisted to chat_log so the
+    chat UI can rehydrate the scrollback on a fresh mount. We skip the
+    persist for payload types that don't represent user-visible messages
+    (pings, status heartbeats) and for broadcasts that came FROM the
+    chat_log reload itself (marker: payload["_replayed"] = True).
     """
     stale: list[WebSocket] = []
     for ws in list(_chat_ui_subscribers):
@@ -48,6 +54,67 @@ async def broadcast_to_chat_ui(payload: dict) -> None:
             stale.append(ws)
     for ws in stale:
         _chat_ui_subscribers.discard(ws)
+
+    # Persist to chat_log. Do this AFTER the fanout so a DB write hiccup
+    # never delays the UI broadcast. Best-effort: swallow any error.
+    try:
+        if payload.get("_replayed"):
+            return
+        _persist_broadcast(payload)
+    except Exception as e:
+        logger.debug(f"broadcast persist skipped: {e}")
+
+
+def _persist_broadcast(payload: dict) -> None:
+    """Map a broadcast payload into a chat_log row. Different payload
+    shapes come through here; we sniff the `type` and `from_bot` fields
+    to figure out sender + content."""
+    from . import chat_log
+    from .pty_terminal import session_manager
+
+    ptype = payload.get("type") or ""
+    data = payload.get("data") or ""
+    if not isinstance(data, str):
+        return
+    clean = chat_log.clean_pty_bytes(data) if ptype in ("pty", "output") else data.strip()
+    if not clean:
+        return
+
+    active_session = session_manager.active_session_id or "unknown"
+    sender = chat_log.SENDER_CLAUDE
+    kind = chat_log.KIND_TEXT
+    meta: dict | None = None
+
+    if ptype == "telegram":
+        if payload.get("from_bot"):
+            sender = chat_log.SENDER_CLAUDE
+        else:
+            sender = chat_log.SENDER_USER_TG
+    elif ptype in ("pty", "output"):
+        sender = chat_log.SENDER_CLAUDE
+    elif ptype == "status":
+        sender = chat_log.SENDER_SYSTEM
+        kind = chat_log.KIND_NOTICE
+    elif ptype == "user_input":
+        sender = chat_log.SENDER_USER_UI
+    elif ptype == "system":
+        sender = chat_log.SENDER_SYSTEM
+        kind = chat_log.KIND_NOTICE
+    else:
+        # Unknown type — persist under claude with the type as meta so we
+        # can audit later instead of silently dropping.
+        meta = {"original_type": ptype}
+
+    ts = payload.get("timestamp")
+    ts_ms = int(ts) if isinstance(ts, (int, float)) else None
+    chat_log.append_message(
+        session_id=active_session,
+        sender=sender,
+        content=clean,
+        kind=kind,
+        meta=meta,
+        ts_ms=ts_ms,
+    )
 
 # ── Telegram integration ─────────────────────────────────────────────────────
 
@@ -201,6 +268,21 @@ async def chat_websocket(ws: WebSocket):
                 if not user_input:
                     continue
 
+                # Persist the user's input to chat_log so it shows up in
+                # the scrollback on the next app open. We write it BEFORE
+                # calling the Q&A agent so if the agent times out we still
+                # have a record of what the user asked.
+                try:
+                    from . import chat_log
+                    from .pty_terminal import session_manager
+                    chat_log.append_message(
+                        session_id=session_manager.active_session_id or "unknown",
+                        sender=chat_log.SENDER_USER_UI,
+                        content=user_input,
+                    )
+                except Exception as _e:
+                    logger.debug(f"chat_log user persist skipped: {_e}")
+
                 await ws.send_json({"type": "thinking", "data": "Asking Claude..."})
 
                 # Route through the fire-and-forget Q&A agent (standalone claude --print
@@ -212,6 +294,18 @@ async def chat_websocket(ws: WebSocket):
                     response = f"⚠️ Error processing message: {e}"
 
                 await ws.send_json({"type": "btw_response", "data": response})
+
+                # Persist Claude's reply for scrollback.
+                try:
+                    from . import chat_log
+                    from .pty_terminal import session_manager
+                    chat_log.append_message(
+                        session_id=session_manager.active_session_id or "unknown",
+                        sender=chat_log.SENDER_CLAUDE,
+                        content=response,
+                    )
+                except Exception as _e:
+                    logger.debug(f"chat_log claude persist skipped: {_e}")
 
                 # Mirror the reply to Telegram so phone + desktop stay in sync.
                 try:

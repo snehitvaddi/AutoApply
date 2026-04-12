@@ -125,7 +125,27 @@ class MessageRouter:
         Submit a message. Blocks the caller until the PTY response is ready.
 
         `source` is a label like "chat_ui" or "telegram" (for logging/attribution).
+
+        Side effect: persists the inbound user message to chat_log so the
+        chat UI's scrollback includes what the user typed, not just Claude's
+        replies. Source-to-sender mapping:
+            "chat_ui"   → chat_log.SENDER_USER_UI
+            "telegram"  → chat_log.SENDER_USER_TG
+            anything else → chat_log.SENDER_USER_UI (safe default)
         """
+        try:
+            from . import chat_log
+            from .pty_terminal import session_manager
+            sender = chat_log.SENDER_USER_TG if source == "telegram" else chat_log.SENDER_USER_UI
+            chat_log.append_message(
+                session_id=session_manager.active_session_id or "unknown",
+                sender=sender,
+                content=text,
+                meta={"source": source},
+            )
+        except Exception as e:
+            logger.debug(f"router persist skipped: {e}")
+
         loop = asyncio.get_event_loop()
         fut: asyncio.Future = loop.create_future()
         await self._queue.put((source, text, timeout, fut))

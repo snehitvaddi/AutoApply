@@ -56,6 +56,15 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("No API token found — set AUTOAPPLY_TOKEN or create ~/.autoapply/workspace/.api-token")
     logger.info(f"Remote API: {APP_URL}")
+
+    # Initialize the chat history SQLite store and purge rows older than
+    # 90 days. Runs once per app boot — enough cadence for a 90-day window.
+    try:
+        from . import chat_log
+        chat_log.init_db()
+        chat_log.vacuum_old()
+    except Exception as e:
+        logger.warning(f"chat_log init/vacuum failed: {e}")
     # Auto-recover jobs stuck in 'applying' from a previous crash
     try:
         reset_count = local_data.reset_stuck_jobs()
@@ -1138,6 +1147,41 @@ async def pty_restart():
 @app.websocket("/ws/chat")
 async def ws_chat(ws: WebSocket):
     await chat_websocket(ws)
+
+
+# ── Chat history persistence ────────────────────────────────────────────
+# Every broadcast_to_chat_ui / router.submit call writes to a SQLite
+# store at ~/.autoapply/workspace/chat.db. These endpoints let the chat
+# UI rehydrate scrollback on mount and paginate upward for older pages.
+
+@app.get("/api/chat/history")
+async def get_chat_history(since_ms: int | None = None, until_ms: int | None = None, limit: int = 200, session_id: str | None = None):
+    """Return up to `limit` messages ordered oldest-first. For infinite-
+    scroll-up, pass until_ms=<oldest_ts_you_have> to get the next older page."""
+    from . import chat_log
+    rows = chat_log.get_history(
+        since_ms=since_ms,
+        until_ms=until_ms,
+        limit=limit,
+        session_id=session_id,
+    )
+    return {"ok": True, "data": {"messages": rows}}
+
+
+@app.get("/api/chat/sessions")
+async def list_chat_sessions(limit: int = 50):
+    """Return the list of session_boundary rows so the UI can render a
+    jump-to-session list."""
+    from . import chat_log
+    return {"ok": True, "data": {"sessions": chat_log.get_sessions(limit=limit)}}
+
+
+@app.delete("/api/chat/history")
+async def clear_chat_history():
+    """Nuclear wipe. UI should confirm before calling this."""
+    from . import chat_log
+    deleted = chat_log.clear_all()
+    return {"ok": True, "data": {"deleted": deleted}}
 
 
 # ── Static UI Serving ────────────────────────────────────────────────────────
