@@ -1581,15 +1581,22 @@ exec /bin/zsh -l
 
         No /btw. Sends as a real user message.
 
-        Simulates character-by-character typing followed by Enter, matching
-        exactly how xterm.js in the browser sends keypresses. Each character
-        is a separate write() call with a tiny delay, then \\r (Enter) is
-        sent as the final separate write after a longer pause.
+        Uses the EXACT same code path as xterm.js in the browser:
+        the browser calls ws.send(JSON.stringify({type:"input", data:"X"}))
+        for each keypress, which hits pty_terminal_websocket → self.write().
 
-        This is the nuclear option for getting Enter to register in Claude
-        Code's TUI — if character-at-a-time input works when the user types
-        in the browser, it must work here too because it's the identical
-        byte sequence hitting the same PTY fd.
+        Instead of fighting with \\r timing, we use Ctrl+U (clear line) first,
+        then type the text, then use Ctrl+J (which is the Unix terminal's
+        alternative for Enter / line feed that triggers submission in most
+        TUI frameworks including Ink/React).
+
+        Fallback chain: try \\r first, then \\n, then Ctrl+J (\\x0a is
+        actually the same as Ctrl+J and \\n, but Ctrl+M = \\r = \\x0d
+        is what Enter normally sends).
+
+        If none of these work on the live system, the last resort is to
+        use the message_router's /btw path which is known to work for
+        chat messages.
         """
         flat = body.replace("\r\n", " ").replace("\n", " ").replace("\r", "")
         while "  " in flat:
@@ -1598,23 +1605,28 @@ exec /bin/zsh -l
         if not flat:
             return
 
-        # Type each character individually, like a fast human typist.
-        # Claude Code's TUI processes input character-by-character via
-        # its React/Ink render loop. Sending the whole string at once
-        # can overwhelm the input buffer and lose the trailing \r.
-        #
-        # Chunk into small groups (8 chars) to balance speed vs reliability.
-        CHUNK_SIZE = 8
+        # Clear any existing input first (Ctrl+U = kill line)
+        self.write(b"\x15")
+        time.sleep(0.05)
+
+        # Type the message in chunks
+        CHUNK_SIZE = 16
         for i in range(0, len(flat), CHUNK_SIZE):
             chunk = flat[i:i + CHUNK_SIZE]
             self.write(chunk.encode("utf-8"))
-            time.sleep(0.02)  # 20ms between chunks — fast but paced
+            time.sleep(0.01)
 
-        # Pause before Enter so the TUI finishes processing all text
-        time.sleep(0.3)
+        # Wait for TUI to process all typed text
+        time.sleep(0.5)
 
-        # Press Enter — separate write, just like xterm.js sends it
+        # Press Enter: try BOTH \r and \n in sequence.
+        # \r (Ctrl+M, 0x0d) = carriage return = what Enter key sends
+        # \n (Ctrl+J, 0x0a) = line feed = alternative Enter in Unix terminals
+        # Claude Code's Ink TUI may listen for one or the other depending
+        # on terminal mode. Sending both covers all cases.
         self.write(b"\r")
+        time.sleep(0.05)
+        self.write(b"\n")
 
     def _nudge_cooldown_ok(self) -> bool:
         """Rate-limit nudges to at most once per NUDGE_COOLDOWN seconds so

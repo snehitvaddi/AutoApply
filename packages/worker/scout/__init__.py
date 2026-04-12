@@ -16,15 +16,15 @@ from __future__ import annotations
 from .base import ScoutSource, JobPost
 from .ashby import AshbyScout
 from .greenhouse import GreenhouseScout
+from .lever import LeverScout
 from .indeed import IndeedScout
 from .himalayas import HimalayasScout
 from .linkedin_public import LinkedInPublicScout
 
-# Order within a priority doesn't matter; worker.run_scout_cycle dispatches
-# by .priority field, not list position.
 REGISTERED_SOURCES: list[ScoutSource] = [
     AshbyScout(),
     GreenhouseScout(),
+    LeverScout(),
     IndeedScout(),
     HimalayasScout(),
     LinkedInPublicScout(),
