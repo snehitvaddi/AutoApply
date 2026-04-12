@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -355,6 +356,78 @@ def reset_stuck_jobs() -> int:
         return count
     finally:
         conn.close()
+
+
+# ─── Worker heartbeat (filesystem-visible, PTY-independent) ─────────────────
+#
+# The PTY watchdog uses these to detect worker drift without depending on
+# PTY byte flow. worker.py writes worker.pid at main() start and touches
+# scout.ts after each scout cycle. See packages/worker/worker.py for the
+# writer side.
+
+
+def _workspace_dir() -> Path:
+    """Resolve workspace dir at call time so APPLYLOOP_WORKSPACE changes stick."""
+    env = os.environ.get("APPLYLOOP_WORKSPACE")
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".autoapply" / "workspace"
+
+
+def get_worker_heartbeat() -> tuple[int | None, int | None]:
+    """Return (pid, last_seen_ms) from ~/.autoapply/workspace/worker.pid.
+
+    Returns (None, None) if the file doesn't exist or can't be parsed.
+    The PTY watchdog calls this every 5 min; a missing file with recent
+    scout activity means the worker crashed and Claude should restart it.
+    """
+    path = _workspace_dir() / "worker.pid"
+    if not path.exists():
+        return (None, None)
+    try:
+        content = path.read_text().strip().splitlines()
+        pid = int(content[0]) if content else None
+        ts = int(content[1]) if len(content) > 1 else None
+        return (pid, ts)
+    except Exception as e:
+        logger.debug(f"worker.pid parse failed: {e}")
+        return (None, None)
+
+
+def is_worker_alive() -> bool:
+    """Check if the worker process recorded in worker.pid is still running.
+
+    Uses os.kill(pid, 0) which succeeds if the process exists and we have
+    permission to signal it. Returns False if the pid file is stale or the
+    process has exited.
+    """
+    pid, _ = get_worker_heartbeat()
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def get_scout_age_minutes() -> float | None:
+    """Return minutes since the last scout cycle (from scout.ts mtime).
+    Returns None if scout.ts doesn't exist — meaning scout has never run
+    on this install, or the workspace hasn't been touched since reset.
+    """
+    path = _workspace_dir() / "scout.ts"
+    if not path.exists():
+        return None
+    try:
+        ts_ms = int(path.read_text().strip())
+        age_sec = max(0.0, time.time() - ts_ms / 1000.0)
+        return age_sec / 60.0
+    except Exception:
+        try:
+            return max(0.0, (time.time() - path.stat().st_mtime) / 60.0)
+        except Exception:
+            return None
 
 
 def _normalize_ats(raw: str | None) -> str:

@@ -62,30 +62,30 @@ session_history: list[SessionRecord] = []
 
 
 class PTYSession:
-    """A persistent PTY session running claude --dangerously-skip-permissions."""
+    """A persistent PTY session running claude --dangerously-skip-permissions.
 
-    IDLE_THRESHOLD = 1800  # 30 minutes
-    WATCHDOG_INTERVAL = 300  # check every 5 minutes
-    # Updated for v1.0.10 + AGENTS.md architecture. Old copy pointed at
-    # `python3 scripts/auto_loop.py` which was the pre-worker layout.
-    # The trailing carriage return is CRITICAL. Claude Code's TUI runs the
-    # terminal in raw mode — it reads keystrokes, not lines. Pressing Enter
-    # in xterm sends \r (0x0d); writing \n (0x0a) alone does NOT submit the
-    # message, Claude just sees the text sitting in the input buffer. This
-    # was a silent watchdog bug: the nudge text was showing up in Claude's
-    # input field but never being processed, so the user kept seeing no
-    # response despite the watchdog firing every 5 min.
-    #
-    # We write `\r` to mimic a real Enter keypress. Same byte sequence the
-    # terminal_stream forwards from xterm.js when a user types manually.
-    NUDGE_MESSAGE = (
-        "Status check (auto-nudge from ApplyLoop watchdog): you've been idle "
-        "for over 30 minutes. What have you been doing? If you've finished the "
-        "current scout/filter/apply round, kick off the next one: "
-        "cd ~/.applyloop/packages/worker && python3 worker.py. "
-        "If you're waiting on user input, tell them explicitly in one short line "
-        "so they know to check in. Do not sit silent.\r"
-    )
+    Watchdog behavior (Part 2 mission-driven redesign):
+      - _watchdog_loop: ticks every 5 min, fires a dynamic nudge when
+        progress drifts (applied-today flat, scout overdue, worker dead,
+        PTY idle). Never gated on PTY byte flow alone.
+      - _mission_heartbeat_loop: ticks every 15 min, always fires a
+        tenant-scoped status refresh so Claude never forgets WHO it's
+        applying for. Informational; doesn't demand an action.
+
+    Both loops write to the PTY via /btw so Claude processes them as side-
+    channel messages instead of user turns. \\r terminator is CRITICAL —
+    the TUI runs in raw mode and \\n alone leaves the text sitting in the
+    input buffer un-submitted.
+    """
+
+    # Tick intervals
+    WATCHDOG_INTERVAL = 300            # 5 min — mission drift check
+    HEARTBEAT_INTERVAL = 900           # 15 min — mission context refresh
+    # Drift thresholds
+    IDLE_THRESHOLD = 1800              # 30 min — PTY silence
+    SCOUT_STALE_MULTIPLIER = 2         # 2x SCOUT_INTERVAL_MINUTES = overdue
+    NUDGE_COOLDOWN = 600               # 10 min min between nudges
+    STUCK_APPLIED_CYCLES = 3           # 3 x 5min = 15 min flat applied count
 
     def __init__(self):
         self.master_fd: int | None = None
@@ -94,10 +94,20 @@ class PTYSession:
         self._subscribers: list[asyncio.Queue] = []
         self._read_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
+        self._heartbeat_task: asyncio.Task | None = None
         self._alive = False
         self.session_id: str | None = None
         self.last_output_at: float = 0
         self.started_at: float = 0
+
+        # Mission/tenant state — populated lazily at session start via
+        # _refresh_tenant_context(). May be None if the cloud is unreachable
+        # or the user hasn't finished setup; in that case the heartbeat
+        # loop still fires with a "finish setup" message instead of crashing.
+        self._tenant_snapshot: dict | None = None
+        self._last_nudge_at: float = 0
+        self._last_applied_count: int | None = None
+        self._stuck_cycles: int = 0
 
     @property
     def is_alive(self) -> bool:
@@ -962,10 +972,37 @@ class PTYSession:
         resume_path = snapshot.get("resume_path") or ""
         profile_stub = PTYSession._profile_is_stub(p)
 
+        preferred_locations = ", ".join((prefs.get("preferred_locations") or [])[:3]) or "any"
+
         lines: list[str] = []
         lines.append("You are the ApplyLoop agent booting fresh for the user.")
         lines.append(f"User: {first_name} — currently {current_title} at {current_company}.")
         lines.append(f"Target roles: {target_titles}.")
+        lines.append(f"Preferred locations: {preferred_locations}.")
+        lines.append("")
+        lines.append("MISSION STATEMENT — internalize this and never deviate:")
+        lines.append(
+            "  Your ONLY mission is to keep the scout → filter → apply loop "
+            "running 24/7 for THIS tenant."
+        )
+        lines.append(
+            "  Not for admin. Not for AI/ML roles unless that's what this "
+            "tenant's target_titles say. Not for US locations unless that's "
+            "in their preferred_locations."
+        )
+        lines.append(
+            "  Every query, every filter, every form-fill uses THIS tenant's "
+            "data — the profile.json under ~/.applyloop/, which is a local "
+            "cache of their cloud profile."
+        )
+        lines.append(
+            "  The worker.py process does the mechanical scouting and "
+            "applying. Your job is to keep it alive: start it, restart it "
+            "when it dies, respond to user messages, and always keep the "
+            "loop moving. The watchdog will nudge you every 15 min with a "
+            "status heartbeat and fire an action-required nudge whenever "
+            "progress stalls. Act on those nudges — don't just acknowledge."
+        )
         lines.append("")
         lines.append("ARCHITECTURE RULE — read once, apply everywhere:")
         lines.append("  The SINGLE SOURCE OF TRUTH is the cloud profile at applyloop.vercel.app.")
@@ -1405,9 +1442,14 @@ exec /bin/zsh -l
                 # Already reaped — fall through
                 pass
 
-            # Start reading + watchdog in background
+            # Start reading + watchdog + mission heartbeat in background.
+            # Heartbeat gives Claude a tenant-scoped status refresh every
+            # 15 min so it never forgets WHO it's applying for. Watchdog
+            # detects real apply-loop drift (not just PTY byte-flow idle)
+            # and fires an escalating nudge with the next required action.
             self._read_task = asyncio.create_task(self._read_loop())
             self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+            self._heartbeat_task = asyncio.create_task(self._mission_heartbeat_loop())
 
             logger.info(f"PTY session started: PID {child_pid}, claude at {claude}")
 
@@ -1456,26 +1498,248 @@ exec /bin/zsh -l
             self._alive = False
             self._broadcast(b"\r\n[Session ended]\r\n")
 
+    # ── Mission-driven watchdog + heartbeat ─────────────────────────────
+
+    def _refresh_tenant_context(self) -> None:
+        """Pull the tenant snapshot from the profile.json cache and Supabase
+        sync state. Best-effort — if this fails, the loops fall back to a
+        generic "finish setup" message. Called lazily from each loop tick
+        rather than once at startup so tenant changes (e.g. new target_titles
+        saved on the web dashboard) propagate without a restart.
+        """
+        import json
+        import os as _os
+        try:
+            profile_path = _os.path.expanduser("~/.applyloop/profile.json")
+            with open(profile_path) as f:
+                data = json.load(f)
+            prefs = (data.get("preferences") or {})
+            self._tenant_snapshot = {
+                "user_id": data.get("user_id") or data.get("id") or "unknown",
+                "name": data.get("full_name") or data.get("name") or "the user",
+                "email": data.get("email", ""),
+                "target_titles": prefs.get("target_titles") or [],
+                "preferred_locations": prefs.get("preferred_locations") or [],
+                "daily_apply_limit": data.get("daily_apply_limit") or prefs.get("max_daily") or 25,
+            }
+        except Exception as e:
+            logger.debug(f"refresh tenant context failed: {e}")
+
+    def _read_mission_stats(self) -> dict:
+        """Snapshot the current mission state from local_data + filesystem."""
+        from . import local_data
+        try:
+            stats = local_data.get_stats() or {}
+        except Exception:
+            stats = {}
+        try:
+            worker_alive = local_data.is_worker_alive()
+        except Exception:
+            worker_alive = False
+        try:
+            scout_age = local_data.get_scout_age_minutes()
+        except Exception:
+            scout_age = None
+        return {
+            "applied_today": int(stats.get("applied_today", 0) or 0),
+            "in_queue": int(stats.get("in_queue", 0) or 0),
+            "total_applied": int(stats.get("total_applied", 0) or 0),
+            "worker_alive": bool(worker_alive),
+            "scout_age_min": scout_age,
+            "idle_min": int((time.time() - self.last_output_at) / 60) if self.last_output_at else 0,
+        }
+
+    def _build_mission_heartbeat(self) -> str:
+        """15-minute informational context refresh. Not a nudge — just keeps
+        the mission fresh in Claude's working memory. Tenant-scoped so it
+        always says WHO Claude is applying for."""
+        snap = self._tenant_snapshot or {}
+        stats = self._read_mission_stats()
+        name = snap.get("name", "the user")
+        targets = ", ".join(snap.get("target_titles", [])[:5]) or "(no target roles set)"
+        locs = ", ".join(snap.get("preferred_locations", [])[:3]) or "any"
+        worker_state = "alive" if stats["worker_alive"] else "NOT RUNNING"
+        scout_age = (
+            f"{stats['scout_age_min']:.0f}m ago"
+            if stats["scout_age_min"] is not None
+            else "never"
+        )
+        return (
+            f"Mission context refresh (auto-heartbeat).\n"
+            f"- Applying for: {name}\n"
+            f"- Target roles: {targets}\n"
+            f"- Locations: {locs}\n"
+            f"- Queue: {stats['in_queue']} waiting, {stats['applied_today']} applied today "
+            f"(cap {snap.get('daily_apply_limit', 25)})\n"
+            f"- Last scout: {scout_age}\n"
+            f"- Worker: {worker_state}\n"
+            f"You don't need to respond. Just keep the mission in mind: "
+            f"scout → filter → apply, 24/7, for THIS tenant's target roles. "
+            f"If the worker isn't running, start it. If the queue is growing but "
+            f"applied_today isn't moving, claim and apply the next job."
+        )
+
+    def _build_mission_nudge(self, drift: list[str]) -> str:
+        """Mission-stall nudge. Fires when watchdog detects real progress
+        drift — flat applied count, overdue scout, dead worker, or PTY idle.
+        Body is tenant-scoped and names the required next action explicitly.
+        Claude is told to ACT, not acknowledge."""
+        snap = self._tenant_snapshot or {}
+        stats = self._read_mission_stats()
+        name = snap.get("name", "the user")
+        user_id = (snap.get("user_id") or "unknown")[:8]
+        targets = ", ".join(snap.get("target_titles", [])[:5]) or "(not set)"
+        locs = ", ".join(snap.get("preferred_locations", [])[:3]) or "any"
+        drift_str = "; ".join(drift) if drift else "no specific signal"
+        scout_desc = (
+            f"{stats['scout_age_min']:.0f}m ago"
+            if stats['scout_age_min'] is not None
+            else "never"
+        )
+        return (
+            f"Mission stall detected (auto-nudge).\n"
+            f"Tenant: {name} ({user_id})\n"
+            f"Target roles: {targets}\n"
+            f"Preferred locations: {locs}\n"
+            f"State:\n"
+            f"  - Queue: {stats['in_queue']} waiting\n"
+            f"  - Applied today: {stats['applied_today']} / {snap.get('daily_apply_limit', 25)}\n"
+            f"  - Worker alive: {stats['worker_alive']}\n"
+            f"  - PTY idle: {stats['idle_min']}m\n"
+            f"  - Last scout: {scout_desc}\n"
+            f"Drift signals: {drift_str}\n\n"
+            f"Your ultimate mission: keep scout → filter → apply running 24/7 "
+            f"for THIS tenant's profile. You are NOT making progress.\n\n"
+            f"Required next action (pick the first that applies):\n"
+            f"  1. Worker not running? → cd ~/.applyloop/packages/worker && python3 worker.py\n"
+            f"  2. Queue has jobs but apply loop stalled? → check worker logs, "
+            f"kill stuck processes, restart worker\n"
+            f"  3. Scout overdue? → worker's scout thread ticks every 30m. "
+            f"If it isn't, the worker process is dead — restart it.\n"
+            f"  4. All look fine? → claim the next queued row and apply to it.\n\n"
+            f"Do not just acknowledge this. Take the action. Report back when "
+            f"applied_today changes."
+        )
+
+    def _submit_to_pty(self, body: str) -> None:
+        """Write a /btw side-channel message. The \\r terminator is mandatory
+        — Claude Code's TUI runs the terminal in raw mode and \\n alone does
+        NOT submit. This is the same byte sequence xterm.js forwards when
+        a user presses Enter manually.
+        """
+        msg = f"/btw {body}\r"
+        self.write(msg.encode("utf-8"))
+
+    def _nudge_cooldown_ok(self) -> bool:
+        """Rate-limit nudges to at most once per NUDGE_COOLDOWN seconds so
+        Claude has time to actually ACT on a nudge before getting another."""
+        return (time.time() - self._last_nudge_at) >= self.NUDGE_COOLDOWN
+
+    async def _mission_heartbeat_loop(self):
+        """Informational status refresh every 15 min. Always fires while
+        the session is alive; not rate-limited (heartbeats are context, not
+        actions). Tenant snapshot is re-read each tick so changes to the
+        web dashboard propagate without a PTY restart."""
+        try:
+            while self.is_alive:
+                await asyncio.sleep(self.HEARTBEAT_INTERVAL)
+                if not self.is_alive:
+                    return
+                self._refresh_tenant_context()
+                body = self._build_mission_heartbeat()
+                logger.info("Mission heartbeat → PTY")
+                self._submit_to_pty(body)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"Heartbeat loop ended: {e}")
+
     async def _watchdog_loop(self):
-        """Check every 5 min if the PTY session is idle. Nudge after 30 min."""
+        """Mission-drift guard. Ticks every 5 min and fires a nudge when any
+        of four drift signals trip:
+          1. applied_today hasn't grown in STUCK_APPLIED_CYCLES ticks AND
+             queue has jobs (worker alive but apply gate stuck)
+          2. scout is overdue by 2x SCOUT_INTERVAL_MINUTES (30m → 60m)
+          3. worker process dead (worker.pid points nowhere)
+          4. PTY idle for IDLE_THRESHOLD (fallback — PTY-byte-flow check)
+
+        Cooldown: at most one nudge per NUDGE_COOLDOWN seconds, no matter
+        how many signals fire, so Claude gets time to act between pokes.
+        """
+        # Import here to keep top-level import clean + avoid circular with
+        # config on restart.
+        try:
+            from config import SCOUT_INTERVAL_MINUTES  # noqa: F401 — sanity check
+            scout_interval_min = 30
+            try:
+                from config import SCOUT_INTERVAL_MINUTES as _siv
+                scout_interval_min = int(_siv)
+            except Exception:
+                pass
+        except Exception:
+            scout_interval_min = 30
+
+        scout_stale_min = scout_interval_min * self.SCOUT_STALE_MULTIPLIER
+
         try:
             while self.is_alive:
                 await asyncio.sleep(self.WATCHDOG_INTERVAL)
-                if not self.is_alive or not self.last_output_at:
-                    continue
-                idle_seconds = time.time() - self.last_output_at
-                idle_min = int(idle_seconds / 60)
-                if idle_seconds > self.IDLE_THRESHOLD:
-                    logger.info(f"PTY idle for {idle_min}m — sending nudge")
-                    self.write(self.NUDGE_MESSAGE.encode("utf-8"))
-                    self.last_output_at = time.time()  # reset to avoid spamming
-                elif idle_seconds > self.IDLE_THRESHOLD / 2:
-                    logger.debug(f"PTY idle for {idle_min}m (nudge at 30m)")
+                if not self.is_alive:
+                    return
+
+                self._refresh_tenant_context()
+                stats = self._read_mission_stats()
+                drift: list[str] = []
+
+                # Signal 1 — applied_today flat with non-empty queue
+                if (
+                    self._last_applied_count is not None
+                    and stats["applied_today"] == self._last_applied_count
+                    and stats["in_queue"] > 0
+                ):
+                    self._stuck_cycles += 1
+                else:
+                    self._stuck_cycles = 0
+                self._last_applied_count = stats["applied_today"]
+                if self._stuck_cycles >= self.STUCK_APPLIED_CYCLES:
+                    drift.append(
+                        f"applied_today stuck at {stats['applied_today']} for "
+                        f"{self._stuck_cycles * (self.WATCHDOG_INTERVAL // 60)}m "
+                        f"with {stats['in_queue']} in queue"
+                    )
+
+                # Signal 2 — scout overdue
+                if stats["scout_age_min"] is not None and stats["scout_age_min"] > scout_stale_min:
+                    drift.append(
+                        f"scout overdue by {stats['scout_age_min'] - scout_interval_min:.0f}m"
+                    )
+                elif stats["scout_age_min"] is None and stats["worker_alive"]:
+                    # Worker process alive but has never touched scout.ts —
+                    # shouldn't happen but worth surfacing.
+                    drift.append("scout heartbeat file missing despite worker alive")
+
+                # Signal 3 — worker process dead
+                if not stats["worker_alive"]:
+                    drift.append("worker process not running")
+
+                # Signal 4 — PTY silence fallback
+                if stats["idle_min"] >= (self.IDLE_THRESHOLD // 60):
+                    drift.append(f"PTY idle for {stats['idle_min']}m")
+
+                if drift and self._nudge_cooldown_ok():
+                    logger.info(f"Mission drift → nudge: {drift}")
+                    body = self._build_mission_nudge(drift)
+                    self._submit_to_pty(body)
+                    self._last_nudge_at = time.time()
+                    # Reset stuck counter after firing so we don't instantly
+                    # re-trip on the next tick.
+                    self._stuck_cycles = 0
+                elif drift:
+                    logger.debug(f"Drift detected but on cooldown: {drift}")
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.debug(f"Watchdog ended: {e}")
-            logger.info("PTY read loop ended")
 
     def _broadcast(self, data: bytes):
         """Send data to all WebSocket subscribers."""
