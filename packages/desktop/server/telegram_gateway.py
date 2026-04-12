@@ -39,32 +39,57 @@ OFFSET_FILE = WORKSPACE_DIR / "telegram-offset.json"
 POLL_TIMEOUT_SEC = 30  # long-poll; Telegram holds the connection until a message arrives or timeout
 TELEGRAM_MAX_MSG_LEN = 4000  # keep below the 4096 API limit with a safety margin
 
-# ── Command vs question detection ────────────────────────────────────────
-# Commands route to the PTY (Claude acts). Questions route to qa_agent (fast Q&A).
+# ── Smart routing: PTY (default) vs qa_agent (fast-path for questions) ───
+#
+# Design: PTY is the default because Claude Code CAN answer questions too
+# (just slower), but qa_agent CANNOT execute commands. So the safe default
+# is PTY — any misclassification still works, just a bit slower.
+#
+# qa_agent fast-path is an OPTIMIZATION for obvious status questions where
+# we don't want to interrupt the apply loop. Prefix `?` forces qa_agent.
 
-_COMMAND_PREFIXES = [
-    "stop", "start", "pause", "resume", "skip", "apply", "scout",
-    "focus", "ignore", "only", "restart", "kill", "run", "switch",
-    "change", "update", "set", "use", "don't", "do not", "cancel",
+_QUESTION_STARTERS = [
+    "how many", "how much", "what's", "what is", "what are",
+    "show me", "list", "status", "summary", "count",
+    "tell me about", "any update", "progress",
 ]
 
 
-def _is_command(text: str) -> bool:
-    """Return True if the message looks like an actionable command rather
-    than a status question. The user can also force command mode with `!`.
+def _is_question(text: str) -> bool:
+    """Return True if the message is an obvious status question that can be
+    answered from the SQLite snapshot without touching the PTY.
 
-    Examples:
-      "!stop scouting"           → True (! prefix)
-      "stop scouting"            → True (starts with action verb)
-      "apply to Stripe only"     → True
-      "how many applied today?"  → False (question)
-      "what's in the queue?"     → False (question)
+    The DEFAULT is False (→ route to PTY). This function only returns True
+    for clear read-only questions. Anything ambiguous goes to the PTY where
+    Claude can decide whether to act or just answer.
+
+    Prefix `?` forces question mode. Prefix `!` forces PTY/command mode.
+
+    Examples that return True (→ qa_agent fast path):
+      "how many applied today?"
+      "?what's the queue size"
+      "status"
+      "show me recent failures"
+
+    Examples that return False (→ PTY, Claude decides):
+      "stop scouting"
+      "I found this job https://... apply to it"
+      "defense companies aren't for me"
+      "the scouting seems slow, try Indeed too"
+      "!how many today" (forced PTY with !)
     """
     t = text.strip()
+    # Prefix overrides
     if t.startswith("!"):
-        return True
+        return False  # forced PTY
+    if t.startswith("?"):
+        return True   # forced qa_agent
     tl = t.lower()
-    return any(tl.startswith(prefix) for prefix in _COMMAND_PREFIXES)
+    # Ends with ? and is short → likely a question
+    if tl.endswith("?") and len(tl.split()) <= 10:
+        return True
+    # Starts with a known question pattern
+    return any(tl.startswith(q) for q in _QUESTION_STARTERS)
 
 
 class TelegramClient:
@@ -304,34 +329,39 @@ class TelegramGateway:
             except Exception as e:
                 logger.debug(f"on_message_in callback failed: {e}")
 
-        # 2) Route: commands → PTY (Claude can act), questions → Q&A agent.
+        # 2) Route: PTY is the default (Claude can both act AND answer).
+        # qa_agent is a fast-path optimization for obvious status questions
+        # where we don't want to interrupt the apply loop.
         #
-        # Commands are messages the user wants Claude to ACT on — start/stop/
-        # apply/skip/pause/resume. They go through message_router into the main
-        # Claude Code PTY where Claude has full tool access and can actually
-        # control the worker, browser, filesystem.
+        # Why PTY-default: qa_agent CANNOT execute commands, but PTY CAN
+        # answer questions. Misrouting a command to qa_agent = dead end.
+        # Misrouting a question to PTY = works, just slightly slower.
+        # Safe default = PTY.
         #
-        # Questions are status inquiries — "how many applied?", "what's in
-        # queue?" — answered fast via a stateless subprocess (no PTY interleave).
-        #
-        # Detection: prefix `!` forces command mode. Otherwise, action verbs
-        # at the start of the message trigger command mode.
-        if _is_command(text):
-            cmd_text = text.lstrip("!").strip()
+        # Prefix `?` forces qa_agent. Prefix `!` forces PTY.
+        if _is_question(text):
+            q_text = text.lstrip("?").strip()
+            try:
+                response = await qa_agent.answer(q_text)
+            except Exception as e:
+                response = f"⚠️ Error processing question: {e}"
+        else:
+            user_text = text.lstrip("!").strip()
             try:
                 response = await message_router.submit(
                     "telegram",
-                    f"USER COMMAND (from Telegram — you MUST act on this, "
-                    f"not just acknowledge): {cmd_text}",
+                    f"USER MESSAGE (from Telegram — read this and act if needed, "
+                    f"answer if it's a question): {user_text}",
                     timeout=60.0,
                 )
             except Exception as e:
-                response = f"⚠️ Command delivery failed: {e}"
-        else:
-            try:
-                response = await qa_agent.answer(text)
-            except Exception as e:
-                response = f"⚠️ Error processing message: {e}"
+                response = f"⚠️ Message delivery failed: {e}"
+            if not response or response.startswith("Claude is busy"):
+                # Fallback: if PTY didn't respond (busy applying), try qa_agent
+                try:
+                    response = await qa_agent.answer(user_text)
+                except Exception:
+                    pass
 
         # 3) Send Claude's reply back to Telegram
         try:

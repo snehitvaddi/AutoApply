@@ -285,25 +285,31 @@ async def chat_websocket(ws: WebSocket):
 
                 await ws.send_json({"type": "thinking", "data": "Asking Claude..."})
 
-                # Route: commands → PTY (Claude acts), questions → Q&A agent.
-                # Import the detector from telegram_gateway (same logic both channels).
-                from .telegram_gateway import _is_command
-                if _is_command(user_input):
-                    cmd_text = user_input.lstrip("!").strip()
+                # Route: PTY is the default (Claude can both act AND answer).
+                # qa_agent fast-path only for obvious status questions.
+                from .telegram_gateway import _is_question
+                if _is_question(user_input):
+                    q_text = user_input.lstrip("?").strip()
+                    try:
+                        response = await qa_agent.answer(q_text)
+                    except Exception as e:
+                        response = f"⚠️ Error processing question: {e}"
+                else:
+                    user_text = user_input.lstrip("!").strip()
                     try:
                         response = await message_router.submit(
                             "chat_ui",
-                            f"USER COMMAND (from chat — you MUST act on this, "
-                            f"not just acknowledge): {cmd_text}",
+                            f"USER MESSAGE (from chat — read this and act if "
+                            f"needed, answer if it's a question): {user_text}",
                             timeout=60.0,
                         )
                     except Exception as e:
-                        response = f"⚠️ Command delivery failed: {e}"
-                else:
-                    try:
-                        response = await qa_agent.answer(user_input)
-                    except Exception as e:
-                        response = f"⚠️ Error processing message: {e}"
+                        response = f"⚠️ Message delivery failed: {e}"
+                    if not response or response.startswith("Claude is busy"):
+                        try:
+                            response = await qa_agent.answer(user_text)
+                        except Exception:
+                            pass
 
                 await ws.send_json({"type": "btw_response", "data": response})
 
