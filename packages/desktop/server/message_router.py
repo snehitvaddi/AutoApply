@@ -28,8 +28,16 @@ _ANSI_RE = re.compile(
 
 async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
     """
-    Write `/btw <text>\\n` to the PTY, subscribe to output, capture the reply,
+    Write `/btw <text>\\r` to the PTY, subscribe to output, capture the reply,
     strip ANSI codes and claude-cli noise, and return a cleaned string.
+
+    CRITICAL: the terminator must be \\r (carriage return), not \\n.
+    Claude Code's TUI runs the terminal in raw mode and reads keystrokes
+    directly — pressing Enter in an xterm sends \\r (0x0d), which Claude
+    interprets as "submit". Writing \\n (0x0a) alone puts the text into
+    the input buffer but NEVER submits; Claude just sits there waiting
+    for Enter. Manual typing works because xterm.js forwards \\r on Enter;
+    the programmatic path needs to match that byte sequence.
 
     If no PTY session is alive, returns a friendly error message.
     """
@@ -41,7 +49,7 @@ async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
     response_chunks: list[str] = []
 
     try:
-        btw_cmd = f"/btw {text}\n"
+        btw_cmd = f"/btw {text}\r"
         session_manager.pty.write(btw_cmd.encode("utf-8"))
 
         deadline = time.time() + timeout

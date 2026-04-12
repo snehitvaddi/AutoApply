@@ -68,13 +68,23 @@ class PTYSession:
     WATCHDOG_INTERVAL = 300  # check every 5 minutes
     # Updated for v1.0.10 + AGENTS.md architecture. Old copy pointed at
     # `python3 scripts/auto_loop.py` which was the pre-worker layout.
+    # The trailing carriage return is CRITICAL. Claude Code's TUI runs the
+    # terminal in raw mode — it reads keystrokes, not lines. Pressing Enter
+    # in xterm sends \r (0x0d); writing \n (0x0a) alone does NOT submit the
+    # message, Claude just sees the text sitting in the input buffer. This
+    # was a silent watchdog bug: the nudge text was showing up in Claude's
+    # input field but never being processed, so the user kept seeing no
+    # response despite the watchdog firing every 5 min.
+    #
+    # We write `\r` to mimic a real Enter keypress. Same byte sequence the
+    # terminal_stream forwards from xterm.js when a user types manually.
     NUDGE_MESSAGE = (
         "Status check (auto-nudge from ApplyLoop watchdog): you've been idle "
         "for over 30 minutes. What have you been doing? If you've finished the "
         "current scout/filter/apply round, kick off the next one: "
         "cd ~/.applyloop/packages/worker && python3 worker.py. "
         "If you're waiting on user input, tell them explicitly in one short line "
-        "so they know to check in. Do not sit silent.\n"
+        "so they know to check in. Do not sit silent.\r"
     )
 
     def __init__(self):
