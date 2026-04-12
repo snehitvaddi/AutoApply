@@ -60,8 +60,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         transform transition-transform md:translate-x-0
         ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
       `}>
-        <div className="p-6 border-b flex items-center justify-between">
-          <h1 className="text-xl font-bold text-brand-600">ApplyLoop</h1>
+        {/* Brand header — matches the desktop app sidebar, the favicon,
+            the OG card, and the macOS Dock icon. Blue gradient rounded
+            square + "AL" monogram + wordmark. One visual identity across
+            every ApplyLoop surface. */}
+        <div className="p-5 border-b flex items-center justify-between">
+          <Link href="/dashboard" className="flex items-center gap-2.5 group">
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow"
+              style={{ background: "linear-gradient(135deg, #3b82f6 0%, #1e40af 100%)" }}
+            >
+              <span className="text-white font-bold text-[12px] tracking-tight">AL</span>
+            </div>
+            <h1 className="text-xl font-bold text-gray-900">ApplyLoop</h1>
+          </Link>
           <button className="md:hidden text-gray-400" onClick={() => setSidebarOpen(false)}>
             &#x2715;
           </button>
@@ -110,12 +122,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Mobile header */}
-        <div className="md:hidden flex items-center p-4 border-b bg-white">
-          <button onClick={() => setSidebarOpen(true)} className="text-gray-600 text-xl mr-3">
+        {/* Mobile header — same brand mark as the desktop sidebar */}
+        <div className="md:hidden flex items-center p-4 border-b bg-white gap-3">
+          <button onClick={() => setSidebarOpen(true)} className="text-gray-600 text-xl">
             &#x2630;
           </button>
-          <h1 className="text-lg font-bold text-brand-600">ApplyLoop</h1>
+          <div
+            className="w-7 h-7 rounded-lg flex items-center justify-center"
+            style={{ background: "linear-gradient(135deg, #3b82f6 0%, #1e40af 100%)" }}
+          >
+            <span className="text-white font-bold text-[10px] tracking-tight">AL</span>
+          </div>
+          <h1 className="text-lg font-bold text-gray-900">ApplyLoop</h1>
         </div>
         <main className="flex-1 p-8 overflow-auto">{children}</main>
       </div>
