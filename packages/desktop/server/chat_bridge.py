@@ -288,7 +288,7 @@ async def chat_websocket(ws: WebSocket):
                 # Route: PTY is the default (Claude can both act AND answer).
                 # qa_agent fast-path only for obvious status questions.
                 from .telegram_gateway import _is_question
-                if _is_question(user_input):
+                if await _is_question(user_input):
                     q_text = user_input.lstrip("?").strip()
                     try:
                         response = await qa_agent.answer(q_text)

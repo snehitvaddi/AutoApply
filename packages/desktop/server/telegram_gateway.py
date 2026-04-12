@@ -39,23 +39,85 @@ OFFSET_FILE = WORKSPACE_DIR / "telegram-offset.json"
 POLL_TIMEOUT_SEC = 30  # long-poll; Telegram holds the connection until a message arrives or timeout
 TELEGRAM_MAX_MSG_LEN = 4000  # keep below the 4096 API limit with a safety margin
 
-# ── Message routing ──────────────────────────────────────────────────────
+# ── Message routing: LLM-classified ──────────────────────────────────────
 #
-# ALL messages go to the PTY by default. Claude Code can both answer
-# questions AND execute commands — there's no need to classify intent.
+# Uses Claude (haiku, ~200ms) to classify each message as a question or
+# an action. Questions go to qa_agent (fast read-only stats from SQLite).
+# Actions go to the PTY where Claude Code can execute commands.
 #
-# The only exception: prefix `?` forces the qa_agent fast-path for a
-# quick stat lookup without touching the PTY. This is an explicit
-# user opt-in, not an auto-detection heuristic.
+# Prefix overrides skip the classifier:
+#   `?` → force qa_agent    `!` → force PTY
+#
+# The classifier prompt is minimal so it runs fast and costs almost nothing.
+
+_CLASSIFY_PROMPT = (
+    "You are a message classifier. The user sent a message to a job application bot. "
+    "Classify it as either Q (a status question that can be answered from a database — "
+    "like counts, stats, what's in queue, recent activity) or A (an action/command/instruction "
+    "that requires the bot to DO something — like apply, stop, skip, change settings, "
+    "add to a list, open a URL, or any request that changes state).\n\n"
+    "Reply with ONLY the single letter Q or A. Nothing else."
+)
 
 
-def _is_question(text: str) -> bool:
-    """Only returns True if the user explicitly prefixes with `?`.
-
-    Everything else goes to the PTY where Claude Code decides what to do.
-    No heuristic classification — Claude is the classifier.
+async def _classify_message(text: str) -> str:
+    """Use Claude haiku to classify: 'Q' (question) or 'A' (action).
+    Returns 'A' on any failure (safe default — PTY can handle both).
     """
-    return text.strip().startswith("?")
+    import shutil as _shutil
+    claude_bin = _shutil.which("claude")
+    if not claude_bin:
+        return "A"  # no claude → default to PTY
+
+    def _run() -> str:
+        import subprocess as _sp
+        try:
+            proc = _sp.run(
+                [
+                    claude_bin, "--print",
+                    "--model", "haiku",
+                    "--allowedTools", "",
+                    "--append-system-prompt", _CLASSIFY_PROMPT,
+                ],
+                input=text,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            result = (proc.stdout or "").strip().upper()
+            if result in ("Q", "A"):
+                return result
+            # If response is longer, check first character
+            if result and result[0] in ("Q", "A"):
+                return result[0]
+            return "A"  # ambiguous → safe default
+        except Exception:
+            return "A"  # timeout/error → safe default
+
+    try:
+        return await asyncio.to_thread(_run)
+    except Exception:
+        return "A"
+
+
+async def _is_question(text: str) -> bool:
+    """Smart routing: uses Claude to classify the message.
+
+    Prefix overrides (instant, no LLM call):
+      `?` → True (force qa_agent)
+      `!` → False (force PTY)
+
+    Otherwise: LLM classifies as Q (question → qa_agent) or A (action → PTY).
+    Default on failure: False (PTY) — safe because PTY can answer questions too.
+    """
+    t = text.strip()
+    if t.startswith("?"):
+        return True
+    if t.startswith("!"):
+        return False
+    classification = await _classify_message(t)
+    logger.debug(f"Message classified as {'question' if classification == 'Q' else 'action'}: {t[:80]}")
+    return classification == "Q"
 
 
 class TelegramClient:
@@ -305,7 +367,7 @@ class TelegramGateway:
         # Safe default = PTY.
         #
         # Prefix `?` forces qa_agent. Prefix `!` forces PTY.
-        if _is_question(text):
+        if await _is_question(text):
             q_text = text.lstrip("?").strip()
             try:
                 response = await qa_agent.answer(q_text)
