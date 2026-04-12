@@ -1,3 +1,16 @@
+"""Worker global config — universal safety rules only.
+
+Part 2 of the multi-tenant redesign deleted every role-opinion constant
+from this file. What used to be AI_KEYWORDS / SKIP_LEVELS / SKIP_LOCATIONS
+/ SKIP_ROLE_KEYWORDS / SKIP_COMPANIES_SENIOR now lives per-tenant on
+TenantConfig (packages/worker/tenant.py). Board slug lists moved to
+packages/worker/default_boards.py.
+
+What remains here is strictly the universal-truth layer — spam aggregators,
+staffing agencies that aren't direct employers, and the company rate limits.
+If a constant belongs here it must be TRUE for every tenant regardless of
+role, level, location, work auth, or profile shape.
+"""
 import os
 from datetime import date
 
@@ -21,9 +34,10 @@ ATS_COOLDOWNS = {
 
 MAX_SYSTEM_APPS_PER_HOUR = 60
 
-# ─── GLOBAL SAFETY FILTERS (always enforced, not per-user) ─────────────────
+# ─── GLOBAL SAFETY FILTERS (universal truths, NOT role opinions) ───────────
 
-# Aggregator/spam domains — jobs from these sites are never real employers
+# Aggregator/spam domains — jobs from these sites are never real employers.
+# Universal: every tenant wants these filtered regardless of their profile.
 BLOCKED_DOMAINS = [
     "jobright.ai",
     "wiraa.com",
@@ -34,22 +48,15 @@ BLOCKED_DOMAINS = [
     "indeed.com",
 ]
 
-# Temporary company pauses — {company_name_lower: resume_date}
-# Jobs from these companies are skipped until the resume date
+# Temporary company pauses — admin-managed global pauses after rate-limit
+# incidents. Could be moved to a DB table in the future; leaving here for now.
 COMPANY_PAUSES: dict[str, date] = {
     "stripe": date(2026, 3, 25),
     "ramp": date(2026, 6, 9),
 }
 
-# Defense/clearance companies — never apply (visa incompatible)
-BLOCKED_COMPANIES = [
-    "anduril", "anthropic", "bae systems", "booz allen", "cisco",
-    "general dynamics", "l3harris", "langchain", "leidos",
-    "lockheed martin", "meta", "northrop grumman", "palantir",
-    "raytheon", "saic", "whoop",
-]
-
-# Staffing agencies — never apply (not direct employers)
+# Staffing agencies — not direct employers. Universal business rule; apps
+# go to recruiters instead of real hiring managers, so no tenant wants them.
 BLOCKED_STAFFING = [
     "hackajob", "lensa", "jobright", "kforce", "dice", "collabera",
     "wiraa", "synergistic", "aditi", "hirenza", "jobot",
@@ -63,94 +70,17 @@ MAX_COMPANY_APPS_PER_DAY = 2  # Max 2 per company per day (rank by fit, pick top
 MAX_COMPANY_APPS_PER_15_DAYS = 5  # Hard cap: 5 per company per 15-day window
 JOB_TIMEOUT_SECONDS = 120  # Max time per application before skip
 
-# ─── DEFAULT FILTERS (fallback when user has no preferences) ───────────────
-
-# Skip these title levels
-SKIP_LEVELS = ["lead", "principal", "staff", "director", "manager", "vp", "intern", "co-op"]
-
-# Skip irrelevant role types (sales, legal, marketing, etc.)
-SKIP_ROLE_KEYWORDS = [
-    "sales", "account executive", "account manager", "business development",
-    "sales development", "solutions architect",
-    "legal", "counsel", "attorney", "paralegal",
-    "marketing", "marketing analyst", "content", "copywriter", "social media",
-    "recruiter", "talent acquisition", "people ops", "trainer",
-    "designer", "product designer", "graphic design", "ux design",
-    "security architect", "identity architect", "security engineer", "iam", "soc analyst",
-    "datacenter", "electrical engineer", "facilities", "office manager",
-    "customer success", "support engineer", "technical support",
-]
-
-# Short AI keywords that need word-boundary matching (to avoid "Retailer" matching "ai")
-AI_KEYWORDS_SHORT = {"ai", "ml", "nlp", "llm", "genai"}
-
-# Skip Senior roles at FAANG/big tech (Senior at startups is OK)
-SKIP_COMPANIES_SENIOR = [
-    "google", "meta", "amazon", "apple", "microsoft",
-    "netflix", "nvidia", "uber", "airbnb",
-]
-
-# AI/ML keywords — title must contain at least one to qualify
-AI_KEYWORDS = [
-    "ai", "ml", "machine learning", "data scientist", "nlp", "genai", "llm",
-    "deep learning", "computer vision", "mlops", "artificial intelligence",
-    "inference", "training", "neural",
-]
-
-# Non-US locations — skip jobs with these in location string
-SKIP_LOCATIONS = [
-    "india", "bengaluru", "dublin", "amsterdam", "japan", "sydney",
-    "mexico", "paris", "brazil", "london", "berlin", "singapore",
-    "canada", "vancouver",
-]
-
-# ─── Ashby board slugs (all discovered) ─────────────────────────────────────
-
-ASHBY_SLUGS = [
-    "airwallex", "anyscale", "astronomer", "baseten", "benchling",
-    "braintrust", "brellium", "character", "cognition", "cohere",
-    "confluent", "cursor", "dandy", "decagon", "deepgram",
-    "drata", "e2b", "factory", "graphite", "hackerone",
-    "harvey", "hinge-health", "insitro", "llamaindex", "modal",
-    "nomic", "norm-ai", "notion", "openai", "perplexity",
-    "plaid", "poolside", "posthog", "primeintellect", "ramp",
-    "reducto", "regard", "resend", "rogo", "sardine",
-    "semgrep", "skydio", "snowflake", "socure", "sola",
-    "suno", "trm-labs", "vanta", "whatnot", "windmill",
-    "writer",
-    # langchain is in BLOCKED_COMPANIES — excluded from scouting
-]
-
-# ─── Greenhouse reCAPTCHA map ────────────────────────────────────────────────
-
-# These companies have NO reCAPTCHA — safe to auto-submit
-GREENHOUSE_SUBMITTABLE = [
-    "affirm", "airtable", "asana", "assemblyai", "attentive", "aurora",
-    "benchling", "block", "brex", "calendly", "canva", "carta", "chime",
-    "cloudflare", "cockroachlabs", "coinbase", "coursera", "cresta",
-    "crowdstrike", "databricks", "datadog", "deel", "doordash", "drata",
-    "elastic", "fastly", "figma", "fireworksai", "flexport", "forethought",
-    "ginkgo", "gitlab", "gusto", "hashicorp", "headspace", "hebbia",
-    "hightouch", "instacart", "intercom", "iterable", "justworks",
-    "klaviyo", "labelbox", "lattice", "launchdarkly", "lyft", "marqeta",
-    "mercury", "mixpanel", "mongodb", "motional", "moveworks", "netlify",
-    "netskope", "newrelic", "notion", "nuro", "okta", "openai",
-    "pagerduty", "postman", "ramp", "replicate", "rippling", "roblox",
-    "root", "runway", "samsara", "sendbird", "sentinelone", "shopify",
-    "snap", "snorkelai", "sofi", "springhealth", "squarespace", "stability",
-    "tempus", "tenstorrent", "thumbtack", "together", "torcrobotics",
-    "twilio", "upstart", "vanta", "vercel", "verkada", "waymo",
-    "webflow", "wiz", "ziprecruiter",
-]
-
-# These companies HAVE reCAPTCHA — can fill form but submit may be blocked
-GREENHOUSE_RECAPTCHA = [
-    "abnormalsecurity", "amplitude", "braze", "discord",
-    "duolingo", "faire", "gongio", "grammarly",
-    "oura", "peloton", "pinterest", "reddit",
-    "robinhood", "stripe", "toast", "togetherai",
-    "twitch", "xometry",
-]
-
-# Combined list — used by scanner to discover ALL jobs
-GREENHOUSE_ALL_BOARDS = GREENHOUSE_SUBMITTABLE + GREENHOUSE_RECAPTCHA
+# NOTE: Role/level/location/company opinions moved to TenantConfig.
+# See packages/worker/tenant.py for the frozen per-tenant dataclass and
+# packages/worker/default_boards.py for the global board slug pools.
+#
+# The appliers (applier/greenhouse.py) need to know at apply time whether a
+# company has a reCAPTCHA submit gate — that's a scrape-time property, not
+# a role opinion, so the set re-exports here for backward compat. Scanner
+# legacy code also imports the plain board lists via this path. New code
+# should import from default_boards directly.
+from default_boards import (
+    DEFAULT_ASHBY_BOARDS as ASHBY_SLUGS,
+    DEFAULT_GREENHOUSE_SUBMITTABLE as GREENHOUSE_SUBMITTABLE,
+    DEFAULT_GREENHOUSE_RECAPTCHA as GREENHOUSE_RECAPTCHA,
+)

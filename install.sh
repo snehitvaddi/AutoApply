@@ -1044,6 +1044,12 @@ cat > "$ENV_FILE" <<ENVEOF
 # ── Auth (REQUIRED) ────────────────────────────────────────────────
 WORKER_TOKEN=${WORKER_TOKEN}
 
+# Tenant identity — worker.py main() reads this and loads TenantConfig
+# from /api/worker/proxy?action=get_tenant_config. Without it, the worker
+# falls back to reading ~/.applyloop/profile.json for user_id, but setting
+# it here is cleaner and makes multi-tenant debugging obvious.
+APPLYLOOP_USER_ID=${ACTIVATION_USER_ID}
+
 # ── App ────────────────────────────────────────────────────────────
 NEXT_PUBLIC_APP_URL=${APP_URL}
 APPLYLOOP_HOME=${APPLYLOOP_HOME}

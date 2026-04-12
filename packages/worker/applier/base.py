@@ -49,6 +49,8 @@ class BaseApplier(ABC):
         """
         p = self.profile
         user = p.get("user", {})
+        work_exp = p.get("work_experience", []) or []
+        edu_entries = p.get("education", []) or []
         lines = [
             f"Name: {user.get('first_name', '')} {user.get('last_name', '')}",
             f"Email: {user.get('email', '')}",
@@ -58,9 +60,9 @@ class BaseApplier(ABC):
             f"GitHub: {user.get('github_url', '')}",
             f"Portfolio: {user.get('portfolio_url', '')}",
             "",
-            "WORK EXPERIENCE (CRITICAL: fill ALL 4 positions below — never skip or abbreviate any):",
+            f"WORK EXPERIENCE (CRITICAL: fill ALL {len(work_exp)} positions below — never skip or abbreviate any):",
         ]
-        for i, exp in enumerate(p.get("work_experience", [])):
+        for i, exp in enumerate(work_exp):
             lines.append(
                 f"  {i+1}. {exp.get('title','')} @ {exp.get('company','')} "
                 f"| {exp.get('start','')} - {exp.get('end','')} | {exp.get('location','')}"
@@ -69,8 +71,8 @@ class BaseApplier(ABC):
                 lines.append(f"     - {ach[:150]}")
 
         lines.append("")
-        lines.append("EDUCATION (CRITICAL: fill ALL entries below — both degrees required):")
-        for edu in p.get("education", []):
+        lines.append(f"EDUCATION (CRITICAL: fill ALL {len(edu_entries)} entries below):")
+        for edu in edu_entries:
             lines.append(
                 f"  - {edu.get('school','')} | {edu.get('degree','')} {edu.get('field','')} "
                 f"| {edu.get('start','')} - {edu.get('end','')} | GPA: {edu.get('gpa','N/A')}"

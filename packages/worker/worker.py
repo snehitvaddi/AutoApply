@@ -1,21 +1,24 @@
 from __future__ import annotations
 import os
+import random
 import time
 import signal
 import logging
 import subprocess
 import threading
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlparse
-import re
 from config import (
     WORKER_ID, POLL_INTERVAL, APPLY_COOLDOWN, ATS_COOLDOWNS,
-    MAX_SYSTEM_APPS_PER_HOUR, BLOCKED_DOMAINS, COMPANY_PAUSES, BLOCKED_COMPANIES,
+    MAX_SYSTEM_APPS_PER_HOUR, BLOCKED_DOMAINS, COMPANY_PAUSES,
     BLOCKED_STAFFING, SCOUT_INTERVAL_MINUTES, MAX_COMPANY_APPS_PER_15_DAYS,
-    SKIP_LEVELS, SKIP_COMPANIES_SENIOR, AI_KEYWORDS, AI_KEYWORDS_SHORT,
-    SKIP_LOCATIONS, SKIP_ROLE_KEYWORDS,
-    ASHBY_SLUGS, GREENHOUSE_SUBMITTABLE, GREENHOUSE_RECAPTCHA,
 )
+from tenant import (
+    TenantConfig, TenantConfigIncompleteError,
+    DEFAULT_SECURITY_CLEARANCE_COMPANIES,
+)
+from scout import REGISTERED_SOURCES
 from db import (
     claim_next_job, load_user_profile, update_queue_status, log_application,
     check_daily_limit, get_answer_key, download_resume, upload_screenshot,
@@ -26,11 +29,6 @@ from db import (
 )
 from notifier import send_application_result, send_failure
 from knowledge import build_answer_key, load_global_template
-from scanner.linkedin import scan_linkedin
-from scanner.indeed import scan_indeed
-from scanner.himalayas import scan_himalayas
-from scanner.jsearch import scan_jsearch
-from scanner.ziprecruiter import scan_ziprecruiter
 from applier.base import MissingResumeError
 from applier.greenhouse import GreenhouseApplier
 from applier.lever import LeverApplier
@@ -82,10 +80,22 @@ def is_paused_company(company: str) -> bool:
     return False
 
 
-def is_blocked_company(company: str) -> bool:
-    """Check if the company is permanently blocked (defense/clearance)."""
+def is_blocked_company(company: str, tenant: TenantConfig | None = None) -> bool:
+    """Return True if the tenant is visa-blocked from this company.
+
+    Only applies the security-clearance company list to tenants whose
+    work_auth forbids it (OPT/H1B etc.). US citizens and green-card
+    holders can apply freely — no hardcoded blocklist for them.
+
+    If tenant is None (per-job apply path where we haven't loaded the
+    tenant yet because the queue may span multiple users), fall back to
+    the global clearance list. Per-job load_user_profile + visa check
+    can refine this further upstream if needed.
+    """
     company_lower = (company or "").lower().strip()
-    return any(blocked in company_lower for blocked in BLOCKED_COMPANIES)
+    if tenant is not None:
+        return tenant.security_clearance_blocked(company)
+    return any(blocked in company_lower for blocked in DEFAULT_SECURITY_CLEARANCE_COMPANIES)
 
 
 # ─── Company Rate Limiting (via API proxy) ─────────────────────────────────
@@ -102,172 +112,22 @@ def update_heartbeat(user_id: str, action: str, details: str = ""):
     db_heartbeat(user_id, action, details)
 
 
-# ─── Job Filter (title/company/location rules) ──────────────────────────────
-
-def passes_filter(title: str, company: str, location: str, user_prefs: dict | None = None) -> bool:
-    """Check if a job passes all filter rules (AI/ML, level, company, location)."""
-    tl = title.lower()
-    cl = company.lower()
-    ll = (location or "").lower()
-
-    # GLOBAL SAFETY — always enforced
-    if any(sc in cl for sc in BLOCKED_COMPANIES):
-        return False
-    if any(sc in cl for sc in BLOCKED_STAFFING):
-        return False
-
-    # Skip irrelevant role types (sales, legal, marketing, recruiter, etc.)
-    if any(rk in tl for rk in SKIP_ROLE_KEYWORDS):
-        return False
-
-    # PER-USER or DEFAULT keyword filter (with word-boundary for short keywords)
-    keywords = AI_KEYWORDS  # default
-    if user_prefs and user_prefs.get("target_keywords"):
-        keywords = [k.lower() for k in user_prefs["target_keywords"]]
-    elif user_prefs and user_prefs.get("target_titles"):
-        keywords = [t.lower() for t in user_prefs["target_titles"]]
-
-    def _kw_matches(kw: str, text: str) -> bool:
-        if kw in AI_KEYWORDS_SHORT:
-            return bool(re.search(rf'\b{re.escape(kw)}\b', text))
-        return kw in text
-
-    if not any(_kw_matches(kw, tl) for kw in keywords):
-        return False
-
-    # PER-USER or DEFAULT level skip
-    skip_levels = SKIP_LEVELS  # default
-    if user_prefs and user_prefs.get("excluded_titles"):
-        skip_levels = [t.lower() for t in user_prefs["excluded_titles"]]
-    if any(lvl in tl for lvl in skip_levels):
-        return False
-
-    # PER-USER excluded companies (in addition to global)
-    if user_prefs and user_prefs.get("excluded_companies"):
-        if any(ec.lower() in cl for ec in user_prefs["excluded_companies"]):
-            return False
-
-    # PER-USER or DEFAULT location filter
-    if user_prefs and user_prefs.get("remote_only") and "remote" not in ll:
-        return False
-    if user_prefs and user_prefs.get("preferred_locations"):
-        # Only pass if location matches one of preferred
-        locs = [loc.lower() for loc in user_prefs["preferred_locations"]]
-        if ll and not any(loc in ll for loc in locs):
-            return False
-    else:
-        # Default: skip non-US
-        if ll and any(loc in ll for loc in SKIP_LOCATIONS):
-            return False
-
-    # Senior at FAANG (keep as global rule)
-    if "senior" in tl and any(f in cl for f in SKIP_COMPANIES_SENIOR):
-        return False
-
-    return True
-
-
-# ─── Freshness Filter ────────────────────────────────────────────────────────
-
-def _is_fresh_24h(date_value) -> bool:
-    """Check if a date is within the last 24 hours. Handles multiple formats."""
-    if not date_value:
-        return True  # no date = assume fresh (let other filters handle it)
-
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=24)
-
-    try:
-        if isinstance(date_value, (int, float)):
-            # Unix epoch (seconds or milliseconds)
-            ts = date_value if date_value < 1e12 else date_value / 1000
-            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-            return dt >= cutoff
-
-        s = str(date_value).strip()
-        # ISO 8601 (2026-03-30T12:00:00Z or 2026-03-30T12:00:00.000Z)
-        if "T" in s:
-            s = s.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(s)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt >= cutoff
-
-        # YYYY-MM-DD
-        if len(s) == 10 and s[4] == "-":
-            dt = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            return dt >= cutoff
-
-    except Exception:
-        pass
-
-    return True  # can't parse = assume fresh
-
-
-# ─── Scout Functions ─────────────────────────────────────────────────────────
-
-def scout_ashby_boards(user_prefs: dict | None = None) -> list[dict]:
-    """Scout Ashby API for AI/ML jobs across all known boards."""
-    import httpx
-    jobs = []
-    with httpx.Client(timeout=10, follow_redirects=True) as client:
-        for slug in ASHBY_SLUGS:
-            try:
-                resp = client.get(f"https://api.ashbyhq.com/posting-api/job-board/{slug}")
-                if resp.status_code != 200:
-                    continue
-                for job in resp.json().get("jobs", []):
-                    # Freshness: only jobs published in last 24h
-                    if not _is_fresh_24h(job.get("publishedAt")):
-                        continue
-                    title = job.get("title", "")
-                    loc = job.get("location", "")
-                    if isinstance(loc, dict):
-                        loc = loc.get("name", "")
-                    if not passes_filter(title, slug, loc, user_prefs):
-                        continue
-                    apply_url = job.get("applicationUrl") or f"https://jobs.ashbyhq.com/{slug}/application?jobId={job['id']}"
-                    jobs.append({
-                        "title": title, "company": slug, "location": loc,
-                        "apply_url": apply_url, "external_id": job.get("id", ""),
-                        "ats": "ashby",
-                    })
-            except Exception:
-                pass
-            time.sleep(0.5)
-    return jobs
-
-
-def scout_greenhouse_boards(user_prefs: dict | None = None) -> list[dict]:
-    """Scout Greenhouse API for AI/ML jobs (all boards — reCAPTCHA check happens at apply time)."""
-    import httpx
-    jobs = []
-    with httpx.Client(timeout=10, follow_redirects=True) as client:
-        for slug in GREENHOUSE_SUBMITTABLE + GREENHOUSE_RECAPTCHA:
-            try:
-                resp = client.get(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs")
-                if resp.status_code != 200:
-                    continue
-                for job in resp.json().get("jobs", []):
-                    # Freshness: only jobs updated in last 24h
-                    if not _is_fresh_24h(job.get("updated_at")):
-                        continue
-                    title = job.get("title", "")
-                    loc = job.get("location", {})
-                    if isinstance(loc, dict):
-                        loc = loc.get("name", "")
-                    if not passes_filter(title, slug, loc, user_prefs):
-                        continue
-                    job_id = job.get("id", "")
-                    jobs.append({
-                        "title": title, "company": slug, "location": loc,
-                        "apply_url": f"https://job-boards.greenhouse.io/embed/job_app?for={slug}&token={job_id}",
-                        "external_id": str(job_id), "ats": "greenhouse",
-                    })
-            except Exception:
-                pass
-            time.sleep(0.5)
-    return jobs
+# ─── Job filter + freshness + scout sources ─────────────────────────────────
+#
+# All of these used to live inline as passes_filter / _is_fresh_24h /
+# scout_ashby_boards / scout_greenhouse_boards with hardcoded admin defaults
+# (AI_KEYWORDS, SKIP_LEVELS, SKIP_ROLE_KEYWORDS, SKIP_LOCATIONS). They now
+# live in packages/worker/scout/ as plugins and tenant.py::TenantConfig:
+#
+#   - passes_filter()      →  tenant.passes_filter(title, company, location)
+#   - _is_fresh_24h()      →  scout/ashby.py::_is_fresh_24h (private)
+#   - scout_ashby_boards() →  scout/ashby.py::AshbyScout
+#   - scout_greenhouse_boards() → scout/greenhouse.py::GreenhouseScout
+#
+# Every scout source reads queries from tenant.search_queries and filters
+# through tenant.passes_filter(). No admin defaults remain. The registry
+# in scout/__init__.py enumerates all sources so adding a new one (e.g.
+# Dice) never requires touching worker.py.
 
 
 def _enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
@@ -294,118 +154,140 @@ def _enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
     return enqueue_discovered_jobs(user_id, new_jobs)
 
 
-def run_scout_cycle(user_id: str):
-    """Run one scout → filter → enqueue cycle for a user.
+def run_scout_cycle(tenant: TenantConfig) -> int:
+    """Run one scout → filter → enqueue cycle for THIS tenant.
 
-    Scouting sources are run in priority order:
-      HIGH:   Ashby API, Greenhouse API (reliable, high submit rate)
-      MEDIUM: Indeed, Himalayas (good volume, no auth)
-      LOW:    JSearch (optional, quota limited), LinkedIn public (limited results)
+    Iterates REGISTERED_SOURCES from packages/worker/scout/. Each source
+    reads its queries from `tenant.search_queries` and filters results via
+    `tenant.passes_filter()`. There is no fallback to admin defaults at
+    any layer — if tenant has no target_titles, the worker refuses to boot
+    at main() time before reaching this function.
 
-    Higher priority sources are always run. Lower priority sources are
-    randomly included to spread load and avoid rate limits.
+    Priority dispatch:
+      HIGH:    always run
+      MEDIUM:  run 80% of cycles
+      LOW:     run 40% of cycles
+
+    Adding a new source only requires appending to scout.REGISTERED_SOURCES.
     """
-    import random
+    update_heartbeat(tenant.user_id, "scouting", tenant.profile_summary_hint())
 
-    update_heartbeat(user_id, "scouting")
-    user_prefs = fetch_user_job_preferences(user_id) if user_id != "system" else None
-    search_queries = (user_prefs or {}).get("target_titles") or ["AI Engineer", "ML Engineer", "Data Scientist"]
+    all_jobs: list[dict] = []
+    counts: dict[str, int] = {}
 
-    counts = {}
-
-    # ── HIGH PRIORITY (always run) ─────────────────────────────────────────
-    logger.info("Scout: HIGH priority — Ashby + Greenhouse...")
-
-    ashby_jobs = scout_ashby_boards(user_prefs)
-    counts["Ashby"] = len(ashby_jobs)
-
-    gh_jobs = scout_greenhouse_boards(user_prefs)
-    counts["Greenhouse"] = len(gh_jobs)
-
-    # ── MEDIUM PRIORITY (run 80% of the time) ──────────────────────────────
-    indeed_jobs = []
-    himalayas_jobs = []
-
-    if random.random() < 0.8:
-        logger.info("Scout: MEDIUM priority — Indeed...")
+    for source in REGISTERED_SOURCES:
+        if not source.is_enabled_for(tenant):
+            continue
+        roll = random.random()
+        if source.priority == "high":
+            run_it = True
+        elif source.priority == "medium":
+            run_it = roll < 0.8
+        else:  # "low"
+            run_it = roll < 0.4
+        if not run_it:
+            continue
         try:
-            indeed_jobs = scan_indeed(search_queries)
+            logger.info(f"Scout: {source.priority.upper()} — {source.name} for {tenant.user_id[:8]}")
+            jobs = source.scout(tenant)
+            for j in jobs:
+                j.setdefault("source", source.name)
+            all_jobs.extend(jobs)
+            counts[source.name] = len(jobs)
         except Exception as e:
-            logger.warning(f"Indeed scout failed: {e}")
-    counts["Indeed"] = len(indeed_jobs)
-
-    if random.random() < 0.8:
-        logger.info("Scout: MEDIUM priority — Himalayas...")
-        try:
-            himalayas_jobs = scan_himalayas(search_queries)
-        except Exception as e:
-            logger.warning(f"Himalayas scout failed: {e}")
-    counts["Himalayas"] = len(himalayas_jobs)
-
-    # ── LOW PRIORITY (run 40% of the time) ─────────────────────────────────
-    jsearch_jobs = []
-    linkedin_jobs = []
-
-    if random.random() < 0.4:
-        logger.info("Scout: LOW priority — JSearch...")
-        try:
-            jsearch_jobs = scan_jsearch(search_queries)
-        except Exception as e:
-            logger.warning(f"JSearch scout failed: {e}")
-    counts["JSearch"] = len(jsearch_jobs)
-
-    if random.random() < 0.4:
-        logger.info("Scout: LOW priority — LinkedIn public...")
-        try:
-            linkedin_jobs = scan_linkedin(search_queries)
-        except Exception as e:
-            logger.warning(f"LinkedIn scout failed: {e}")
-    counts["LinkedIn"] = len(linkedin_jobs)
-
-    ziprecruiter_jobs = []
-    if random.random() < 0.4:
-        logger.info("Scout: LOW priority — ZipRecruiter...")
-        try:
-            ziprecruiter_jobs = scan_ziprecruiter(search_queries, max_locations=5)
-        except Exception as e:
-            logger.warning(f"ZipRecruiter scout failed: {e}")
-    counts["ZipRecruiter"] = len(ziprecruiter_jobs)
-
-    # ── Filter + enqueue ───────────────────────────────────────────────────
-    # Ashby/Greenhouse are pre-filtered in their scout functions.
-    # Others need filtering here.
-    filtered_extra = [j for j in linkedin_jobs + indeed_jobs + himalayas_jobs + jsearch_jobs + ziprecruiter_jobs
-                      if passes_filter(j["title"], j["company"], j["location"], user_prefs)]
-
-    all_jobs = ashby_jobs + gh_jobs + filtered_extra
+            logger.warning(f"{source.name} scout failed: {e}")
+            counts[source.name] = 0
 
     summary = ", ".join(f"{v} {k}" for k, v in counts.items() if v > 0)
-    logger.info(f"Scout: {summary} = {len(all_jobs)} total (after filter)")
+    logger.info(f"Scout: {summary} = {len(all_jobs)} total (after per-source filter)")
+
+    # Touch the scout heartbeat file so the PTY watchdog can detect that
+    # scout is alive without relying on PTY byte flow.
+    _touch_scout_heartbeat()
 
     if not all_jobs:
-        update_heartbeat(user_id, "idle", "No new jobs found")
+        update_heartbeat(tenant.user_id, "idle", "No new jobs matched tenant criteria")
         return 0
 
-    enqueued = _enqueue_discovered_jobs(user_id, all_jobs)
+    enqueued = _enqueue_discovered_jobs(tenant.user_id, all_jobs)
     logger.info(f"Scout complete: {enqueued} new jobs enqueued (from {len(all_jobs)} raw)")
-    update_heartbeat(user_id, "scouted", f"{enqueued} enqueued from {summary}")
+    update_heartbeat(tenant.user_id, "scouted", f"{enqueued} enqueued from {summary}")
     return enqueued
 
 
-def scout_loop(user_id: str):
-    """Background thread: runs scout cycle every SCOUT_INTERVAL_MINUTES."""
+def scout_loop(tenant: TenantConfig) -> None:
+    """Background thread: runs scout cycle every SCOUT_INTERVAL_MINUTES for
+    the per-tenant TenantConfig. Never called with a 'system' user_id."""
     while running:
         try:
-            run_scout_cycle(user_id)
+            run_scout_cycle(tenant)
         except Exception as e:
             logger.exception(f"Scout cycle error: {e}")
-            update_heartbeat(user_id, "error", str(e))
+            update_heartbeat(tenant.user_id, "error", str(e))
 
         # Sleep in small increments so we can respond to shutdown
         for _ in range(SCOUT_INTERVAL_MINUTES * 60):
             if not running:
                 return
             time.sleep(1)
+
+
+# ─── Filesystem heartbeat for the PTY watchdog ──────────────────────────────
+#
+# The desktop PTY watchdog decides whether the apply loop is alive by
+# reading two marker files in the workspace dir:
+#   - worker.pid  — written once at main() boot
+#   - scout.ts    — touched after every scout cycle
+#
+# Independent of PTY byte flow so the watchdog can detect a silent worker
+# crash even if Claude Code is chatty.
+
+_WORKSPACE_DIR = Path(
+    os.environ.get("APPLYLOOP_WORKSPACE")
+    or os.path.expanduser("~/.autoapply/workspace")
+)
+
+
+def _write_worker_pid() -> None:
+    try:
+        _WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+        (_WORKSPACE_DIR / "worker.pid").write_text(
+            f"{os.getpid()}\n{int(time.time() * 1000)}\n"
+        )
+    except Exception as e:
+        logger.debug(f"Failed to write worker.pid: {e}")
+
+
+def _touch_scout_heartbeat() -> None:
+    try:
+        _WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+        (_WORKSPACE_DIR / "scout.ts").write_text(f"{int(time.time() * 1000)}\n")
+    except Exception as e:
+        logger.debug(f"Failed to touch scout.ts: {e}")
+
+
+def _read_user_id_from_profile_json() -> str | None:
+    """Fallback path if APPLYLOOP_USER_ID isn't in env yet. Reads
+    ~/.applyloop/profile.json which install.sh writes at activation.
+    Returns None if the file doesn't exist or doesn't have a user_id.
+    """
+    import json
+    candidates = [
+        os.environ.get("APPLYLOOP_PROFILE"),
+        os.path.expanduser("~/.applyloop/profile.json"),
+    ]
+    for path in candidates:
+        if not path:
+            continue
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            uid = data.get("user_id") or data.get("id")
+            if uid:
+                return str(uid)
+        except Exception:
+            continue
+    return None
 
 
 def restart_browser_gateway() -> bool:
@@ -501,6 +383,43 @@ def check_and_pull_updates() -> bool:
 
 def main():
     logger.info(f"Worker {WORKER_ID} starting...")
+
+    # Load THIS tenant's config before anything else. No "system" fallback —
+    # if the user hasn't finished setup, fail loud so they see the error in
+    # the chat UI + Telegram and fix their profile. Silent fallback to admin
+    # defaults is the exact bug Part 2 of the redesign exists to kill.
+    user_id = (
+        os.environ.get("APPLYLOOP_USER_ID")
+        or _read_user_id_from_profile_json()
+    )
+    if not user_id:
+        logger.error(
+            "No APPLYLOOP_USER_ID in env and no user_id in ~/.applyloop/profile.json. "
+            "The worker cannot run tenant-agnostic. Re-run the installer or "
+            "set APPLYLOOP_USER_ID manually."
+        )
+        return
+
+    try:
+        tenant = TenantConfig.load(user_id)
+    except TenantConfigIncompleteError as e:
+        logger.error(f"Tenant config incomplete for {user_id[:8]}: {e}")
+        logger.error(
+            "Worker refuses to start with an incomplete tenant. Finish setup "
+            "at https://applyloop.vercel.app/dashboard/settings and re-run."
+        )
+        update_heartbeat(user_id, "awaiting_setup", f"missing: {', '.join(e.missing)}")
+        return
+    except WorkerAuthError as e:
+        logger.error(f"Worker token rejected — cannot load tenant: {e}")
+        return
+    except Exception as e:
+        logger.exception(f"Failed to load tenant config: {e}")
+        return
+
+    logger.info(f"Tenant loaded: {tenant.profile_summary_hint()}")
+    _write_worker_pid()
+
     global_template = load_global_template()
     hourly_count = 0
     hour_start = time.time()
@@ -511,14 +430,15 @@ def main():
     # Daily update check — runs on first execution of each new day
     check_and_pull_updates()
 
-    # Start the scout → filter → enqueue background loop.
-    # Uses a system-level user_id; per-user scouts run when jobs are claimed.
-    system_user_id = os.environ.get("SYSTEM_USER_ID", "system")
+    # Start the per-tenant scout loop.
     scout_thread = threading.Thread(
-        target=scout_loop, args=(system_user_id,), daemon=True, name="scout-loop"
+        target=scout_loop, args=(tenant,), daemon=True, name="scout-loop"
     )
     scout_thread.start()
-    logger.info(f"Scout loop started (interval={SCOUT_INTERVAL_MINUTES}m)")
+    logger.info(
+        f"Scout loop started for {tenant.user_id[:8]} "
+        f"(interval={SCOUT_INTERVAL_MINUTES}m, {len(REGISTERED_SOURCES)} sources)"
+    )
 
     while running:
         # Daily update check — on first loop of each new day, pull latest code/learnings
@@ -565,7 +485,7 @@ def main():
             update_local_status(job, 'skipped', 'blocked aggregator domain')
             continue
 
-        if is_blocked_company(company):
+        if is_blocked_company(company, tenant=tenant):
             logger.info(f"Skipping blocked company: {company}")
             update_queue_status(job['id'], 'cancelled', error='blocked company (defense/clearance)')
             update_local_status(job, 'skipped', 'blocked company')
