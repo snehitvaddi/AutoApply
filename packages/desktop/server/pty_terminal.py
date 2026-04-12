@@ -1577,19 +1577,23 @@ exec /bin/zsh -l
         )
 
     def _submit_to_pty(self, body: str) -> None:
-        """Write a message DIRECTLY to the terminal as a normal user message.
+        """Write a normal message to the terminal and press Enter.
 
-        NOT /btw — that's a side-channel "by the way" that Claude can ignore.
-        The nudge needs to land as a REAL primary message so Claude treats it
-        the same as if the user typed it at the prompt and pressed Enter.
+        No /btw — this is a real message that Claude MUST act on.
 
-        The \\r terminator is mandatory — Claude Code's TUI runs the terminal
-        in raw mode. \\r = Enter (submit). \\n alone leaves text in the input
-        buffer un-submitted. This is the same byte sequence xterm.js forwards
-        when a user presses Enter manually.
+        Rules for Claude Code's raw-mode TUI:
+          - NO \\n (0x0a) — that's cursor movement, not submit. Corrupts input.
+          - End with \\r (0x0d) — that's Enter. Actually submits the message.
+
+        Body is collapsed into one line (newlines → spaces), then \\r appended.
         """
-        msg = f"{body}\r"
-        self.write(msg.encode("utf-8"))
+        flat = body.replace("\r\n", " ").replace("\n", " ").replace("\r", "")
+        while "  " in flat:
+            flat = flat.replace("  ", " ")
+        flat = flat.strip()
+        if not flat:
+            return
+        self.write(f"{flat}\r".encode("utf-8"))
 
     def _nudge_cooldown_ok(self) -> bool:
         """Rate-limit nudges to at most once per NUDGE_COOLDOWN seconds so
