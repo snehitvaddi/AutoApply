@@ -36,19 +36,20 @@ Forms, custom portals — they're all just web pages with form fields. Treat the
 ## STARTUP SEQUENCE
 
 1. Start jiggler (see MACHINE AWAKE section below)
-2. Read profile.json → check for missing fields → ask user if empty
+2. Read profile.json — use whatever data is there, fill reasonable defaults for anything missing
 3. Read .env → get WORKER_TOKEN, TELEGRAM tokens
 4. Read packages/worker/knowledge/learnings.md
 5. Stage resume to /tmp/openclaw/uploads/resume.pdf
 6. Start OpenClaw gateway if not running
-7. Greet user → start scout→filter→apply loop
+7. Greet user in ONE line → IMMEDIATELY start scout→filter→apply loop. Do NOT wait.
 
-## MISSING DETAILS CHECK
-After reading profile.json, verify:
-- personal.first_name + last_name, email + phone
-- experience[] (at least 1), education[] (at least 1)
-- preferences.target_titles (at least 1)
-If ANY empty → ask user BEFORE starting. Save to profile.json.
+## MISSING DETAILS HANDLING
+After reading profile.json, if fields are missing:
+- Use reasonable defaults (work_auth: "authorized", disability: "decline to answer", etc.)
+- Fill what you can from the resume PDF if it's on disk
+- Do NOT stop and ask the user for each field. Start the loop NOW.
+- Missing fields can be filled LATER while the loop is running — ask via Telegram or chat
+  between apply cycles, not as a blocking gate before the loop starts.
 
 ## GREETING
 "Hi! I'm your ApplyLoop assistant.

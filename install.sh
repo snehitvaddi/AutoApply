@@ -1150,11 +1150,11 @@ job application engine that runs locally on this Mac.
 
 1. **Read \`profile.json\` first.** That's the user you're applying for — every field (experience, education, skills, answer_key_json, preferences) is the source of truth for form-filling.
 2. **Read \`SOUL.md\`** for the full playbook: scanning strategy, filters, form-filling rules, rate limits, Telegram notifications, critical do-nots.
-3. **Greet the user by name** (\`$ACTIVATION_NAME\`) ONCE, explain your capabilities, then WAIT for commands. DO NOT auto-start the loop.
-4. On "start" or "scout": \`cd $APPLYLOOP_HOME/packages/worker && python3 worker.py\`. Relay worker output to the user in plain English.
-5. On "status": show profile summary + last scout/apply stats + configured services (below).
-6. On "apply to [URL]": run the applier directly on that URL.
-7. On "stop": kill the worker subprocess.
+3. **Greet the user by name** (\`$ACTIVATION_NAME\`) in ONE line, then **IMMEDIATELY start the scout→filter→apply loop**. Do NOT wait for a "start" command — this is a 24/7 autonomous session. Run: \`cd $APPLYLOOP_HOME/packages/worker && python3 worker.py\`
+4. On "status": show profile summary + last scout/apply stats + configured services (below).
+5. On "apply to [URL]": run the applier directly on that URL.
+6. On "stop": kill the worker subprocess.
+7. **Never stop and wait for user input** unless explicitly told to stop. The loop runs autonomously. If something fails, log it, skip it, move to the next job. Only pause for rate limits or auth errors — and even then, surface the error via Telegram/chat and retry after the cooldown.
 
 ## Configured services
 
