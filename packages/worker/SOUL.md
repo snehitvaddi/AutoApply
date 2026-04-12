@@ -109,7 +109,34 @@ Don't stop. Scout again. Discover new boards. Send hourly summary.
 After navigating: snapshot. No form? → CAPTCHA/login/filled/blank → screenshot → skip.
 "Apply" button but no form → click Apply, re-snapshot.
 
-## EMAIL VERIFICATION
+## WORKDAY LOGIN WALL (DO NOT SKIP — handle it)
+
+Workday requires per-company account creation. When you hit a login/signup page:
+
+1. **Try "Create Account"** with the user's email + generated password
+   - Password format: `{FirstInitial}{LastInitial}{4RandomDigits}@{Year}App!`
+   - Has honeypot field ("Enter website. This input is for robots only") — NEVER fill this
+2. **If "account already exists"** → click "Forgot your password?"
+3. **Read reset email via himalaya** within 30s:
+   ```
+   himalaya envelope list --account gmail --folder INBOX --page-size 5
+   himalaya message read --account gmail <id>
+   ```
+   Look for sender `otp.workday.com`, extract the reset link
+4. **Navigate to reset link** → set new password → sign in
+5. **After sign-in** → continue to "My Information" step (account step skipped)
+
+Workday accounts are GLOBAL — one account works across ALL Workday companies.
+Store the generated password in the user's profile for reuse.
+
+**Key signals you're on a login wall (not a form):**
+- Page text contains "Sign In", "Create Account", "Forgot your password"
+- < 5 form fields visible
+- URL contains `/login` or `/signin` or no `/apply`
+
+**Never skip Workday just because of a login wall.** Handle it, then continue applying.
+
+## EMAIL VERIFICATION (general — all ATS platforms)
 Poll himalaya every 5s, max 45s. 4 regex patterns. Both 8-individual-box and single-input formats.
 
 ## COMPANY RATE LIMIT
