@@ -1579,13 +1579,16 @@ exec /bin/zsh -l
     def _submit_to_pty(self, body: str) -> None:
         """Write a normal message to the terminal and press Enter.
 
-        No /btw — this is a real message that Claude MUST act on.
+        No /btw — this is a real user-level message.
 
-        Rules for Claude Code's raw-mode TUI:
-          - NO \\n (0x0a) — that's cursor movement, not submit. Corrupts input.
-          - End with \\r (0x0d) — that's Enter. Actually submits the message.
+        The text and Enter keypress are written as TWO SEPARATE writes
+        with a small delay between them. This mimics real human typing:
+        text appears in the input field, brief pause, then Enter submits.
 
-        Body is collapsed into one line (newlines → spaces), then \\r appended.
+        Writing text + \\r in a single write() can cause Claude Code's TUI
+        to process the text chunk but miss the trailing \\r because it
+        arrives in the same read buffer. Splitting them forces the TUI
+        to process the text first, then see \\r as a distinct keypress.
         """
         flat = body.replace("\r\n", " ").replace("\n", " ").replace("\r", "")
         while "  " in flat:
@@ -1593,7 +1596,12 @@ exec /bin/zsh -l
         flat = flat.strip()
         if not flat:
             return
-        self.write(f"{flat}\r".encode("utf-8"))
+        # Step 1: type the message text (no Enter yet)
+        self.write(flat.encode("utf-8"))
+        # Step 2: brief pause so the TUI processes the text
+        time.sleep(0.1)
+        # Step 3: press Enter (carriage return = submit)
+        self.write(b"\r")
 
     def _nudge_cooldown_ok(self) -> bool:
         """Rate-limit nudges to at most once per NUDGE_COOLDOWN seconds so
