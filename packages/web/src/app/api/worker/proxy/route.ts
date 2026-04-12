@@ -137,6 +137,50 @@ export async function POST(request: NextRequest) {
         return apiSuccess({ preferences: data || {} });
       }
 
+      case "get_tenant_config": {
+        // Single round trip that resolves everything TenantConfig.load()
+        // needs: profile, preferences, email, daily limit. The Python side
+        // builds a frozen TenantConfig from this payload and the worker
+        // pipeline never touches admin defaults again.
+        const [userRes, profileRes, prefsRes] = await Promise.all([
+          supabase.from("users").select("email,daily_apply_limit").eq("id", userId).single(),
+          supabase.from("user_profiles").select("*").eq("user_id", userId).single(),
+          supabase.from("user_job_preferences").select("*").eq("user_id", userId).single(),
+        ]);
+
+        const profile = (profileRes.data ?? {}) as Record<string, unknown>;
+        const prefs = (prefsRes.data ?? {}) as Record<string, unknown>;
+        const user = (userRes.data ?? {}) as Record<string, unknown>;
+
+        const targetTitles: string[] = Array.isArray(prefs.target_titles) ? (prefs.target_titles as string[]) : [];
+        const targetKeywords: string[] = Array.isArray(prefs.target_keywords) ? (prefs.target_keywords as string[]) : [];
+
+        return apiSuccess({
+          user_id: userId,
+          tenant_email: (user.email as string | undefined) || (profile.email as string | undefined) || "",
+          // Scout
+          search_queries: targetTitles,
+          keyword_filter: targetKeywords.length > 0 ? targetKeywords : targetTitles,
+          ashby_boards: (prefs.ashby_boards as string[] | null | undefined) ?? null,
+          greenhouse_boards: (prefs.greenhouse_boards as string[] | null | undefined) ?? null,
+          // Filter
+          excluded_role_keywords: (prefs.excluded_role_keywords as string[] | undefined) ?? [],
+          excluded_levels: (prefs.excluded_levels as string[] | undefined) ?? [],
+          excluded_companies: (prefs.excluded_companies as string[] | undefined) ?? [],
+          preferred_locations: (prefs.preferred_locations as string[] | undefined) ?? [],
+          remote_only: !!prefs.remote_only,
+          // Apply
+          min_salary: (prefs.min_salary as number | null | undefined) ?? null,
+          daily_apply_limit: (user.daily_apply_limit as number | undefined) ?? 25,
+          // Full profile for the applier
+          profile: profile,
+          // Completeness hint — worker refuses to boot without these
+          complete: targetTitles.length > 0
+            && !!profile.first_name
+            && (!!profile.email || !!user.email),
+        });
+      }
+
       case "update_profile": {
         // Upsert the authenticated user's profile row. user_id is derived
         // from the worker token server-side, NOT from params — a worker
