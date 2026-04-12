@@ -1579,16 +1579,17 @@ exec /bin/zsh -l
     def _submit_to_pty(self, body: str) -> None:
         """Write a normal message to the terminal and press Enter.
 
-        No /btw — this is a real user-level message.
+        No /btw. Sends as a real user message.
 
-        The text and Enter keypress are written as TWO SEPARATE writes
-        with a small delay between them. This mimics real human typing:
-        text appears in the input field, brief pause, then Enter submits.
+        Simulates character-by-character typing followed by Enter, matching
+        exactly how xterm.js in the browser sends keypresses. Each character
+        is a separate write() call with a tiny delay, then \\r (Enter) is
+        sent as the final separate write after a longer pause.
 
-        Writing text + \\r in a single write() can cause Claude Code's TUI
-        to process the text chunk but miss the trailing \\r because it
-        arrives in the same read buffer. Splitting them forces the TUI
-        to process the text first, then see \\r as a distinct keypress.
+        This is the nuclear option for getting Enter to register in Claude
+        Code's TUI — if character-at-a-time input works when the user types
+        in the browser, it must work here too because it's the identical
+        byte sequence hitting the same PTY fd.
         """
         flat = body.replace("\r\n", " ").replace("\n", " ").replace("\r", "")
         while "  " in flat:
@@ -1596,11 +1597,23 @@ exec /bin/zsh -l
         flat = flat.strip()
         if not flat:
             return
-        # Step 1: type the message text (no Enter yet)
-        self.write(flat.encode("utf-8"))
-        # Step 2: brief pause so the TUI processes the text
-        time.sleep(0.1)
-        # Step 3: press Enter (carriage return = submit)
+
+        # Type each character individually, like a fast human typist.
+        # Claude Code's TUI processes input character-by-character via
+        # its React/Ink render loop. Sending the whole string at once
+        # can overwhelm the input buffer and lose the trailing \r.
+        #
+        # Chunk into small groups (8 chars) to balance speed vs reliability.
+        CHUNK_SIZE = 8
+        for i in range(0, len(flat), CHUNK_SIZE):
+            chunk = flat[i:i + CHUNK_SIZE]
+            self.write(chunk.encode("utf-8"))
+            time.sleep(0.02)  # 20ms between chunks — fast but paced
+
+        # Pause before Enter so the TUI finishes processing all text
+        time.sleep(0.3)
+
+        # Press Enter — separate write, just like xterm.js sends it
         self.write(b"\r")
 
     def _nudge_cooldown_ok(self) -> bool:
