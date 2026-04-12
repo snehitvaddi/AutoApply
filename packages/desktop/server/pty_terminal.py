@@ -14,16 +14,15 @@ import os
 import shlex
 import shutil
 import subprocess
-import sys
 import time
 import uuid
+import struct
+import fcntl
+import termios
+import pty
+import signal
 from collections import deque
 from pathlib import Path
-
-# Platform-aware PTY backend — Unix uses pty.fork() + fcntl + termios,
-# Windows uses pywinpty (ConPTY). The rest of this file doesn't know
-# which platform it's on.
-from .pty_backend import PlatformPTY
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -88,13 +87,13 @@ class PTYSession:
     STUCK_APPLIED_CYCLES = 3           # 3 x 5min = 15 min flat applied count
 
     def __init__(self):
-        self._pty: PlatformPTY | None = None  # platform-aware PTY backend
-        self.master_fd: int | None = None     # kept for backward compat (Unix only)
+        self.master_fd: int | None = None
         self.child_pid: int | None = None
         self.output_buffer: deque[bytes] = deque(maxlen=MAX_BUFFER)
         self._subscribers: list[asyncio.Queue] = []
         self._read_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
+        self._heartbeat_task: asyncio.Task | None = None
         self._alive = False
         self.session_id: str | None = None
         self.last_output_at: float = 0
@@ -111,14 +110,15 @@ class PTYSession:
 
     @property
     def is_alive(self) -> bool:
-        if not self._alive or self._pty is None:
+        if not self._alive or self.child_pid is None:
             return False
         try:
-            if not self._pty.is_alive():
+            pid, status = os.waitpid(self.child_pid, os.WNOHANG)
+            if pid != 0:
                 self._alive = False
                 return False
             return True
-        except Exception:
+        except ChildProcessError:
             self._alive = False
             return False
 
@@ -137,28 +137,16 @@ class PTYSession:
 
     @staticmethod
     def _find_claude() -> str | None:
-        """Find claude binary — cross-platform."""
+        """Find claude binary."""
         claude = shutil.which("claude")
         if claude:
             return claude
-        candidates = []
-        if sys.platform == "win32":
-            # Windows: check npm global, AppData, Program Files
-            candidates = [
-                os.path.expandvars(r"%APPDATA%\npm\claude.cmd"),
-                os.path.expandvars(r"%LOCALAPPDATA%\Programs\claude\claude.exe"),
-                os.path.expandvars(r"%PROGRAMFILES%\Claude\claude.exe"),
-                os.path.expanduser(r"~\.local\bin\claude.exe"),
-            ]
-        else:
-            # Mac/Linux
-            candidates = [
-                os.path.expanduser("~/.local/bin/claude"),
-                "/usr/local/bin/claude",
-                "/opt/homebrew/bin/claude",
-                os.path.expanduser("~/.npm-global/bin/claude"),
-            ]
-        for p in candidates:
+        for p in [
+            os.path.expanduser("~/.local/bin/claude"),
+            "/usr/local/bin/claude",
+            "/opt/homebrew/bin/claude",
+            os.path.expanduser("~/.npm-global/bin/claude"),
+        ]:
             if os.path.isfile(p) and os.access(p, os.X_OK):
                 return p
         return None
@@ -1301,107 +1289,184 @@ class PTYSession:
         ).encode("utf-8")
         self.output_buffer.append(startup_banner)
 
-        # Build the shell wrapper command. On Unix: bash -c "wrapper_script".
-        # On Windows: cmd /c "claude --dangerously-skip-permissions 'prompt'"
-        initial_prompt = self._build_initial_prompt(cwd, profile_snapshot)
-        env["APPLYLOOP_CLAUDE_BIN"] = claude
+        # Fork a PTY
+        child_pid, master_fd = pty.fork()
 
-        if sys.platform == "win32":
-            # Windows: ConPTY doesn't have fork semantics. The wrapper is
-            # simpler — just run claude directly. Shell fallback on exit
-            # goes to cmd.exe instead of zsh.
-            escaped_prompt = initial_prompt.replace('"', '\\"')
-            wrapper = (
-                f'"{claude}" --dangerously-skip-permissions "{escaped_prompt}" '
-                f'& echo. & echo [ApplyLoop] Claude exited. Type "claude" to restart. '
-                f'& cmd /k'
-            )
-            spawn_cmd = ["cmd", "/c", wrapper]
-        else:
-            # Unix: bash wrapper with claude + zsh fallback (unchanged from
-            # the pre-abstraction code — same shell script, just spawned
-            # through the PTY backend instead of raw pty.fork).
+        if child_pid == 0:
+            # Child process — exec a bash wrapper that:
+            #   1. Checks if ~/.claude/ has any auth state (tokens cached
+            #      from a prior `claude login`).
+            #   2. If yes: runs claude --dangerously-skip-permissions with
+            #      the initial prompt. Claude starts immediately with
+            #      context from AGENTS.md + SOUL.md + profile.json.
+            #   3. When Claude exits (normal exit, auth error, user
+            #      pressed Ctrl-C, anything): falls through to `exec zsh
+            #      -l`, dropping the user to a real shell prompt so they
+            #      can debug, re-run commands, or `claude login` + retry.
+            #
+            # Why this matters (Pujith's feedback): the previous direct
+            # exec of claude meant that if Claude crashed or exited, the
+            # terminal tab was DEAD — no way to type commands, no way to
+            # fix things without restarting the whole session. Non-
+            # technical users saw a black screen and gave up. With the
+            # wrapper, they always have a shell fallback.
+            os.chdir(cwd)
+
+            # Built in the parent above from profile.json + .env snapshot.
+            # Auto-starts the loop, injects first_name/role/targets inline,
+            # and handles missing profile fields by instructing Claude to
+            # collect them interactively AND push them up to the server.
+            initial_prompt = self._build_initial_prompt(cwd, profile_snapshot)
+            # Single-quote escape for the prompt inside the bash -c string:
+            # any single-quote in the prompt becomes '"'"'. We don't have
+            # any in the current prompt text, but defensive anyway.
             escaped_prompt = initial_prompt.replace("'", "'\"'\"'")
+
+            # The claude binary path is resolved above; pass it in via
+            # env var so the wrapper finds it without its own PATH lookup.
+            env["APPLYLOOP_CLAUDE_BIN"] = claude
+
+            # Build the wrapper script via string concat (not an f-string)
+            # because the heredoc has `%s` printf format specifiers and f-
+            # strings mangle braces. Only two substitutions: the cwd and
+            # the escaped prompt. Use .replace() for both.
             wrapper_template = r"""#!/bin/bash
+# Child wrapper — keeps the PTY alive even if claude exits.
+# Drop into a zsh login shell on exit so the user can recover.
 cd __CWD__
-CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
+
+CYAN=$'\033[36m'
+GREEN=$'\033[32m'
+YELLOW=$'\033[33m'
+RESET=$'\033[0m'
+
 printf '%s[ApplyLoop]%s cwd=%s%s%s\r\n' "$CYAN" "$RESET" "$CYAN" "$PWD" "$RESET"
+
+# Check Claude Code authentication state. Claude stores tokens under
+# ~/.claude/ after `claude login`. If the directory exists AND has
+# content (not just an empty marker), we consider it authed.
 if [[ -d "$HOME/.claude" ]] && [[ -n "$(ls -A "$HOME/.claude" 2>/dev/null)" ]]; then
   printf '%s[ApplyLoop]%s Claude Code is authenticated - starting session...\r\n' "$GREEN" "$RESET"
+  # Capture a small tail of claude's output to the session log so we can
+  # classify exit reasons below. Use `script` if available for real PTY
+  # mirroring, else fall back to tee — but tee captures are worse for
+  # ANSI handling. Keep it simple: rely on ~/.claude/logs tail instead.
   "$APPLYLOOP_CLAUDE_BIN" --dangerously-skip-permissions '__PROMPT__'
   CLAUDE_EXIT=$?
-  CLAUDE_LOG_DIR="$HOME/.claude/logs"; LAST_LINES=""
+
+  # Exit-code + log-tail classifier. Tries to translate whatever Claude
+  # printed into a human line. Non-technical users see "your plan has
+  # hit its daily limit, resets in N hours" instead of a raw red error.
+  CLAUDE_REASON=""
+  CLAUDE_HINT=""
+  # Look at the last ~40 lines of the most recent claude log.
+  CLAUDE_LOG_DIR="$HOME/.claude/logs"
+  LAST_LINES=""
   if [[ -d "$CLAUDE_LOG_DIR" ]]; then
     LATEST_LOG=$(ls -t "$CLAUDE_LOG_DIR"/*.log 2>/dev/null | head -1)
-    [[ -n "$LATEST_LOG" && -f "$LATEST_LOG" ]] && LAST_LINES=$(tail -40 "$LATEST_LOG" 2>/dev/null)
+    if [[ -n "$LATEST_LOG" && -f "$LATEST_LOG" ]]; then
+      LAST_LINES=$(tail -40 "$LATEST_LOG" 2>/dev/null)
+    fi
   fi
+  # Pattern-match against common Claude Code error phrases. Order
+  # matters — more-specific matches first.
   if echo "$LAST_LINES" | grep -qiE 'rate.?limit|429|too many requests'; then
-    CLAUDE_REASON="API rate limit hit"; CLAUDE_HINT="Wait a few minutes."
-  elif echo "$LAST_LINES" | grep -qiE 'daily.{0,20}limit|quota.{0,20}exceeded'; then
-    CLAUDE_REASON="Daily quota used up"; CLAUDE_HINT="Resets at midnight Pacific."
-  elif echo "$LAST_LINES" | grep -qiE 'invalid.{0,20}token|unauthorized|401'; then
-    CLAUDE_REASON="Auth expired"; CLAUDE_HINT="Run: claude login"
-  elif echo "$LAST_LINES" | grep -qiE 'connection.{0,20}refused|network|timeout'; then
-    CLAUDE_REASON="Network error"; CLAUDE_HINT="Check internet connection."
+    CLAUDE_REASON="Anthropic API rate limit hit"
+    CLAUDE_HINT="Wait a few minutes and try again. If this keeps happening, your Claude plan may be undersized for the workload."
+  elif echo "$LAST_LINES" | grep -qiE 'daily.{0,20}limit|usage.{0,20}limit|quota.{0,20}exceeded|plan.{0,20}limit'; then
+    CLAUDE_REASON="Your Claude plan's daily quota is used up"
+    CLAUDE_HINT="Resets at midnight Pacific time. Or upgrade at https://claude.com/billing"
+  elif echo "$LAST_LINES" | grep -qiE 'upgrade|pro plan|max plan|requires.{0,20}subscription'; then
+    CLAUDE_REASON="Claude needs a higher-tier plan for this model"
+    CLAUDE_HINT="Upgrade at https://claude.com/billing"
+  elif echo "$LAST_LINES" | grep -qiE 'invalid.{0,20}token|unauthorized|401|expired.{0,20}token|re-?authenticate|please.{0,20}log.?in'; then
+    CLAUDE_REASON="Claude Code auth expired or invalid"
+    CLAUDE_HINT="Run: claude login (then paste the code from your browser)"
+  elif echo "$LAST_LINES" | grep -qiE 'connection.{0,20}refused|network|timeout|could not connect|ENOTFOUND|dns'; then
+    CLAUDE_REASON="Network error reaching Anthropic"
+    CLAUDE_HINT="Check your internet. If you're on a corporate VPN, try toggling it off. Claude needs api.anthropic.com reachable."
   elif [[ "$CLAUDE_EXIT" == "0" ]]; then
-    CLAUDE_REASON="Session ended normally"; CLAUDE_HINT="Type 'claude' to restart."
+    CLAUDE_REASON="Session ended normally"
+    CLAUDE_HINT="Type 'claude' to start a new one, or 'applyloop status' for worker state."
+  elif [[ "$CLAUDE_EXIT" == "127" ]]; then
+    CLAUDE_REASON="Claude Code binary not found on PATH"
+    CLAUDE_HINT="Run: applyloop update  (this reinstalls claude via brew)"
+  elif [[ "$CLAUDE_EXIT" == "130" ]]; then
+    CLAUDE_REASON="Session interrupted with Ctrl-C"
+    CLAUDE_HINT="Type 'claude' to restart."
   else
-    CLAUDE_REASON="Session ended (exit $CLAUDE_EXIT)"; CLAUDE_HINT="Type 'claude' to restart."
+    CLAUDE_REASON="Claude Code session ended unexpectedly (exit $CLAUDE_EXIT)"
+    CLAUDE_HINT="Try 'claude' to restart. If it keeps failing, 'applyloop logs' shows the full trace."
   fi
-  printf '\r\n%s[ApplyLoop]%s %s%s\r\n' "$YELLOW" "$RESET" "$CLAUDE_REASON" "$RESET"
+
+  printf '\r\n%s[ApplyLoop]%s %s%s%s\r\n' "$YELLOW" "$RESET" "$CYAN" "$CLAUDE_REASON" "$RESET"
   printf '%s[ApplyLoop]%s %s\r\n' "$YELLOW" "$RESET" "$CLAUDE_HINT"
+  printf '%s[ApplyLoop]%s Dropping to shell - type %sclaude%s to restart.\r\n\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
 else
-  printf '%s[ApplyLoop]%s Claude not authenticated. Run: %sclaude login%s\r\n\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
+  printf '%s[ApplyLoop]%s Claude Code is not authenticated yet.\r\n' "$YELLOW" "$RESET"
+  printf '%s[ApplyLoop]%s Run: %sclaude login%s\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
+  printf '%s[ApplyLoop]%s Follow the browser prompt, paste the code back here,\r\n' "$YELLOW" "$RESET"
+  printf '%s[ApplyLoop]%s then type %sclaude%s to start the session.\r\n\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
 fi
+
+# Drop to a login shell so the user always has something to type into.
+# zsh -l loads .zprofile + .zshrc so they get their normal environment.
 exec /bin/zsh -l
 """
             wrapper = wrapper_template.replace("__CWD__", shlex.quote(cwd)).replace("__PROMPT__", escaped_prompt)
-            spawn_cmd = ["/bin/bash", "-c", wrapper]
+            os.execvpe("/bin/bash", ["/bin/bash", "-c", wrapper], env)
+        else:
+            # Parent process
+            self.master_fd = master_fd
+            self.child_pid = child_pid
+            self._alive = True
+            self.started_at = time.time()
+            self.last_output_at = time.time()
+            self._current_record = SessionRecord(child_pid)
+            self.session_id = self._current_record.session_id
 
-        # Spawn via the platform PTY backend
-        self._pty = PlatformPTY()
-        try:
-            child_pid = self._pty.spawn(spawn_cmd, cwd=cwd, env=env)
-        except Exception as e:
-            logger.error(f"PTY spawn failed: {e}")
-            self.output_buffer.append(
-                f"\x1b[31m[ApplyLoop]\x1b[0m PTY spawn failed: {e}\r\n".encode()
-            )
-            return False
+            # Set terminal size (80x24 default, will be resized by client)
+            self._set_size(80, 24)
 
-        # Parent process
-        self.master_fd = getattr(self._pty, '_master_fd', None)  # Unix compat
-        self.child_pid = child_pid
-        self._alive = True
-        self.started_at = time.time()
-        self.last_output_at = time.time()
-        self._current_record = SessionRecord(child_pid)
-        self.session_id = self._current_record.session_id
-
-        # Set terminal size (80x24 default, will be resized by client)
-        self._pty.resize(80, 24)
-
-        # Brief post-spawn death check
-        exit_code = self._pty.wait_brief_death_check()
-        if exit_code is not None:
-            logger.error(
-                f"PTY child died immediately after spawn "
-                f"(pid={child_pid}, exit_code={exit_code}). "
-                f"Likely causes: claude binary at {claude} is broken, "
-                f"cwd {cwd} inaccessible, or exec environment missing "
-                f"critical vars."
-            )
-            self.output_buffer.append(
-                f"\x1b[31m[ApplyLoop]\x1b[0m Claude Code failed to start "
-                f"(exit {exit_code}).\r\n"
-                f"\x1b[31m[ApplyLoop]\x1b[0m Check ~/.autoapply/desktop.log "
-                f"for details. Try: applyloop update\r\n\r\n".encode()
-            )
-            self._alive = False
-            self.child_pid = None
-            self._pty.close()
-            self._pty = None
-            return False
+            # Brief post-fork death check. If execvpe failed in the child
+            # (bad cwd, missing claude binary, permission denied, etc.) the
+            # child exits instantly. Without this check, the parent sets
+            # self._alive = True and returns success — the UI shows
+            # "Session active" but the terminal is empty. waitpid with
+            # WNOHANG is non-blocking; if the child is still running we
+            # get pid=0.
+            time.sleep(0.05)  # give execvpe a moment to either succeed or fail
+            try:
+                pid, status_code = os.waitpid(child_pid, os.WNOHANG)
+                if pid == child_pid:
+                    # Child died before we could attach — log the exit code
+                    # and surface it as a banner in the buffer so the UI
+                    # shows what happened.
+                    exit_code = os.WEXITSTATUS(status_code) if os.WIFEXITED(status_code) else -1
+                    logger.error(
+                        f"PTY child died immediately after fork "
+                        f"(pid={child_pid}, exit_code={exit_code}). "
+                        f"Likely causes: claude binary at {claude} is broken, "
+                        f"cwd {cwd} inaccessible, or exec environment missing "
+                        f"critical vars."
+                    )
+                    self.output_buffer.append(
+                        f"\x1b[31m[ApplyLoop]\x1b[0m Claude Code failed to start "
+                        f"(exit {exit_code}).\r\n"
+                        f"\x1b[31m[ApplyLoop]\x1b[0m Check ~/.autoapply/desktop.log "
+                        f"for details. Try: applyloop update\r\n\r\n".encode()
+                    )
+                    self._alive = False
+                    self.child_pid = None
+                    try:
+                        os.close(master_fd)
+                    except Exception:
+                        pass
+                    self.master_fd = None
+                    return False
+            except ChildProcessError:
+                # Already reaped — fall through
+                pass
 
             # Start reading + watchdog in background. The watchdog detects
             # real apply-loop drift (not just PTY byte-flow idle) and fires
@@ -1428,26 +1493,29 @@ exec /bin/zsh -l
             return True
 
     def _set_size(self, cols: int, rows: int):
-        """Resize the PTY via the platform backend."""
-        if self._pty is not None:
-            self._pty.resize(cols, rows)
+        """Resize the PTY."""
+        if self.master_fd is not None:
+            try:
+                winsize = struct.pack("HHHH", rows, cols, 0, 0)
+                fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
+            except Exception:
+                pass
 
     async def _read_loop(self):
-        """Read PTY output and broadcast to subscribers.
-        Uses the platform PTY backend — works on both Unix and Windows."""
+        """Read PTY output and broadcast to subscribers."""
         loop = asyncio.get_event_loop()
         try:
-            while self.is_alive and self._pty is not None:
+            while self.is_alive and self.master_fd is not None:
                 try:
                     data = await loop.run_in_executor(
-                        None, lambda: self._pty.read(4096)
+                        None, lambda: os.read(self.master_fd, 4096)
                     )
                     if not data:
                         break
                     self.output_buffer.append(data)
                     self.last_output_at = time.time()
                     self._broadcast(data)
-                except (OSError, EOFError):
+                except OSError:
                     break
         finally:
             self._alive = False
@@ -1723,30 +1791,29 @@ exec /bin/zsh -l
             self._subscribers.remove(q)
 
     def write(self, data: bytes):
-        """Write user input to the PTY via the platform backend."""
-        if self._pty is not None and self.is_alive:
-            self._pty.write(data)
+        """Write user input to the PTY."""
+        if self.master_fd is not None and self.is_alive:
+            os.write(self.master_fd, data)
 
     def resize(self, cols: int, rows: int):
         """Handle terminal resize from the client."""
         self._set_size(cols, rows)
 
     def stop(self):
-        """Kill the PTY session via the platform backend."""
+        """Kill the PTY session."""
         if hasattr(self, '_current_record') and self._current_record:
             self._current_record.stop()
-        if self._pty is not None:
+        if self.child_pid and self.is_alive:
             try:
-                self._pty.terminate()
-            except Exception:
+                os.kill(self.child_pid, signal.SIGTERM)
+            except ProcessLookupError:
                 pass
+        if self.master_fd is not None:
             try:
-                self._pty.close()
-            except Exception:
+                os.close(self.master_fd)
+            except OSError:
                 pass
-            self._pty = None
-        self.master_fd = None
-        self.child_pid = None
+            self.master_fd = None
         self._alive = False
         if self._read_task:
             self._read_task.cancel()
