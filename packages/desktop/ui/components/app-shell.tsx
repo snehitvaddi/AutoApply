@@ -39,7 +39,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // The 15s poll still runs to update the sidebar status indicator, but
   // it only redirects if the user has NEVER had a successful setup in
   // this browser session.
-  const [everSetupOk, setEverSetupOk] = useState(false)
+  // Persist across app restarts via localStorage. If setup ever passed,
+  // we NEVER redirect to /setup again — even after a reboot, gateway
+  // crash, or browser refresh. The activation code is a ONE-TIME gate.
+  const [everSetupOk, setEverSetupOk] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("applyloop_setup_ok") === "true"
+    }
+    return false
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -49,19 +57,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           if (cancelled) return
           if (res.setup_complete) {
             setSetupState("ok")
-            setEverSetupOk(true)
+            if (!everSetupOk) {
+              setEverSetupOk(true)
+              localStorage.setItem("applyloop_setup_ok", "true")
+            }
           } else {
-            // Only redirect to /setup if we've NEVER had a successful
-            // setup in this session. Once setup passes, stay on the
-            // current page — don't yank the user away from a running
-            // terminal because of a transient preflight failure.
+            // Only redirect to /setup if setup has NEVER passed —
+            // not in this session, not in any previous session.
+            // Once the activation code is entered and setup passes
+            // once, the user should never see the activation screen
+            // again, even if the gateway crashes or the server restarts.
             if (!everSetupOk) {
               setSetupState("needed")
               if (!isAllowedDuringSetup) router.replace("/setup")
             }
-            // If everSetupOk is true, silently ignore the failure.
-            // The user was already set up and running — a gateway
-            // blip shouldn't bounce them to the wizard.
           }
         })
         .catch(() => {
