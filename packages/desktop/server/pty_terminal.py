@@ -1579,16 +1579,24 @@ exec /bin/zsh -l
     def _submit_to_pty(self, body: str) -> None:
         """Write a message DIRECTLY to the terminal as a normal user message.
 
-        NOT /btw — that's a side-channel "by the way" that Claude can ignore.
-        The nudge needs to land as a REAL primary message so Claude treats it
-        the same as if the user typed it at the prompt and pressed Enter.
+        CRITICAL TERMINAL MECHANICS:
+          - Claude Code's TUI is a single-line chat input in raw mode.
+          - \\r (0x0d) = Enter = submit the message. This is what we want.
+          - \\n (0x0a) = line feed = cursor movement, NOT submit. This BREAKS
+            the input — partial text gets stuck in the buffer.
 
-        The \\r terminator is mandatory — Claude Code's TUI runs the terminal
-        in raw mode. \\r = Enter (submit). \\n alone leaves text in the input
-        buffer un-submitted. This is the same byte sequence xterm.js forwards
-        when a user presses Enter manually.
+        So we FLATTEN the body to a single line (replace newlines with " | ")
+        before writing. The final \\r submits the entire flattened message as
+        one input. This matches what xterm.js sends when a user types a
+        message and presses Enter.
         """
-        msg = f"{body}\r"
+        # Flatten multi-line body into one line — \n in the PTY is not Enter
+        flat = body.replace("\r\n", " | ").replace("\n", " | ").replace("\r", "")
+        # Compress repeated separators and trim
+        while " |  | " in flat:
+            flat = flat.replace(" |  | ", " | ")
+        flat = flat.strip().strip("|").strip()
+        msg = f"{flat}\r"
         self.write(msg.encode("utf-8"))
 
     def _nudge_cooldown_ok(self) -> bool:
