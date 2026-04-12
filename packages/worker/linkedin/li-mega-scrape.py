@@ -1,5 +1,27 @@
-import requests, json, time, urllib.parse
+"""Admin research tool — authenticated LinkedIn voyager scrape.
+
+NOT called from the worker pipeline. This is a manual R&D script admin runs
+when experimenting with LinkedIn-auth scraping. The official per-tenant
+LinkedIn scout is packages/worker/scout/linkedin_public.py which uses the
+unauthenticated public endpoint.
+
+Queries and US geo are read from env vars or argv so this script doesn't
+bake in any role assumptions. If you invoke it without LI_QUERIES, it
+errors out rather than silently running against an admin-default list.
+
+Usage:
+  LI_QUERIES="Backend Engineer,Platform Engineer" python li-mega-scrape.py
+  # or
+  python li-mega-scrape.py "Backend Engineer" "Platform Engineer"
+"""
+import os
+import sys
+import json
+import time
+import urllib.parse
 from datetime import datetime, timezone
+
+import requests
 
 with open('/tmp/li-csrf.txt') as f:
     CSRF = f.read().strip()
@@ -14,18 +36,19 @@ HEADERS = {
     'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
 }
 
-QUERIES = [
-    'AI Engineer', 'AI/ML Engineer', 'Machine Learning Engineer', 'ML Engineer',
-    'Senior AI Engineer', 'Senior ML Engineer', 'Deep Learning Engineer', 'AI Developer',
-    'Generative AI Engineer', 'GenAI Engineer', 'LLM Engineer',
-    'NLP Engineer', 'Computer Vision Engineer',
-    'Data Scientist', 'Senior Data Scientist', 'Applied Scientist', 'Research Scientist',
-    'Data Engineer', 'Senior Data Engineer', 'Analytics Engineer',
-    'MLOps Engineer', 'ML Platform Engineer', 'AI Infrastructure Engineer',
-    'AI Engineer Healthcare', 'ML Healthcare', 'Data Scientist Healthcare',
-    'Agentic AI Engineer', 'AI Agent Developer',
-    'Research Engineer AI', 'AI Researcher',
-]
+# Queries from argv or env var — no hardcoded role list. Admin must supply
+# what to search for. Prevents this research script from leaking into any
+# client-facing path with hardcoded AI/ML opinions.
+_argv_queries = [q for q in sys.argv[1:] if q and not q.startswith('-')]
+_env_queries = [q.strip() for q in os.environ.get('LI_QUERIES', '').split(',') if q.strip()]
+QUERIES = _argv_queries or _env_queries
+if not QUERIES:
+    print(
+        "ERROR: no queries provided. Set LI_QUERIES='role,role' or pass as argv.\n"
+        "Example: LI_QUERIES='Backend Engineer,Platform Engineer' python li-mega-scrape.py",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 PAGES = 5
 GEO_US = '103644278'

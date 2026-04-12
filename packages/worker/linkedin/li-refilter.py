@@ -1,22 +1,48 @@
+"""Admin research tool — offline re-filter for /tmp/li-mega-raw.json.
+
+NOT called from the worker pipeline. This companion script to li-mega-scrape
+filters the raw LinkedIn voyager output by admin-supplied keywords. Reads
+keywords + skip lists from env vars so no role bias is baked in — admin
+brings their own filter config.
+
+Usage:
+  LI_KEYWORDS="backend,platform,infra" \
+  LI_SKIP_TITLES="lead,principal,staff,director,manager" \
+  python li-refilter.py
+"""
 import json
+import os
+import sys
 
 with open('/tmp/li-mega-raw.json') as f:
     jobs = json.load(f)
 with open('/tmp/applied-dedup.json') as f:
     dedup_tokens = set(json.load(f).get('tokens', []))
 
-AI_KW = ['ai ', 'ai/', 'ai-', 'ml ', 'ml/', 'ml-', 'machine learning', 'data scientist',
-         'data engineer', 'data science', 'genai', 'generative ai', 'llm', 'nlp',
-         'deep learning', 'computer vision', 'applied scientist', 'research scientist',
-         'research engineer', 'mlops', 'ai infrastructure', 'ml platform',
-         'artificial intelligence', 'agentic', 'neural', 'reinforcement learning',
-         'ai/ml', 'analytics engineer', 'ai developer', 'ai researcher']
+# Filter keywords from env var — no hardcoded AI defaults.
+AI_KW = [k.strip().lower() for k in os.environ.get('LI_KEYWORDS', '').split(',') if k.strip()]
+if not AI_KW:
+    print(
+        "ERROR: no LI_KEYWORDS provided. Set LI_KEYWORDS='kw1,kw2,...' in env.\n"
+        "Example: LI_KEYWORDS='backend,platform,infra,devops'",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
-SKIP_TITLES = ['lead ', 'principal', 'staff ', 'director', 'manager', 'vp ',
-               'intern', 'co-op', 'head of', 'chief', 'executive', 'president',
-               'professor', 'teacher', 'instructor', 'fellow']
+SKIP_TITLES = [
+    s.strip().lower()
+    for s in os.environ.get(
+        'LI_SKIP_TITLES',
+        'lead ,principal,staff ,director,manager,vp ,intern,co-op,head of,chief,executive,president'
+    ).split(',')
+    if s.strip()
+]
 
-FAANG = ['google', 'meta', 'apple', 'amazon', 'microsoft', 'netflix']
+FAANG = [
+    f.strip().lower()
+    for f in os.environ.get('LI_FAANG_BLOCK', 'google,meta,apple,amazon,microsoft,netflix').split(',')
+    if f.strip()
+]
 
 STAFFING = [
     'tata', 'infosys', 'wipro', 'cognizant', 'hcl', 'capgemini',
