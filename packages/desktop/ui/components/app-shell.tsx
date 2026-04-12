@@ -30,10 +30,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     isSetupRoute || (pathname?.startsWith("/settings") ?? false)
 
   // First-run setup check: block the main UI and route to /setup if the
-  // desktop isn't provisioned with a valid worker token. Re-runs every 15s
-  // so a mid-session token revocation (detected by the server's 401 handler)
-  // also bounces the user to the activation wizard instead of trapping them
-  // on a silently-empty dashboard.
+  // desktop isn't provisioned yet. Only redirects on FIRST check — once
+  // setup passes, we NEVER redirect back to /setup even if a transient
+  // failure occurs (gateway timeout, network blip, etc.). This prevents
+  // yanking the user away from the terminal mid-session when they're
+  // actively applying to jobs.
+  //
+  // The 15s poll still runs to update the sidebar status indicator, but
+  // it only redirects if the user has NEVER had a successful setup in
+  // this browser session.
+  const [everSetupOk, setEverSetupOk] = useState(false)
+
   useEffect(() => {
     let cancelled = false
     const check = () => {
@@ -42,9 +49,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           if (cancelled) return
           if (res.setup_complete) {
             setSetupState("ok")
+            setEverSetupOk(true)
           } else {
-            setSetupState("needed")
-            if (!isAllowedDuringSetup) router.replace("/setup")
+            // Only redirect to /setup if we've NEVER had a successful
+            // setup in this session. Once setup passes, stay on the
+            // current page — don't yank the user away from a running
+            // terminal because of a transient preflight failure.
+            if (!everSetupOk) {
+              setSetupState("needed")
+              if (!isAllowedDuringSetup) router.replace("/setup")
+            }
+            // If everSetupOk is true, silently ignore the failure.
+            // The user was already set up and running — a gateway
+            // blip shouldn't bounce them to the wizard.
           }
         })
         .catch(() => {
@@ -57,7 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       cancelled = true
       clearInterval(interval)
     }
-  }, [isAllowedDuringSetup, router])
+  }, [isAllowedDuringSetup, router, everSetupOk])
 
   const refreshSessions = useCallback(async () => {
     try {
