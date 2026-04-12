@@ -197,18 +197,79 @@ def main():
             pass
         return
 
+    # macOS Dock icon fix. When launched via `python3 launch.py` (dev mode
+    # or from the .app bundle's bundled venv), the process inherits the
+    # Python interpreter's Dock icon — which is the generic Python rocket,
+    # not ApplyLoop's blue AL mark. pywebview doesn't expose a direct
+    # per-window icon API on macOS, so we set it at the NSApplication
+    # level via pyobjc before the GUI loop starts.
+    #
+    # Best-effort: non-macOS platforms, missing pyobjc, or a missing
+    # AppIcon.icns all fail silently. The window still shows up, just
+    # with the default icon.
+    if sys.platform == "darwin":
+        try:
+            from AppKit import NSApplication, NSImage  # type: ignore
+            icon_candidates = [
+                Path(__file__).resolve().parent / "AppIcon.icns",
+                Path(__file__).resolve().parent / "icon.svg",
+                Path(__file__).resolve().parent / "Resources" / "AppIcon.icns",
+            ]
+            for icon_path in icon_candidates:
+                if icon_path.is_file():
+                    ns_img = NSImage.alloc().initWithContentsOfFile_(str(icon_path))
+                    if ns_img is not None:
+                        # Shared NSApplication must exist before we can set
+                        # its icon. pywebview creates one during start(),
+                        # but calling shared() now is safe and gives us the
+                        # handle early so the first window already shows
+                        # the blue icon in the Dock.
+                        NSApplication.sharedApplication().setApplicationIconImage_(ns_img)
+                        print(f"[ApplyLoop] Dock icon set from {icon_path.name}")
+                        break
+        except Exception as _icon_err:
+            # pyobjc not installed, or .icns file couldn't be loaded.
+            # pywebview still runs with the default icon.
+            print(f"[ApplyLoop] Could not set macOS Dock icon: {_icon_err}")
+
     # Try pywebview (native window), fall back to browser
     try:
         import webview
 
-        window = webview.create_window(
-            title="ApplyLoop",
-            url=url,
-            width=1400,
-            height=900,
-            min_size=(800, 600),
-            text_select=True,
-        )
+        # Resolve the icon path for pywebview's create_window(icon=...).
+        # On Windows + Linux this sets the titlebar icon; on macOS the
+        # Dock icon is already handled by the NSApplication block above
+        # but passing icon= is harmless (pywebview ignores it on Mac).
+        _icon_path: str | None = None
+        for _cand in [
+            Path(__file__).resolve().parent / "AppIcon.icns",
+            Path(__file__).resolve().parent / "icon.svg",
+        ]:
+            if _cand.is_file():
+                _icon_path = str(_cand)
+                break
+
+        _window_kwargs: dict = {
+            "title": "ApplyLoop",
+            "url": url,
+            "width": 1400,
+            "height": 900,
+            "min_size": (800, 600),
+            "text_select": True,
+        }
+        # Newer pywebview versions accept icon=; older ones don't. Pass
+        # only if the signature supports it so we don't crash on older
+        # installs that shipped with the launcher.
+        if _icon_path:
+            try:
+                import inspect
+                _sig = inspect.signature(webview.create_window)
+                if "icon" in _sig.parameters:
+                    _window_kwargs["icon"] = _icon_path
+            except Exception:
+                pass
+
+        window = webview.create_window(**_window_kwargs)
 
         # When window closes, exit the process (kills server thread)
         def on_closed():
