@@ -175,17 +175,63 @@ function LiveActivityFeed() {
   );
 }
 
+// schema.org SoftwareApplication JSON-LD. Rendered inline as a <script>
+// on the landing page so Google can show rich results + knowledge-panel
+// metadata in search. Keep the name/description in sync with layout.tsx
+// metadata so the crawler sees consistent info across both signals.
+const STRUCTURED_DATA = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "ApplyLoop",
+  description:
+    "AI-powered job application engine. ApplyLoop fills out applications, tailors resumes per role, writes cover letters, and submits them automatically — 30-60 applications per day on autopilot.",
+  url: "https://applyloop.vercel.app",
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "macOS",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+    description: "Early adopter — free during beta",
+  },
+  creator: {
+    "@type": "Organization",
+    name: "ApplyLoop",
+    url: "https://applyloop.vercel.app",
+  },
+  featureList: [
+    "Automated job scouting across 6+ sources",
+    "AI-tailored resumes per role",
+    "Auto-generated cover letters",
+    "Submits applications to Greenhouse, Lever, Ashby, SmartRecruiters",
+    "Telegram notifications with screenshots",
+    "Per-job dedup + filtering",
+    "Daily application limits + cooldowns",
+  ],
+};
+
 export default function LandingPage() {
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#f7f7f7" }}>
+      {/* schema.org structured data for rich results in Google Search */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
+      />
       <ScrollObserver />
 
       {/* Nav */}
       <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-lg z-50 border-b border-gray-100/80">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm font-display">A</span>
+            {/* Brand mark — matches favicon + desktop app icon + OG card.
+                The blue gradient + "AL" monogram is the ApplyLoop visual
+                identity everywhere across web + desktop surfaces. */}
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center shadow-sm"
+              style={{ background: "linear-gradient(135deg, #3b82f6 0%, #1e40af 100%)" }}
+            >
+              <span className="text-white font-bold text-[11px] font-display tracking-tight">AL</span>
             </div>
             <span className="font-display font-bold text-lg">ApplyLoop</span>
           </div>

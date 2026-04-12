@@ -142,31 +142,31 @@ export function SetupCard({ variant = "inline" }: { variant?: "standalone" | "in
       )}
 
       {/* Activation code */}
-      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-        <h3 className="font-semibold text-indigo-900 mb-2">Your activation code</h3>
+      <div className="bg-brand-50 border border-brand-200 rounded-lg p-4">
+        <h3 className="font-semibold text-brand-900 mb-2">Your activation code</h3>
         {activationLoading ? (
-          <p className="text-sm text-indigo-700">Loading...</p>
+          <p className="text-sm text-brand-700">Loading...</p>
         ) : activation ? (
           <>
             <div className="flex items-center gap-2">
-              <code className="flex-1 bg-white border border-indigo-300 rounded-lg px-4 py-2 text-lg font-mono font-bold text-indigo-900 tracking-wider select-all">
+              <code className="flex-1 bg-white border border-brand-300 rounded-lg px-4 py-2 text-lg font-mono font-bold text-brand-900 tracking-wider select-all">
                 {activation.code}
               </code>
               <button
                 onClick={() => copy("code", activation.code)}
-                className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"
+                className="px-3 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
               >
                 {copied === "code" ? "Copied" : "Copy"}
               </button>
             </div>
-            <p className="text-xs text-indigo-700 mt-2">
+            <p className="text-xs text-brand-700 mt-2">
               Paste this into the desktop app when it prompts you. Expires{" "}
               {new Date(activation.expires_at).toLocaleString()}. Uses remaining:{" "}
               {activation.uses_remaining}.
             </p>
           </>
         ) : (
-          <div className="text-sm text-indigo-800">
+          <div className="text-sm text-brand-800">
             <p className="mb-2">No active activation code found on your account yet.</p>
             <p className="text-xs">
               Ask the admin to generate one for you (or DM{" "}
@@ -313,7 +313,7 @@ export function SetupCard({ variant = "inline" }: { variant?: "standalone" | "in
       </div>
 
       {/* Learning note */}
-      <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-lg p-4">
+      <div className="bg-gradient-to-r from-brand-50 to-purple-50 border border-brand-200 rounded-lg p-4">
         <p className="text-sm text-purple-800">
           <span className="font-semibold">Your bot learns as you use it.</span> The more
           you interact — correcting roles, skipping companies, giving feedback — the

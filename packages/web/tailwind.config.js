@@ -4,18 +4,24 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        // ApplyLoop brand blue. Anchored on the desktop app's primary
+        // accent (#3b82f6 → #1e40af gradient), so every surface — web
+        // landing, dashboard, desktop app, favicon, OG card, Dock icon —
+        // pulls from the same palette. Every existing `bg-brand-*` /
+        // `text-brand-*` class across the web instantly flips to blue
+        // when this file changes; no component edits required.
         brand: {
-          50: "#f8f8f8",
-          100: "#f0f0f0",
-          200: "#e4e4e4",
-          300: "#d1d1d1",
-          400: "#a1a1a1",
-          500: "#737373",
-          600: "#525252",
-          700: "#404040",
-          800: "#262626",
-          900: "#171717",
-          950: "#0a0a0a",
+          50: "#eff6ff",
+          100: "#dbeafe",
+          200: "#bfdbfe",
+          300: "#93c5fd",
+          400: "#60a5fa",
+          500: "#3b82f6",  // desktop UI --primary
+          600: "#2563eb",
+          700: "#1d4ed8",
+          800: "#1e40af",  // desktop icon.svg gradient endpoint
+          900: "#1e3a8a",
+          950: "#172554",
         },
       },
       fontFamily: {
