@@ -15,7 +15,10 @@ const NAV_ITEMS = [
   { href: "/dashboard/jobs", label: "Jobs", icon: "\u2609", exact: false },
   { href: "/dashboard/applications", label: "Applications", icon: "\u2611", exact: false },
   { href: "/dashboard/settings", label: "Settings", icon: "\u2699", exact: false },
-  { href: "/setup-complete", label: "Setup", icon: "\u2B73", exact: true },
+  // NB: /dashboard/setup (not /setup-complete) so it inherits DashboardLayout
+  // and the sidebar stays visible. /setup-complete is still the post-signup
+  // full-bleed landing page; both render the shared SetupCard component.
+  { href: "/dashboard/setup", label: "Setup", icon: "\u2B73", exact: true },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
