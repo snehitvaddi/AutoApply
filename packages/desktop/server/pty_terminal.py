@@ -1645,12 +1645,18 @@ exec /bin/zsh -l
         )
 
     def _submit_to_pty(self, body: str) -> None:
-        """Write a /btw side-channel message. The \\r terminator is mandatory
-        — Claude Code's TUI runs the terminal in raw mode and \\n alone does
-        NOT submit. This is the same byte sequence xterm.js forwards when
-        a user presses Enter manually.
+        """Write a message DIRECTLY to the terminal as a normal user message.
+
+        NOT /btw — that's a side-channel "by the way" that Claude can ignore.
+        The nudge needs to land as a REAL primary message so Claude treats it
+        the same as if the user typed it at the prompt and pressed Enter.
+
+        The \\r terminator is mandatory — Claude Code's TUI runs the terminal
+        in raw mode. \\r = Enter (submit). \\n alone leaves text in the input
+        buffer un-submitted. This is the same byte sequence xterm.js forwards
+        when a user presses Enter manually.
         """
-        msg = f"/btw {body}\r"
+        msg = f"{body}\r"
         self.write(msg.encode("utf-8"))
 
     def _nudge_cooldown_ok(self) -> bool:
