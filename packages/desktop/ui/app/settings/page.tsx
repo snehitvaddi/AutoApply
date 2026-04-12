@@ -7,6 +7,7 @@ import {
   getProfile, updateProfile, getPreferences, updatePreferences,
   listResumes, uploadResume, getSetupStatus,
   getIntegrations, updateIntegrations,
+  syncNow,
   type ResumeRow,
 } from "@/lib/api"
 import { AI_PROFILE_PROMPT, parseAiResponseSafe } from "@/lib/profile-schema"
@@ -188,6 +189,12 @@ export default function SettingsPage() {
   const [integrationsSaving, setIntegrationsSaving] = useState(false)
   const [integrationsMsg, setIntegrationsMsg] = useState<{ text: string; type: "ok" | "err" } | null>(null)
 
+  // On-demand sync state. Fires on mount + when the user clicks the
+  // "Refresh" button in the header. syncNow() hits POST /api/sync/now
+  // which runs the same pull+push helpers the 5-min background loop runs.
+  const [syncing, setSyncing] = useState(false)
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
+
   // AI Import state
   const [aiResponse, setAiResponse] = useState("")
   const [aiError, setAiError] = useState<string | null>(null)
@@ -254,25 +261,62 @@ export default function SettingsPage() {
     finally { setLoading(false) }
   }, [])
 
+  // Fetch integrations (masked values) from the local FastAPI → cloud.
+  // Broken out so the mount flow AND the manual Refresh button both reuse it.
+  const refreshIntegrations = useCallback(async () => {
+    setIntegrationsLoading(true)
+    try {
+      const res = await getIntegrations()
+      const d = res?.data as { data?: { integrations?: Record<string, { set: boolean; mask: string }> } } | undefined
+      if (d?.data?.integrations) {
+        setIntegrationsState(d.data.integrations)
+      }
+    } catch {
+      /* silent — keep whatever we had before */
+    } finally {
+      setIntegrationsLoading(false)
+    }
+  }, [])
+
+  // Run a full pull+push sync via the local FastAPI /api/sync/now endpoint,
+  // then re-fetch profile / preferences / resumes / integrations so the UI
+  // picks up anything that changed on the cloud side. Used by both:
+  //
+  //   - the mount-time effect (so visiting the Settings page always shows
+  //     fresh data without waiting for the 5-min background tick)
+  //   - the manual Refresh button in the header
+  //
+  // Never throws. Uses the syncing state for the spinner indicator. If the
+  // sync itself fails (network, migration not applied, etc.) the individual
+  // re-fetches still run so the user sees whatever's cached locally.
+  const syncAndReload = useCallback(async () => {
+    setSyncing(true)
+    try {
+      try {
+        const res = await syncNow()
+        const d = res?.data as { data?: { synced_at?: number; errors?: string[] } } | undefined
+        if (d?.data?.synced_at) {
+          setLastSyncedAt(d.data.synced_at)
+        }
+      } catch {
+        /* swallow — we still want to re-fetch below */
+      }
+      // Re-fetch everything the Settings page renders from.
+      await loadData()
+      await refreshIntegrations()
+    } finally {
+      setSyncing(false)
+    }
+  }, [loadData, refreshIntegrations])
+
   useEffect(() => {
-    loadData()
     fetch("/api/auth/token-masked").then(r => r.json()).then(d => {
       if (d.has_token) setMaskedToken(d.masked)
     }).catch(() => {})
-    // Load integrations separately so a failure of /api/settings/integrations
-    // on the cloud (e.g. migration 010 not yet applied) doesn't break the
-    // entire Settings page.
-    setIntegrationsLoading(true)
-    getIntegrations()
-      .then((res) => {
-        const d = res?.data as { data?: { integrations?: Record<string, { set: boolean; mask: string }> } } | undefined
-        if (d?.data?.integrations) {
-          setIntegrationsState(d.data.integrations)
-        }
-      })
-      .catch(() => { /* silent */ })
-      .finally(() => setIntegrationsLoading(false))
-  }, [loadData])
+    // Initial mount: run a full sync then reload. One call covers the
+    // "visited the settings tab → get latest" flow the user asked for.
+    syncAndReload()
+  }, [syncAndReload])
 
   async function saveIntegrations() {
     const dirty = Object.entries(integrationsDraft).filter(([, v]) => v && v.trim() !== "")
@@ -564,6 +608,37 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold text-foreground">Settings</h1>
           <div className="flex items-center gap-3">
+            {/* Manual refresh button: re-pulls profile+integrations from
+                cloud on demand (same code path as the mount-time auto-sync
+                and the 5-min background loop). */}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {lastSyncedAt && !syncing && (
+                <span>
+                  Synced {(() => {
+                    const secs = Math.round((Date.now() - lastSyncedAt) / 1000)
+                    if (secs < 5) return "just now"
+                    if (secs < 60) return `${secs}s ago`
+                    const mins = Math.round(secs / 60)
+                    return `${mins}m ago`
+                  })()}
+                </span>
+              )}
+              <button
+                onClick={syncAndReload}
+                disabled={syncing}
+                title="Pull latest from cloud + push local changes"
+                className="flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+              >
+                {syncing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                )}
+                {syncing ? "Syncing..." : "Refresh"}
+              </button>
+            </div>
             {saveError && (
               <div className="flex items-center gap-1.5 rounded-lg bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
                 <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />

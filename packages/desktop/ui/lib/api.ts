@@ -335,6 +335,20 @@ export async function updateIntegrations(data: Record<string, string>) {
   );
 }
 
+// ── On-demand cloud ↔ local sync ────────────────────────────────────────
+//
+// POST /api/sync/now runs the same three helpers the background 5-min
+// poll runs (pull profile, push integrations delta, pull integrations
+// into .env). Use this on Settings page mount + on the manual "Refresh"
+// button so the user sees fresh data without waiting for the next tick.
+
+export async function syncNow() {
+  return apiFetch<{
+    ok: boolean;
+    data: { synced_at: number; errors: string[] };
+  }>("/sync/now", { method: "POST" });
+}
+
 // ── Resumes ─────────────────────────────────────────────────────────────────
 
 export interface ResumeRow {

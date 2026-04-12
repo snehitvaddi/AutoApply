@@ -1022,6 +1022,63 @@ async def put_integrations(body: dict):
         return {"ok": False, "error": str(e)}
 
 
+# ── On-demand sync ───────────────────────────────────────────────────────
+# Triggered by the desktop Settings page on mount so the user sees fresh
+# data instead of waiting for the 5-minute background tick. Runs the same
+# three helpers the background poll runs (pull profile from cloud, push
+# any local-only integration keys up, pull integrations down into .env).
+
+@app.post("/api/sync/now")
+async def sync_now():
+    """Run a full bidirectional profile + integrations sync right now.
+
+    Same code path as the 5-minute background loop in the lifespan, but
+    triggered on-demand by the UI. The sync runs on the threadpool via
+    asyncio.to_thread so the blocking urllib + file I/O doesn't stall
+    the FastAPI event loop. Returns { ok, synced_at } on success.
+    """
+    import os as _os
+    import time as _time
+    from .pty_terminal import PTYSession
+
+    home = _os.environ.get("APPLYLOOP_HOME") or _os.path.expanduser("~/.applyloop")
+    # Re-read .env so rotated worker tokens are picked up without a restart.
+    env: dict = {}
+    env_path = _os.path.join(home, ".env")
+    if _os.path.isfile(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip().strip('"').strip("'")
+        except Exception as e:
+            return {"ok": False, "error": f"could not read .env: {e}"}
+
+    errors: list[str] = []
+    try:
+        await asyncio.to_thread(PTYSession._pull_profile_from_cloud, home, env)
+    except Exception as e:
+        errors.append(f"pull_profile: {e}")
+    try:
+        await asyncio.to_thread(PTYSession._push_integrations_from_env_to_cloud, home, env)
+    except Exception as e:
+        errors.append(f"push_integrations: {e}")
+    try:
+        await asyncio.to_thread(PTYSession._sync_integrations_to_env, home, env)
+    except Exception as e:
+        errors.append(f"sync_integrations_to_env: {e}")
+
+    return {
+        "ok": len(errors) == 0,
+        "data": {
+            "synced_at": int(_time.time() * 1000),
+            "errors": errors,
+        },
+    }
+
 
 # (CLI Session endpoints removed — Chat now uses /btw via PTY)
 
