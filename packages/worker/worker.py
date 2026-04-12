@@ -304,7 +304,7 @@ def restart_browser_gateway() -> bool:
     return False
 
 
-INSTALL_DIR = os.environ.get("INSTALL_DIR", os.path.expanduser("~/autoapply"))
+INSTALL_DIR = os.environ.get("INSTALL_DIR", os.environ.get("APPLYLOOP_HOME", os.path.expanduser("~/.applyloop")))
 APP_URL = os.environ.get("NEXT_PUBLIC_APP_URL", "https://applyloop.vercel.app")
 _last_update_date: str = ""  # tracks which date we last checked for updates
 
@@ -382,6 +382,7 @@ def check_and_pull_updates() -> bool:
 
 
 def main():
+    global running
     logger.info(f"Worker {WORKER_ID} starting...")
 
     # Load THIS tenant's config before anything else. No "system" fallback —

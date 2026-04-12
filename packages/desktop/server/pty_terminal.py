@@ -64,23 +64,22 @@ session_history: list[SessionRecord] = []
 class PTYSession:
     """A persistent PTY session running claude --dangerously-skip-permissions.
 
-    Watchdog behavior (Part 2 mission-driven redesign):
+    Nudge behavior (Part 2 mission-driven redesign):
       - _watchdog_loop: ticks every 5 min, fires a dynamic nudge when
         progress drifts (applied-today flat, scout overdue, worker dead,
         PTY idle). Never gated on PTY byte flow alone.
-      - _mission_heartbeat_loop: ticks every 15 min, always fires a
-        tenant-scoped status refresh so Claude never forgets WHO it's
-        applying for. Informational; doesn't demand an action.
 
-    Both loops write to the PTY via /btw so Claude processes them as side-
-    channel messages instead of user turns. \\r terminator is CRITICAL —
-    the TUI runs in raw mode and \\n alone leaves the text sitting in the
-    input buffer un-submitted.
+    Writes to the PTY via /btw so Claude processes nudges as side-channel
+    messages instead of user turns. \\r terminator is CRITICAL — the TUI
+    runs in raw mode and \\n alone leaves the text sitting in the input
+    buffer un-submitted.
+
+    When everything is running fine → the watchdog stays silent, zero messages.
+    Only fires when something is actually stuck.
     """
 
     # Tick intervals
     WATCHDOG_INTERVAL = 300            # 5 min — mission drift check
-    HEARTBEAT_INTERVAL = 900           # 15 min — mission context refresh
     # Drift thresholds
     IDLE_THRESHOLD = 1800              # 30 min — PTY silence
     SCOUT_STALE_MULTIPLIER = 2         # 2x SCOUT_INTERVAL_MINUTES = overdue
@@ -999,9 +998,10 @@ class PTYSession:
             "  The worker.py process does the mechanical scouting and "
             "applying. Your job is to keep it alive: start it, restart it "
             "when it dies, respond to user messages, and always keep the "
-            "loop moving. The watchdog will nudge you every 15 min with a "
-            "status heartbeat and fire an action-required nudge whenever "
-            "progress stalls. Act on those nudges — don't just acknowledge."
+            "loop moving. A watchdog checks every 5 min if progress has "
+            "stalled — if the worker dies, scout is overdue, or applied "
+            "count stops growing with jobs in queue, it will nudge you "
+            "with the exact next action to take. Act on those nudges."
         )
         lines.append("")
         lines.append("ARCHITECTURE RULE — read once, apply everywhere:")
@@ -1442,14 +1442,11 @@ exec /bin/zsh -l
                 # Already reaped — fall through
                 pass
 
-            # Start reading + watchdog + mission heartbeat in background.
-            # Heartbeat gives Claude a tenant-scoped status refresh every
-            # 15 min so it never forgets WHO it's applying for. Watchdog
-            # detects real apply-loop drift (not just PTY byte-flow idle)
-            # and fires an escalating nudge with the next required action.
+            # Start reading + watchdog in background. The watchdog detects
+            # real apply-loop drift (not just PTY byte-flow idle) and fires
+            # a tenant-scoped nudge with the next required action.
             self._read_task = asyncio.create_task(self._read_loop())
             self._watchdog_task = asyncio.create_task(self._watchdog_loop())
-            self._heartbeat_task = asyncio.create_task(self._mission_heartbeat_loop())
 
             logger.info(f"PTY session started: PID {child_pid}, claude at {claude}")
 
