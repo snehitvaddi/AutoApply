@@ -12,6 +12,27 @@ const ROLE_PRESETS = [
 
 type Tab = "ai-import" | "personal" | "work" | "preferences" | "resumes" | "integrations" | "telegram" | "email" | "worker" | "billing";
 
+// Structured shapes for the Work & Education tab's new array editors.
+// Match what parseAiResponseSafe produces + what the AI_PROFILE_PROMPT
+// schema describes in packages/web/src/lib/profile-schema.ts.
+interface WorkExperienceRow {
+  company: string;
+  title: string;
+  location?: string;
+  start_date?: string;
+  end_date?: string;
+  current?: boolean;
+  achievements: string[];
+}
+interface EducationRow {
+  school: string;
+  degree: string;
+  field?: string;
+  start_date?: string;
+  end_date?: string;
+  gpa?: string;
+}
+
 // Integrations tab — Telegram bot token + chat ID, Gmail email + app
 // password, AgentMail API key, Finetune Resume API key. All stored
 // encrypted in user_profiles.integrations_encrypted via /api/settings/
@@ -127,6 +148,17 @@ export default function SettingsPage() {
   const [resumeIsDefault, setResumeIsDefault] = useState(false);
   const [uploading, setUploading] = useState(false);
 
+  // Work & Education (multi-entry arrays from AI import). Rendered as
+  // editable cards above the existing scalar fields. Persisted via the
+  // allowedFields whitelist on /api/settings/profile PUT which already
+  // accepts work_experience + education (commit 01f4b44).
+  const [workExperienceRows, setWorkExperienceRows] = useState<WorkExperienceRow[]>([]);
+  const [educationRows, setEducationRows] = useState<EducationRow[]>([]);
+
+  // Job Preferences custom-title chip input. The 13 ROLE_PRESETS are
+  // toggled via buttons; this input lets the user add anything else.
+  const [customTitleInput, setCustomTitleInput] = useState("");
+
   // AI Import
   const [aiResponse, setAiResponse] = useState("");
   const [promptCopied, setPromptCopied] = useState(false);
@@ -211,6 +243,37 @@ export default function SettingsPage() {
       setRequiresSponsorship(p.requires_sponsorship || false);
       setGender(p.gender || "");
       setRaceEthnicity(p.race_ethnicity || "");
+
+      // Work & Education arrays. These are the multi-entry records from
+      // the AI import — previously dropped on the floor because the UI
+      // only rendered scalars. Fall back to empty arrays if cloud is
+      // missing them (legacy onboarding that only sent flat fields).
+      if (Array.isArray(p.work_experience)) {
+        setWorkExperienceRows(
+          (p.work_experience as WorkExperienceRow[]).map((w) => ({
+            company: w.company || "",
+            title: w.title || "",
+            location: w.location || "",
+            start_date: w.start_date || "",
+            end_date: w.end_date || "",
+            current: Boolean(w.current),
+            achievements: Array.isArray(w.achievements) ? w.achievements : [],
+          }))
+        );
+      }
+      if (Array.isArray(p.education)) {
+        setEducationRows(
+          (p.education as EducationRow[]).map((e) => ({
+            school: e.school || "",
+            degree: e.degree || "",
+            field: e.field || "",
+            start_date: e.start_date || "",
+            end_date: e.end_date || "",
+            gpa: e.gpa || "",
+          }))
+        );
+      }
+
       setTelegramChatId(profileData.data?.telegram_chat_id || "");
       setGmailConnected(profileData.data?.gmail_connected || false);
 
@@ -320,26 +383,143 @@ export default function SettingsPage() {
 
   async function saveWorkEducation() {
     setSaving(true);
+    // Filter out visually-empty rows so a blank card the user added and
+    // then forgot about doesn't end up as junk on the cloud.
+    const cleanedWork = workExperienceRows
+      .map((w) => ({
+        ...w,
+        achievements: (w.achievements || []).map((a) => a.trim()).filter(Boolean),
+      }))
+      .filter((w) => w.company.trim() || w.title.trim());
+    const cleanedEdu = educationRows.filter((e) => e.school.trim() || e.degree.trim());
+
+    // Auto-sync the scalar "primary" fields from the first array entry
+    // when they're blank. Keeps legacy readers that still look at
+    // current_company / school_name happy.
+    const primaryCompany = currentCompany || cleanedWork[0]?.company || "";
+    const primaryTitle = currentTitle || cleanedWork[0]?.title || "";
+    const primarySchool = schoolName || cleanedEdu[0]?.school || "";
+    const primaryDegree = degree || cleanedEdu[0]?.degree || "";
+
     const res = await fetch("/api/settings/profile", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        current_company: currentCompany,
-        current_title: currentTitle,
+        current_company: primaryCompany,
+        current_title: primaryTitle,
         years_experience: yearsExperience ? parseInt(yearsExperience) : null,
         education_level: educationLevel,
-        school_name: schoolName,
-        degree,
+        school_name: primarySchool,
+        degree: primaryDegree,
         graduation_year: graduationYear ? parseInt(graduationYear) : null,
         work_authorization: workAuthorization,
         requires_sponsorship: requiresSponsorship,
         gender,
         race_ethnicity: raceEthnicity,
+        work_experience: cleanedWork,
+        education: cleanedEdu,
       }),
     });
     setSaving(false);
-    if (res.ok) showMessage("Work & education saved!");
-    else showMessage("Failed to save", "error");
+    if (res.ok) {
+      showMessage("Work & education saved!");
+      // Write the cleaned rows back so any removed-empty rows disappear from the UI
+      setWorkExperienceRows(cleanedWork);
+      setEducationRows(cleanedEdu);
+    } else {
+      showMessage("Failed to save", "error");
+    }
+  }
+
+  // ── Work & Education row helpers ───────────────────────────────────
+  function updateWorkRow(idx: number, patch: Partial<WorkExperienceRow>) {
+    setWorkExperienceRows((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+    );
+  }
+  function addWorkRow() {
+    setWorkExperienceRows((prev) => [
+      ...prev,
+      { company: "", title: "", location: "", start_date: "", end_date: "Present", current: true, achievements: [] },
+    ]);
+  }
+  function removeWorkRow(idx: number) {
+    setWorkExperienceRows((prev) => prev.filter((_, i) => i !== idx));
+  }
+  function moveWorkRow(idx: number, dir: -1 | 1) {
+    setWorkExperienceRows((prev) => {
+      const next = [...prev];
+      const target = idx + dir;
+      if (target < 0 || target >= next.length) return prev;
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+  }
+  function updateWorkAchievement(rowIdx: number, bulletIdx: number, text: string) {
+    setWorkExperienceRows((prev) =>
+      prev.map((row, i) => {
+        if (i !== rowIdx) return row;
+        const next = [...row.achievements];
+        next[bulletIdx] = text;
+        return { ...row, achievements: next };
+      })
+    );
+  }
+  function addWorkAchievement(rowIdx: number) {
+    setWorkExperienceRows((prev) =>
+      prev.map((row, i) => (i === rowIdx ? { ...row, achievements: [...row.achievements, ""] } : row))
+    );
+  }
+  function removeWorkAchievement(rowIdx: number, bulletIdx: number) {
+    setWorkExperienceRows((prev) =>
+      prev.map((row, i) =>
+        i === rowIdx ? { ...row, achievements: row.achievements.filter((_, b) => b !== bulletIdx) } : row
+      )
+    );
+  }
+
+  // Add one or more custom titles from a free-form string. Splits on
+  // commas for paste support, trims, dedupes against existing + presets.
+  function addCustomTitles(raw: string) {
+    const incoming = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (incoming.length === 0) return;
+    setTargetTitles((prev) => {
+      const seen = new Set(prev);
+      const next = [...prev];
+      for (const t of incoming) {
+        if (!seen.has(t)) {
+          next.push(t);
+          seen.add(t);
+        }
+      }
+      return next;
+    });
+    setCustomTitleInput("");
+  }
+
+  function updateEduRow(idx: number, patch: Partial<EducationRow>) {
+    setEducationRows((prev) => prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
+  }
+  function addEduRow() {
+    setEducationRows((prev) => [
+      ...prev,
+      { school: "", degree: "", field: "", start_date: "", end_date: "", gpa: "" },
+    ]);
+  }
+  function removeEduRow(idx: number) {
+    setEducationRows((prev) => prev.filter((_, i) => i !== idx));
+  }
+  function moveEduRow(idx: number, dir: -1 | 1) {
+    setEducationRows((prev) => {
+      const next = [...prev];
+      const target = idx + dir;
+      if (target < 0 || target >= next.length) return prev;
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
   }
 
   async function savePreferences() {
@@ -773,6 +953,255 @@ export default function SettingsPage() {
       {activeTab === "work" && (
         <section className="bg-white rounded-xl border p-6">
           <h2 className="font-semibold mb-4">Work & Education</h2>
+
+          {/* Work Experience — multi-entry editable cards */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium text-gray-900">Work Experience</h3>
+              <button
+                onClick={addWorkRow}
+                className="text-sm text-brand-600 hover:text-brand-700 font-medium"
+              >
+                + Add experience
+              </button>
+            </div>
+            {workExperienceRows.length === 0 && (
+              <p className="text-sm text-gray-500 italic py-4 text-center border border-dashed rounded-lg">
+                No work experience yet. Click &quot;+ Add experience&quot; or import from AI in the AI Import tab.
+              </p>
+            )}
+            <div className="space-y-4">
+              {workExperienceRows.map((row, idx) => (
+                <div key={idx} className="border rounded-lg p-4 bg-gray-50">
+                  <div className="flex items-start justify-between mb-3">
+                    <span className="text-xs font-medium text-gray-500">#{idx + 1}</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => moveWorkRow(idx, -1)}
+                        disabled={idx === 0}
+                        className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-200 rounded disabled:opacity-30"
+                        title="Move up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        onClick={() => moveWorkRow(idx, 1)}
+                        disabled={idx === workExperienceRows.length - 1}
+                        className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-200 rounded disabled:opacity-30"
+                        title="Move down"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        onClick={() => removeWorkRow(idx)}
+                        className="text-xs px-2 py-1 text-red-600 hover:bg-red-50 rounded"
+                        title="Delete"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Company</label>
+                      <input
+                        value={row.company}
+                        onChange={(e) => updateWorkRow(idx, { company: e.target.value })}
+                        placeholder="Modernizing Medicine, Inc."
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Title</label>
+                      <input
+                        value={row.title}
+                        onChange={(e) => updateWorkRow(idx, { title: e.target.value })}
+                        placeholder="AI Engineer"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Location</label>
+                      <input
+                        value={row.location || ""}
+                        onChange={(e) => updateWorkRow(idx, { location: e.target.value })}
+                        placeholder="Boca Raton, FL"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Start date</label>
+                      <input
+                        value={row.start_date || ""}
+                        onChange={(e) => updateWorkRow(idx, { start_date: e.target.value })}
+                        placeholder="Feb 2025"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">End date</label>
+                      <input
+                        value={row.end_date || ""}
+                        onChange={(e) => updateWorkRow(idx, { end_date: e.target.value })}
+                        placeholder="Present"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-medium text-gray-600">Achievements / bullets</label>
+                      <button
+                        onClick={() => addWorkAchievement(idx)}
+                        className="text-xs text-brand-600 hover:text-brand-700"
+                      >
+                        + Add bullet
+                      </button>
+                    </div>
+                    {row.achievements.length === 0 && (
+                      <p className="text-xs text-gray-400 italic py-1">No bullets yet.</p>
+                    )}
+                    <div className="space-y-2">
+                      {row.achievements.map((bullet, bidx) => (
+                        <div key={bidx} className="flex gap-2">
+                          <span className="text-xs text-gray-400 mt-2">•</span>
+                          <textarea
+                            value={bullet}
+                            onChange={(e) => updateWorkAchievement(idx, bidx, e.target.value)}
+                            rows={2}
+                            className="flex-1 px-2 py-1.5 border rounded text-sm"
+                          />
+                          <button
+                            onClick={() => removeWorkAchievement(idx, bidx)}
+                            className="text-xs px-2 text-red-500 hover:bg-red-50 rounded self-start mt-1"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Education — multi-entry editable cards */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium text-gray-900">Education</h3>
+              <button
+                onClick={addEduRow}
+                className="text-sm text-brand-600 hover:text-brand-700 font-medium"
+              >
+                + Add degree
+              </button>
+            </div>
+            {educationRows.length === 0 && (
+              <p className="text-sm text-gray-500 italic py-4 text-center border border-dashed rounded-lg">
+                No education entries yet. Click &quot;+ Add degree&quot; or import from AI in the AI Import tab.
+              </p>
+            )}
+            <div className="space-y-4">
+              {educationRows.map((row, idx) => (
+                <div key={idx} className="border rounded-lg p-4 bg-gray-50">
+                  <div className="flex items-start justify-between mb-3">
+                    <span className="text-xs font-medium text-gray-500">#{idx + 1}</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => moveEduRow(idx, -1)}
+                        disabled={idx === 0}
+                        className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-200 rounded disabled:opacity-30"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        onClick={() => moveEduRow(idx, 1)}
+                        disabled={idx === educationRows.length - 1}
+                        className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-200 rounded disabled:opacity-30"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        onClick={() => removeEduRow(idx)}
+                        className="text-xs px-2 py-1 text-red-600 hover:bg-red-50 rounded"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">School</label>
+                      <input
+                        value={row.school}
+                        onChange={(e) => updateEduRow(idx, { school: e.target.value })}
+                        placeholder="University of Florida"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Degree</label>
+                      <input
+                        value={row.degree}
+                        onChange={(e) => updateEduRow(idx, { degree: e.target.value })}
+                        placeholder="Master of Science"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Field</label>
+                      <input
+                        value={row.field || ""}
+                        onChange={(e) => updateEduRow(idx, { field: e.target.value })}
+                        placeholder="Computer & Information Science"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">GPA</label>
+                      <input
+                        value={row.gpa || ""}
+                        onChange={(e) => updateEduRow(idx, { gpa: e.target.value })}
+                        placeholder="3.9/4.0"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Start date</label>
+                      <input
+                        value={row.start_date || ""}
+                        onChange={(e) => updateEduRow(idx, { start_date: e.target.value })}
+                        placeholder="Jan 2023"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">End date</label>
+                      <input
+                        value={row.end_date || ""}
+                        onChange={(e) => updateEduRow(idx, { end_date: e.target.value })}
+                        placeholder="Dec 2024"
+                        className="w-full px-2 py-1.5 border rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <hr className="my-4" />
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
+            Primary fallback fields &middot; auto-filled from first entry above if blank
+          </p>
+
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -922,6 +1351,32 @@ export default function SettingsPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Target Roles</label>
+
+              {/* Custom titles the user added that aren't in ROLE_PRESETS.
+                  Rendered as removable chips ABOVE the preset grid so the
+                  user sees their extras as first-class citizens. */}
+              {targetTitles.filter((t) => !ROLE_PRESETS.includes(t)).length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {targetTitles
+                    .filter((t) => !ROLE_PRESETS.includes(t))
+                    .map((t) => (
+                      <span
+                        key={t}
+                        className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-3 py-1 text-sm text-brand-900 border border-brand-200"
+                      >
+                        {t}
+                        <button
+                          onClick={() => setTargetTitles((prev) => prev.filter((x) => x !== t))}
+                          className="text-brand-700 hover:text-brand-900 ml-1"
+                          title="Remove"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                </div>
+              )}
+
               <div className="flex flex-wrap gap-2">
                 {ROLE_PRESETS.map((title) => (
                   <button
@@ -937,6 +1392,40 @@ export default function SettingsPage() {
                   </button>
                 ))}
               </div>
+
+              {/* Free-form add-a-title input. Enter or comma commits it as
+                  a chip; paste of a comma list adds all at once. */}
+              <div className="flex gap-2 mt-3">
+                <input
+                  value={customTitleInput}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v.includes(",")) {
+                      addCustomTitles(v);
+                    } else {
+                      setCustomTitleInput(v);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addCustomTitles(customTitleInput);
+                    }
+                  }}
+                  placeholder="Type to add more roles..."
+                  className="flex-1 px-3 py-2 border rounded-lg text-sm"
+                />
+                <button
+                  onClick={() => addCustomTitles(customTitleInput)}
+                  disabled={!customTitleInput.trim()}
+                  className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+                >
+                  Add
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                Press Enter or comma to add as a chip. Paste a comma-separated list to add multiple at once.
+              </p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1076,9 +1565,15 @@ export default function SettingsPage() {
                 <input
                   value={resumeTargetRoles}
                   onChange={(e) => setResumeTargetRoles(e.target.value)}
-                  placeholder="e.g. AI Engineer, ML Engineer"
+                  placeholder="e.g. NLP Engineer, LLM Engineer"
                   className="w-full px-3 py-2 border rounded-lg"
                 />
+                <p className="mt-1 text-xs text-gray-500">
+                  Leave blank to use this resume as the default for every application, or list specific role
+                  keywords to target just those. The worker auto-picks the best-matching resume at apply time —
+                  a job whose title contains one of these keywords will use this resume; anything else falls
+                  back to the default.
+                </p>
               </div>
               <label className="flex items-center gap-2">
                 <input
@@ -1176,63 +1671,162 @@ export default function SettingsPage() {
 
       {/* Telegram Tab */}
       {activeTab === "telegram" && (
-        <section className="bg-white rounded-xl border p-6">
-          <h2 className="font-semibold mb-4">Telegram Notifications</h2>
+        <section className="space-y-6">
+          {/* ── Option A: managed @ApplyLoopBot (default, easiest) ───── */}
+          <div className="bg-white rounded-xl border p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold">Use ApplyLoop&apos;s managed bot</h2>
+              <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-medium">
+                Easiest
+              </span>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              We run the bot for you. Click the link, send <span className="font-mono">/start</span>,
+              and paste the Chat ID the bot replies with.
+            </p>
 
-          <a
-            href="https://t.me/ApplyLoopBot"
-            target="_blank"
-            rel="noopener"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 mb-4"
-          >
-            Open @ApplyLoopBot in Telegram
-          </a>
-
-          <div className="bg-gray-50 border rounded-lg p-4 mb-4">
-            <p className="text-sm font-medium text-gray-700 mb-2">Setup steps:</p>
-            <ol className="text-sm text-gray-600 space-y-1 list-decimal list-inside">
-              <li>
-                Click the link above or search <span className="font-mono">@ApplyLoopBot</span> in Telegram
-              </li>
-              <li>Send <span className="font-mono">/start</span> to the bot</li>
-              <li>The bot replies with your <strong>Chat ID</strong> — copy it</li>
-              <li>Paste the Chat ID below and click <strong>Connect</strong></li>
-            </ol>
-          </div>
-
-          <div className="flex gap-4">
-            <input
-              placeholder="Telegram Chat ID"
-              value={telegramChatId}
-              onChange={(e) => setTelegramChatId(e.target.value)}
-              className="flex-1 px-3 py-2 border rounded-lg"
-            />
-            <button
-              onClick={saveTelegram}
-              disabled={saving || !telegramChatId}
-              className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+            <a
+              href="https://t.me/ApplyLoopBot"
+              target="_blank"
+              rel="noopener"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 mb-4"
             >
-              {saving ? "Saving..." : "Connect"}
-            </button>
-          </div>
-          {telegramChatId && (
-            <div className="mt-3 flex items-center gap-4">
+              Open @ApplyLoopBot in Telegram
+            </a>
+
+            <div className="bg-gray-50 border rounded-lg p-4 mb-4">
+              <p className="text-sm font-medium text-gray-700 mb-2">Setup steps:</p>
+              <ol className="text-sm text-gray-600 space-y-1 list-decimal list-inside">
+                <li>Click the link above or search <span className="font-mono">@ApplyLoopBot</span> in Telegram</li>
+                <li>Send <span className="font-mono">/start</span> to the bot</li>
+                <li>The bot replies with your <strong>Chat ID</strong> — copy it</li>
+                <li>Paste the Chat ID below and click <strong>Connect</strong></li>
+              </ol>
+            </div>
+
+            <div className="flex gap-4">
+              <input
+                placeholder="Telegram Chat ID (e.g. 123456789)"
+                value={telegramChatId}
+                onChange={(e) => setTelegramChatId(e.target.value)}
+                className="flex-1 px-3 py-2 border rounded-lg"
+              />
               <button
-                onClick={testTelegram}
-                disabled={telegramTesting}
-                className="px-4 py-2 border border-brand-600 text-brand-600 rounded-lg text-sm font-medium hover:bg-brand-50 disabled:opacity-50"
+                onClick={saveTelegram}
+                disabled={saving || !telegramChatId}
+                className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
               >
-                {telegramTesting ? "Sending..." : "Send Test Notification"}
-              </button>
-              <button
-                onClick={disconnectTelegram}
-                disabled={saving}
-                className="text-sm text-red-600 hover:text-red-700"
-              >
-                Disconnect Telegram
+                {saving ? "Saving..." : "Connect"}
               </button>
             </div>
-          )}
+            {telegramChatId && (
+              <div className="mt-3 flex items-center gap-4">
+                <button
+                  onClick={testTelegram}
+                  disabled={telegramTesting}
+                  className="px-4 py-2 border border-brand-600 text-brand-600 rounded-lg text-sm font-medium hover:bg-brand-50 disabled:opacity-50"
+                >
+                  {telegramTesting ? "Sending..." : "Send Test Notification"}
+                </button>
+                <button
+                  onClick={disconnectTelegram}
+                  disabled={saving}
+                  className="text-sm text-red-600 hover:text-red-700"
+                >
+                  Disconnect Telegram
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── Option B: user's own bot ─────────────────────────────── */}
+          <div className="bg-white rounded-xl border p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold">Or use your own bot</h2>
+              <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-700 rounded-full font-medium">
+                Advanced
+              </span>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Already have a Telegram bot (from @BotFather)? Paste its token + your chat ID here and
+              ApplyLoop will send messages through your bot instead of the managed one.
+              <br />
+              These credentials are stored encrypted and sync to the desktop app automatically. They&apos;re
+              the same fields as the <strong>API Keys</strong> tab — editing here or there saves to the
+              same place.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Telegram Bot Token</label>
+                <input
+                  type="password"
+                  placeholder="e.g. 1234567890:ABCdef-GhIJklMn-oPqRsTUv_WxYz"
+                  value={integrationsDraft.telegram_bot_token ?? ""}
+                  onChange={(e) =>
+                    setIntegrationsDraft((d) => ({ ...d, telegram_bot_token: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 border rounded-lg font-mono text-sm"
+                />
+                {integrationsState.telegram_bot_token?.set && (
+                  <p className="mt-1 text-xs text-green-700">
+                    ✓ currently saved ({integrationsState.telegram_bot_token.mask})
+                  </p>
+                )}
+                <p className="mt-1 text-xs text-gray-500">
+                  How to get one: Telegram → @BotFather → /newbot → paste the full {" "}
+                  <span className="font-mono">&lt;bot_id&gt;:&lt;secret&gt;</span> line here.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Telegram Chat ID</label>
+                <input
+                  placeholder="123456789 (or -1001234567890 for a group)"
+                  value={integrationsDraft.telegram_chat_id ?? ""}
+                  onChange={(e) =>
+                    setIntegrationsDraft((d) => ({ ...d, telegram_chat_id: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 border rounded-lg font-mono text-sm"
+                />
+                {integrationsState.telegram_chat_id?.set && (
+                  <p className="mt-1 text-xs text-green-700">
+                    ✓ currently saved ({integrationsState.telegram_chat_id.mask})
+                  </p>
+                )}
+                <p className="mt-1 text-xs text-gray-500">
+                  Send your bot any message, then visit {" "}
+                  <span className="font-mono">api.telegram.org/bot&lt;your_token&gt;/getUpdates</span>
+                  {" "} and copy the <span className="font-mono">chat.id</span> number.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={saveIntegrations}
+                  disabled={
+                    integrationsSaving ||
+                    (!integrationsDraft.telegram_bot_token?.trim() &&
+                      !integrationsDraft.telegram_chat_id?.trim())
+                  }
+                  className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {integrationsSaving ? "Saving..." : "Save your bot credentials"}
+                </button>
+                <button
+                  onClick={testTelegram}
+                  disabled={
+                    telegramTesting ||
+                    !integrationsState.telegram_bot_token?.set ||
+                    !integrationsState.telegram_chat_id?.set
+                  }
+                  className="px-4 py-2 border border-brand-600 text-brand-600 rounded-lg text-sm font-medium hover:bg-brand-50 disabled:opacity-50"
+                >
+                  {telegramTesting ? "Sending..." : "Send Test via Your Bot"}
+                </button>
+              </div>
+            </div>
+          </div>
         </section>
       )}
 
@@ -1629,57 +2223,63 @@ backend.passwd.raw = "your-app-password"`}
       {activeTab === "billing" && (
         <section className="bg-white rounded-xl border p-6">
           <h2 className="font-semibold mb-4">Billing</h2>
-          <p className="text-sm text-gray-500 mb-6">
-            Current plan:{" "}
-            <span className="font-medium capitalize text-gray-900">{tier}</span>
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className={`border rounded-xl p-4 ${tier === "free" ? "border-brand-600 bg-brand-50" : ""}`}>
-              <h3 className="font-semibold">Free</h3>
-              <p className="text-2xl font-bold mt-1">$0<span className="text-sm font-normal text-gray-500">/mo</span></p>
-              <p className="text-xs text-gray-500 mt-2">5 applications/day</p>
-              {tier === "free" && (
-                <p className="mt-3 text-xs font-medium text-brand-600">Current Plan</p>
-              )}
-            </div>
-            <div className={`border rounded-xl p-4 ${tier === "starter" ? "border-brand-600 bg-brand-50" : ""}`}>
-              <h3 className="font-semibold">Starter</h3>
-              <p className="text-2xl font-bold mt-1">$15<span className="text-sm font-normal text-gray-500">/mo</span></p>
-              <p className="text-xs text-gray-500 mt-2">25 applications/day</p>
-              {tier === "starter" ? (
-                <p className="mt-3 text-xs font-medium text-brand-600">Current Plan</p>
-              ) : (
-                <a
-                  href="/api/stripe/checkout?tier=starter"
-                  className="mt-3 block text-center px-3 py-1.5 border border-brand-600 text-brand-600 rounded-lg text-sm font-medium hover:bg-brand-50"
-                >
-                  {tier === "pro" ? "Downgrade" : "Upgrade"}
-                </a>
-              )}
-            </div>
-            <div className={`border rounded-xl p-4 ${tier === "pro" ? "border-brand-600 bg-brand-50" : ""}`}>
-              <h3 className="font-semibold">Pro</h3>
-              <p className="text-2xl font-bold mt-1">$29<span className="text-sm font-normal text-gray-500">/mo</span></p>
-              <p className="text-xs text-gray-500 mt-2">Unlimited applications</p>
-              {tier === "pro" ? (
-                <p className="mt-3 text-xs font-medium text-brand-600">Current Plan</p>
-              ) : (
-                <a
-                  href="/api/stripe/checkout?tier=pro"
-                  className="mt-3 block text-center px-3 py-1.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
-                >
-                  Upgrade
-                </a>
-              )}
+
+          {/* Early adopter banner. The Stripe 3-tier grid is kept in the
+              code for when pricing is finalized, but gated behind a dev
+              flag so end-users don't see it yet. */}
+          <div className="rounded-2xl border-2 border-brand-200 bg-gradient-to-br from-brand-50 to-white p-6">
+            <div className="flex items-start gap-4">
+              <div className="text-4xl">🎉</div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-gray-900">Early adopter</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  You&apos;re in early access. Pricing is custom right now — <strong>free</strong> while we
+                  figure out the right tier with our first users.
+                </p>
+                <p className="text-sm text-gray-600 mt-3">
+                  Got feedback, hit a limit, or need a custom plan?{" "}
+                  <a
+                    href="mailto:support@applyloop.app"
+                    className="text-brand-600 font-medium hover:underline"
+                  >
+                    support@applyloop.app
+                  </a>
+                </p>
+              </div>
             </div>
           </div>
-          {tier !== "free" && (
-            <a
-              href="/api/stripe/portal"
-              className="mt-4 inline-block text-sm text-gray-500 hover:text-gray-700 underline"
-            >
-              Manage subscription in Stripe
-            </a>
+
+          {/* Dev-only pricing preview. Flip NEXT_PUBLIC_SHOW_PRICING=1 to
+              render the old Free/Starter/Pro grid for QA. Never shown in
+              prod until pricing is finalized. */}
+          {process.env.NEXT_PUBLIC_SHOW_PRICING === "1" && (
+            <div className="mt-6">
+              <p className="text-xs text-gray-400 mb-2 uppercase tracking-wide">
+                Dev preview (hidden in prod)
+              </p>
+              <p className="text-sm text-gray-500 mb-4">
+                Current plan: <span className="font-medium capitalize text-gray-900">{tier}</span>
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className={`border rounded-xl p-4 ${tier === "free" ? "border-brand-600 bg-brand-50" : ""}`}>
+                  <h3 className="font-semibold">Free</h3>
+                  <p className="text-2xl font-bold mt-1">$0<span className="text-sm font-normal text-gray-500">/mo</span></p>
+                  <p className="text-xs text-gray-500 mt-2">5 applications/day</p>
+                </div>
+                <div className={`border rounded-xl p-4 ${tier === "starter" ? "border-brand-600 bg-brand-50" : ""}`}>
+                  <h3 className="font-semibold">Starter</h3>
+                  <p className="text-2xl font-bold mt-1">$15<span className="text-sm font-normal text-gray-500">/mo</span></p>
+                  <p className="text-xs text-gray-500 mt-2">25 applications/day</p>
+                  <a href="/api/stripe/checkout?tier=starter" className="mt-3 block text-center px-3 py-1.5 border border-brand-600 text-brand-600 rounded-lg text-sm">Upgrade</a>
+                </div>
+                <div className={`border rounded-xl p-4 ${tier === "pro" ? "border-brand-600 bg-brand-50" : ""}`}>
+                  <h3 className="font-semibold">Pro</h3>
+                  <p className="text-2xl font-bold mt-1">$29<span className="text-sm font-normal text-gray-500">/mo</span></p>
+                  <p className="text-xs text-gray-500 mt-2">Unlimited applications</p>
+                  <a href="/api/stripe/checkout?tier=pro" className="mt-3 block text-center px-3 py-1.5 bg-brand-600 text-white rounded-lg text-sm">Upgrade</a>
+                </div>
+              </div>
+            </div>
           )}
         </section>
       )}

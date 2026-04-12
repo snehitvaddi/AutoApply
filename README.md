@@ -304,7 +304,7 @@ python3 worker.py
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role (server-only) |
 | `NEXT_PUBLIC_APP_URL` | `https://applyloop.vercel.app` (production) |
 | `ENCRYPTION_KEY` | `openssl rand -hex 32` |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth credentials |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth credentials (Gmail IMAP reader). See **Gmail OAuth setup** below. |
 | `TELEGRAM_BOT_TOKEN` | For admin-side activation-code DMs |
 | `GITHUB_PERSONAL_TOKEN` | Optional — auto-add approved users as collaborators |
 | `GITHUB_COLLABORATOR_REPO` | Optional — the `owner/repo` to add collaborators to. Leave unset to no-op. |
@@ -322,6 +322,40 @@ python3 worker.py
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Opt-in Telegram gateway (leave unset to disable) |
 | `WORKER_TOKEN` | Worker's API token (written by the setup wizard, or set manually) |
 | `NEXT_PUBLIC_APP_URL` | Cloud endpoint (default `https://applyloop.vercel.app`) |
+
+### Gmail OAuth setup
+
+The Email tab in Settings uses Google OAuth 2.0 to read verification
+emails from Gmail. If you see **"Access blocked: this app's request
+is invalid"** when you click "Connect Gmail", the root cause is
+almost always a misconfiguration in Google Cloud Console, not the
+app code.
+
+To set up a working OAuth client:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
+2. Create OAuth 2.0 Client ID, type "Web application"
+3. Under **Authorized redirect URIs**, add **exactly**:
+   - `https://applyloop.vercel.app/api/settings/gmail/callback`
+   - `http://localhost:3000/api/settings/gmail/callback` (for local dev)
+4. Copy the Client ID + Secret into `GOOGLE_CLIENT_ID` and
+   `GOOGLE_CLIENT_SECRET` on Vercel
+5. Go to **APIs & Services → OAuth consent screen**
+6. Add the scopes:
+   - `https://www.googleapis.com/auth/gmail.readonly`
+   - `https://www.googleapis.com/auth/gmail.send`
+7. While the consent screen is in **Testing** mode, add each user's
+   email address to the "Test users" list. Users not on this list
+   will get "Access blocked: this app's request is invalid" even
+   when the redirect URI is correct.
+8. Once the list of test users outgrows 100, publish the consent
+   screen. `gmail.send` is a sensitive scope and will require
+   Google verification at publish time.
+
+If the callback route fails (e.g. user denied consent, scope not
+approved), it now redirects to `/dashboard/settings?gmail=error&reason=<code>&detail=<msg>`
+instead of swallowing the error — check the URL query string to
+see exactly what Google reported.
 
 ### Migrations
 

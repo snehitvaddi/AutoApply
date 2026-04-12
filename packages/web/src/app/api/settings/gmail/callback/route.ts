@@ -24,10 +24,33 @@ function encrypt(text: string): string {
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
+  const errorParam = request.nextUrl.searchParams.get("error");
+  const errorDescription = request.nextUrl.searchParams.get("error_description");
   const appUrl = process.env.NEXT_PUBLIC_APP_URL!;
 
+  // Google redirects back with ?error=access_denied (or similar) when:
+  //   - the OAuth consent screen is in "Testing" mode and the user is
+  //     not in the test users list → "Access blocked: this app's
+  //     request is invalid"
+  //   - the redirect_uri doesn't match what's registered in Google
+  //     Cloud Console → "invalid_request"
+  //   - the user clicked "Cancel" on Google's consent screen
+  //
+  // Previously we silently swallowed these and redirected to
+  // `?gmail=error&reason=missing_params` which was confusing. Now we
+  // forward the actual Google error code so the UI banner can show
+  // something actionable.
+  if (errorParam) {
+    const params = new URLSearchParams({
+      gmail: "error",
+      reason: errorParam,
+    });
+    if (errorDescription) params.set("detail", errorDescription);
+    return NextResponse.redirect(`${appUrl}/dashboard/settings?${params.toString()}`);
+  }
+
   if (!code) {
-    return NextResponse.redirect(`${appUrl}/dashboard/settings?gmail=error&reason=missing_params`);
+    return NextResponse.redirect(`${appUrl}/dashboard/settings?gmail=error&reason=missing_code`);
   }
 
   // Re-authenticate from cookies instead of trusting state param
