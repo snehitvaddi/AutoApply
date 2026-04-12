@@ -47,13 +47,22 @@ class BaseApplier(ABC):
         legal/EEO data, and standard answers — everything the LLM needs to
         fill any form field.
         """
+        import os as _os
         p = self.profile
         # The API returns { user: {email,...}, profile: {first_name,...}, resumes: [...] }
         # OR the profile may be flat (fields at top level). Check both shapes.
         user = p.get("user", {}) or {}
         prof = p.get("profile", {}) or {}
+
+        # Application email: prefer GMAIL_EMAIL from .env (the email the user
+        # wants on applications + where OTPs land) over the signup email.
+        _gmail_email = _os.environ.get("GMAIL_EMAIL", "").strip()
+        _app_email = _gmail_email or prof.get("email") or p.get("email") or user.get("email") or ""
+
         # Helper: check profile sub-object first, then top-level, then user
         def _f(key: str, default: str = "") -> str:
+            if key == "email":
+                return _app_email or default
             return prof.get(key) or p.get(key) or user.get(key) or default
         work_exp = prof.get("work_experience") or p.get("work_experience") or []
         edu_entries = prof.get("education") or p.get("education") or []

@@ -32,15 +32,26 @@ def build_answer_key(profile: dict, global_template: dict) -> dict:
 
     The user's own answer_key_json overrides are merged on top.
     """
-    user_data = profile.get("user", {})
-    profile_data = profile.get("profile", {})
+    user_data = profile.get("user", {}) or {}
+    profile_data = profile.get("profile", {}) or {}
+
+    # Application email: prefer GMAIL_EMAIL from .env (the email the user
+    # wants on applications + where OTPs land) over the signup email from
+    # Supabase auth. A user may sign up with personal@gmail.com but apply
+    # with professional@gmail.com (which has the app password configured).
+    gmail_email = os.environ.get("GMAIL_EMAIL", "").strip()
+    app_email = (
+        gmail_email
+        or profile_data.get("email", "")
+        or user_data.get("email", "")
+    )
 
     # Build substitution map from profile fields
     substitutions = {
         "first_name": profile_data.get("first_name", ""),
         "last_name": profile_data.get("last_name", ""),
         "full_name": f"{profile_data.get('first_name', '')} {profile_data.get('last_name', '')}".strip(),
-        "email": user_data.get("email", ""),
+        "email": app_email,
         "phone": profile_data.get("phone", ""),
         "linkedin_url": profile_data.get("linkedin_url", ""),
         "github_url": profile_data.get("github_url", ""),
