@@ -1049,6 +1049,14 @@ class PTYSession:
         lines.append("  Every profile change MUST be PUT to the server FIRST. Updating local")
         lines.append("  only is forbidden — it will be overwritten on next boot.")
         lines.append("")
+
+        # Define worker_token_hint early — used in both FILE ACCESS block
+        # below AND in the profile-incomplete block further down. Was
+        # previously defined AFTER first use (bug: UnboundLocalError on
+        # boot when profile was complete, which made the auto-start fail
+        # silently and the Terminal tab showed "Connecting..." forever).
+        worker_token_hint = "$(grep ^WORKER_TOKEN= ./.env | cut -d= -f2- | tr -d '\"')"
+
         lines.append("FILE ACCESS — you have FULL read/write access to everything under")
         lines.append(f"  {cwd}/ and ~/.applyloop/. NEVER ask the user for permission to edit")
         lines.append("  files. Just edit them directly. You are running with --dangerously-skip-permissions.")
@@ -1062,8 +1070,6 @@ class PTYSession:
         lines.append("")
         lines.append("Playbook: ./packages/worker/SOUL.md.")
         lines.append("")
-
-        worker_token_hint = "$(grep ^WORKER_TOKEN= ./.env | cut -d= -f2- | tr -d '\"')"
 
         # If the profile is stub-only AND the user's resume PDF is sitting
         # locally, the fastest path is: use your own Read tool to parse the
@@ -1657,7 +1663,9 @@ exec /bin/zsh -l
                 self._refresh_tenant_context()
                 body = self._build_mission_heartbeat()
                 logger.info("Mission heartbeat → PTY")
-                self._submit_to_pty(body)
+                # Run blocking PTY write on the threadpool so it doesn't
+                # stall the FastAPI event loop if the PTY buffer is full.
+                await asyncio.to_thread(self._submit_to_pty, body)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -1738,7 +1746,8 @@ exec /bin/zsh -l
                 if drift and self._nudge_cooldown_ok():
                     logger.info(f"Mission drift → nudge: {drift}")
                     body = self._build_mission_nudge(drift)
-                    self._submit_to_pty(body)
+                    # Threadpool — see heartbeat_loop comment
+                    await asyncio.to_thread(self._submit_to_pty, body)
                     self._last_nudge_at = time.time()
                     # Reset stuck counter after firing so we don't instantly
                     # re-trip on the next tick.
