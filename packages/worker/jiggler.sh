@@ -49,11 +49,16 @@ if [ -f "$PIDFILE" ]; then
     rm -f "$PIDFILE"
 fi
 
-# Also check for strays not tracked in the PID file (e.g. from a crash)
-STRAY_COUNT=$(pgrep -f "jiggler.sh" | grep -v "^$$\$" | wc -l | tr -d ' ')
-if [ "$STRAY_COUNT" -gt 0 ]; then
-    echo "Found $STRAY_COUNT stray jiggler instance(s). Cleaning up..."
-    pkill -f "jiggler.sh" 2>/dev/null
+# Also check for strays not tracked in the PID file (e.g. from a crash).
+# CRITICAL: exclude self ($$) and parent ($PPID) from the kill list — without
+# that, pkill -f "jiggler.sh" would match our own process and commit suicide
+# mid-startup, which was exactly the bug that kept the script from running.
+STRAYS=$(pgrep -f "jiggler.sh" | grep -v -E "^($$|$PPID)$")
+if [ -n "$STRAYS" ]; then
+    echo "Found stray jiggler instance(s): $(echo "$STRAYS" | tr '\n' ' '). Cleaning up..."
+    for stray_pid in $STRAYS; do
+        kill "$stray_pid" 2>/dev/null
+    done
     pkill -f "caffeinate -dis" 2>/dev/null
     sleep 1
 fi

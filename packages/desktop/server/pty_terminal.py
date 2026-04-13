@@ -1428,6 +1428,12 @@ exec /bin/zsh -l
 
         logger.info(f"PTY session started: PID {child_pid}, claude at {claude}")
 
+        # Auto-start the jiggler so the Mac never sleeps while the apply
+        # loop is running. Runs as a background subprocess (singleton-
+        # guarded — safe to call multiple times). Killed on stop() below
+        # and on app quit via launch.py's pkill -P <self>.
+        self._start_jiggler(cwd)
+
         # Persist a session-boundary row to chat_log so the chat UI
         # renders a visible "── New session ──" divider between this
         # spawn and any previous one. Best-effort — never blocks
@@ -1788,10 +1794,51 @@ exec /bin/zsh -l
         """Handle terminal resize from the client."""
         self._set_size(cols, rows)
 
+    def _start_jiggler(self, cwd: str) -> None:
+        """Launch the jiggler as a background subprocess so the Mac doesn't
+        sleep while the apply loop is running. The jiggler itself has a
+        singleton guard — calling it twice is safe, the second call aborts
+        cleanly. Auto-stopped via launch.py's on-quit cleanup (pkill -P).
+        """
+        if sys.platform != "darwin":
+            return  # Linux/Windows don't have caffeinate; no-op for now
+        try:
+            jiggler_path = os.path.join(cwd, "packages", "worker", "jiggler.sh")
+            if not os.path.isfile(jiggler_path):
+                logger.debug(f"jiggler.sh not found at {jiggler_path} — skipping")
+                return
+            subprocess.Popen(
+                ["bash", jiggler_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=False,  # stay as child so pkill -P kills it
+            )
+            logger.info("Jiggler auto-started — Mac will stay awake while PTY is alive")
+        except Exception as e:
+            logger.debug(f"Jiggler auto-start failed (non-fatal): {e}")
+
+    def _stop_jiggler(self) -> None:
+        """Stop the jiggler. Called on PTY session stop."""
+        try:
+            subprocess.run(
+                ["pkill", "-f", "jiggler.sh"],
+                capture_output=True, timeout=3,
+            )
+            subprocess.run(
+                ["pkill", "-f", "caffeinate -dis"],
+                capture_output=True, timeout=3,
+            )
+        except Exception:
+            pass
+
     def stop(self):
         """Kill the PTY session via the platform backend."""
         if hasattr(self, '_current_record') and self._current_record:
             self._current_record.stop()
+        # Stop the jiggler BEFORE killing the PTY so the Mac can sleep
+        # if the user closes the app intentionally.
+        self._stop_jiggler()
         if self._pty is not None:
             try:
                 self._pty.terminate()
