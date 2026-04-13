@@ -1204,6 +1204,18 @@ git -C "$APPLYLOOP_HOME" rev-parse HEAD > "$APPLYLOOP_HOME/.applyloop-version"
 # at 3 AM. RunAtLoad=false (runs on the schedule only — don't hammer
 # git pull every login). Uninstalled by `applyloop uninstall`.
 
+# Clean up legacy scout LaunchAgent from pre-v1.0 installer. That plist
+# pointed at ~/.openclaw/scripts/auto_loop.py and fired every hour
+# invisibly — even after the user quit the app — opening browser tabs
+# and applying to jobs in the background. Desktop app's PTY + nudge
+# watchdog handles scouting now; no background LaunchAgent needed.
+LEGACY_SCOUT_PLIST="$HOME/Library/LaunchAgents/com.applyloop.scout.plist"
+if [ -f "$LEGACY_SCOUT_PLIST" ]; then
+    log "Removing legacy scout LaunchAgent (pre-v1.0 artifact)..."
+    launchctl bootout "gui/$(id -u)" "$LEGACY_SCOUT_PLIST" >/dev/null 2>&1 || true
+    rm -f "$LEGACY_SCOUT_PLIST"
+fi
+
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_FILE="$PLIST_DIR/com.applyloop.update.plist"
 UPDATE_LOG="$HOME/.autoapply/update.log"

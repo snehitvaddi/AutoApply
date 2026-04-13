@@ -90,8 +90,22 @@ def _install_shutdown_handlers() -> None:
             )
         except Exception:
             pass
-        print(f"[ApplyLoop] received signal {signum}, shutting down")
-        # Use os._exit so the daemon uvicorn thread doesn't block shutdown.
+        print(f"[ApplyLoop] received signal {signum}, killing children + shutting down")
+        # Kill all children before exit so we don't leave worker.py /
+        # claude / jiggler orphans running in the background.
+        try:
+            import subprocess
+            subprocess.run(
+                ["pkill", "-TERM", "-P", str(os.getpid())],
+                capture_output=True, timeout=3,
+            )
+            for pattern in ("worker.py", "jiggler.sh", "caffeinate -dis"):
+                subprocess.run(
+                    ["pkill", "-TERM", "-f", pattern],
+                    capture_output=True, timeout=2,
+                )
+        except Exception:
+            pass
         os._exit(0)
 
     # SIGTERM is what CI sends to stop the process. SIGINT is Ctrl+C.
@@ -271,8 +285,33 @@ def main():
 
         window = webview.create_window(**_window_kwargs)
 
-        # When window closes, exit the process (kills server thread)
+        # When window closes, kill all child processes BEFORE exiting so
+        # we don't leave orphan worker.py / claude / jiggler / caffeinate
+        # processes running in the background. Without this, a user who
+        # quits the app can come back hours later to find worker.py still
+        # applying to jobs in a browser they can't see.
         def on_closed():
+            try:
+                import subprocess
+                import signal as _sig
+                my_pid = os.getpid()
+                # Kill all direct + transitive children of this process.
+                # Uses `pkill -P` recursively — fast and doesn't need a
+                # maintained list of PIDs.
+                subprocess.run(
+                    ["pkill", "-TERM", "-P", str(my_pid)],
+                    capture_output=True, timeout=3,
+                )
+                # Also kill anything orphaned with our label (worker.py
+                # spawned via subprocess, jiggler.sh, etc.). Safe because
+                # we're quitting anyway.
+                for pattern in ("worker.py", "jiggler.sh", "caffeinate -dis"):
+                    subprocess.run(
+                        ["pkill", "-TERM", "-f", pattern],
+                        capture_output=True, timeout=2,
+                    )
+            except Exception as e:
+                print(f"[ApplyLoop] child cleanup on close failed: {e}")
             os._exit(0)
 
         window.events.closed += on_closed
