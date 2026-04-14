@@ -1543,76 +1543,32 @@ exec /bin/zsh -l
         }
 
     def _build_mission_heartbeat(self) -> str:
-        """15-minute informational context refresh. Not a nudge — just keeps
-        the mission fresh in Claude's working memory. Tenant-scoped so it
-        always says WHO Claude is applying for."""
+        """15-minute context refresh. One short line. Tenant-scoped.
+        Not asking Claude to do anything — just keeping the mission fresh."""
         snap = self._tenant_snapshot or {}
         stats = self._read_mission_stats()
-        name = snap.get("name", "the user")
-        targets = ", ".join(snap.get("target_titles", [])[:5]) or "(no target roles set)"
-        locs = ", ".join(snap.get("preferred_locations", [])[:3]) or "any"
-        worker_state = "alive" if stats["worker_alive"] else "NOT RUNNING"
-        scout_age = (
-            f"{stats['scout_age_min']:.0f}m ago"
-            if stats["scout_age_min"] is not None
-            else "never"
-        )
         return (
-            f"Mission context refresh (auto-heartbeat).\n"
-            f"- Applying for: {name}\n"
-            f"- Target roles: {targets}\n"
-            f"- Locations: {locs}\n"
-            f"- Queue: {stats['in_queue']} waiting, {stats['applied_today']} applied today "
-            f"(cap {snap.get('daily_apply_limit', 25)})\n"
-            f"- Last scout: {scout_age}\n"
-            f"- Worker: {worker_state}\n"
-            f"You don't need to respond. Just keep the mission in mind: "
-            f"scout → filter → apply, 24/7, for THIS tenant's target roles. "
-            f"If the worker isn't running, start it. If the queue is growing but "
-            f"applied_today isn't moving, claim and apply the next job."
+            f"[heartbeat] queue={stats['in_queue']} applied_today={stats['applied_today']} "
+            f"worker={'ok' if stats['worker_alive'] else 'dead'}. "
+            f"keep scout→filter→apply going."
         )
 
     def _build_mission_nudge(self, drift: list[str]) -> str:
-        """Mission-stall nudge. Fires when watchdog detects real progress
-        drift — flat applied count, overdue scout, dead worker, or PTY idle.
-        Body is tenant-scoped and names the required next action explicitly.
-        Claude is told to ACT, not acknowledge."""
-        snap = self._tenant_snapshot or {}
+        """Mission stall — single crisp line with the next required action.
+        No pep talk, no framing, no status dump. Just: what's wrong + what to do."""
         stats = self._read_mission_stats()
-        name = snap.get("name", "the user")
-        user_id = (snap.get("user_id") or "unknown")[:8]
-        targets = ", ".join(snap.get("target_titles", [])[:5]) or "(not set)"
-        locs = ", ".join(snap.get("preferred_locations", [])[:3]) or "any"
-        drift_str = "; ".join(drift) if drift else "no specific signal"
-        scout_desc = (
-            f"{stats['scout_age_min']:.0f}m ago"
-            if stats['scout_age_min'] is not None
-            else "never"
-        )
-        return (
-            f"Mission stall detected (auto-nudge).\n"
-            f"Tenant: {name} ({user_id})\n"
-            f"Target roles: {targets}\n"
-            f"Preferred locations: {locs}\n"
-            f"State:\n"
-            f"  - Queue: {stats['in_queue']} waiting\n"
-            f"  - Applied today: {stats['applied_today']} / {snap.get('daily_apply_limit', 25)}\n"
-            f"  - Worker alive: {stats['worker_alive']}\n"
-            f"  - PTY idle: {stats['idle_min']}m\n"
-            f"  - Last scout: {scout_desc}\n"
-            f"Drift signals: {drift_str}\n\n"
-            f"Your ultimate mission: keep scout → filter → apply running 24/7 "
-            f"for THIS tenant's profile. You are NOT making progress.\n\n"
-            f"Required next action (pick the first that applies):\n"
-            f"  1. Worker not running? → cd ~/.applyloop/packages/worker && python3 worker.py\n"
-            f"  2. Queue has jobs but apply loop stalled? → check worker logs, "
-            f"kill stuck processes, restart worker\n"
-            f"  3. Scout overdue? → worker's scout thread ticks every 30m. "
-            f"If it isn't, the worker process is dead — restart it.\n"
-            f"  4. All look fine? → claim the next queued row and apply to it.\n\n"
-            f"Do not just acknowledge this. Take the action. Report back when "
-            f"applied_today changes."
-        )
+        # Pick the most urgent drift + its action, in priority order
+        if not stats["worker_alive"]:
+            action = "worker dead — restart: cd ~/.applyloop/packages/worker && python3 worker.py"
+        elif stats["scout_age_min"] is not None and stats["scout_age_min"] > 60:
+            action = f"scout overdue {stats['scout_age_min']:.0f}m — restart worker"
+        elif stats["in_queue"] > 0 and stats["applied_today"] == self._last_applied_count:
+            action = f"queue={stats['in_queue']} but apply stuck — claim next job + submit"
+        elif stats["idle_min"] >= 30:
+            action = "idle too long — resume scout→filter→apply loop"
+        else:
+            action = "progress stalled — continue scout→filter→apply"
+        return f"[nudge] {action}. queue={stats['in_queue']} today={stats['applied_today']}. act now."
 
     def _submit_to_pty(self, body: str) -> None:
         """Write a normal message to the terminal and press Enter.
