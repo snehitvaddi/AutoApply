@@ -15,17 +15,23 @@ import { cn } from "@/lib/utils"
 import {
   Save, Loader2, Check, User, Briefcase, Target, Key,
   AlertTriangle, Sparkles, FileText, Copy, Upload, Download, ArrowLeft,
+  Send, Mail, Cpu, CreditCard,
 } from "lucide-react"
 
-type Tab = "ai" | "personal" | "work" | "preferences" | "resume" | "integrations" | "auth"
+type Tab = "ai" | "personal" | "work" | "preferences" | "resume" | "integrations"
+  | "telegram" | "email" | "worker" | "billing" | "auth"
 
 const tabs: { id: Tab; label: string; icon: typeof User }[] = [
   { id: "ai", label: "AI Import", icon: Sparkles },
   { id: "personal", label: "Personal", icon: User },
   { id: "work", label: "Work & Education", icon: Briefcase },
   { id: "preferences", label: "Job Preferences", icon: Target },
-  { id: "resume", label: "Resume", icon: FileText },
+  { id: "resume", label: "Resumes", icon: FileText },
   { id: "integrations", label: "API Keys", icon: Key },
+  { id: "telegram", label: "Telegram", icon: Send },
+  { id: "email", label: "Email", icon: Mail },
+  { id: "worker", label: "Worker & LLM", icon: Cpu },
+  { id: "billing", label: "Billing", icon: CreditCard },
   { id: "auth", label: "Worker Token", icon: Key },
 ]
 
@@ -582,7 +588,12 @@ export default function SettingsPage() {
 
   // The AI tab has its own Save button; the Resume tab has its own Upload.
   // Hide the top-right Save for those two to avoid confusion.
+  // Read-only / display-only tabs don't need the top Save button. telegram,
+  // email, worker, billing show existing integrations state + explanatory
+  // content; edits happen via the API Keys tab's encrypted-store flow.
   const showTopSave = activeTab !== "ai" && activeTab !== "resume"
+    && activeTab !== "telegram" && activeTab !== "email"
+    && activeTab !== "worker" && activeTab !== "billing"
 
   return (
     <AppShell>
@@ -1002,6 +1013,154 @@ export default function SettingsPage() {
                 <span className="text-xs text-muted-foreground">
                   {Object.keys(integrationsDraft).filter((k) => (integrationsDraft[k] || "").trim() !== "").length} pending
                 </span>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "telegram" && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground mb-1">Telegram Notifications</h2>
+                <p className="text-sm text-muted-foreground">
+                  Get a photo + caption on every successful submission. Configure your own bot
+                  here OR use the API Keys tab — they write to the same encrypted integrations store.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card/50 p-4 space-y-3">
+                <div className="text-sm">
+                  <span className="font-medium text-card-foreground">Bot Token:</span>{" "}
+                  {integrationsState["telegram_bot_token"]?.set ? (
+                    <span className="text-success">✓ saved ({integrationsState["telegram_bot_token"]?.mask})</span>
+                  ) : (
+                    <span className="text-muted-foreground">not set</span>
+                  )}
+                </div>
+                <div className="text-sm">
+                  <span className="font-medium text-card-foreground">Chat ID:</span>{" "}
+                  {integrationsState["telegram_chat_id"]?.set ? (
+                    <span className="text-success">✓ saved ({integrationsState["telegram_chat_id"]?.mask})</span>
+                  ) : (
+                    <span className="text-muted-foreground">not set</span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground pt-2 border-t border-border">
+                  To change: go to the <button onClick={() => setActiveTab("integrations")} className="text-primary hover:underline">API Keys</button> tab
+                  and update telegram_bot_token + telegram_chat_id. Changes sync to both the
+                  desktop app and the web dashboard immediately.
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-muted/50 p-4 space-y-2">
+                <p className="text-sm font-medium text-card-foreground">How to get your bot token:</p>
+                <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1">
+                  <li>Open Telegram → search <code>@BotFather</code></li>
+                  <li>Send <code>/newbot</code> → follow prompts → copy the <code>bot_id:secret</code> token</li>
+                  <li>Search your new bot → send <code>/start</code> to yourself</li>
+                  <li>Visit <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> → copy the <code>chat.id</code></li>
+                  <li>Paste both in the API Keys tab</li>
+                </ol>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "email" && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground mb-1">Email (Gmail)</h2>
+                <p className="text-sm text-muted-foreground">
+                  Used to read verification codes + password reset emails during applications
+                  (e.g. when Workday asks for email verification). Two ways to configure:
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card/50 p-4 space-y-3">
+                <p className="text-sm font-medium text-card-foreground">1. App password (current)</p>
+                <div className="text-sm">
+                  <span className="text-card-foreground">Gmail email:</span>{" "}
+                  {integrationsState["gmail_email"]?.set ? (
+                    <span className="text-success">✓ saved ({integrationsState["gmail_email"]?.mask})</span>
+                  ) : (
+                    <span className="text-muted-foreground">not set</span>
+                  )}
+                </div>
+                <div className="text-sm">
+                  <span className="text-card-foreground">App password:</span>{" "}
+                  {integrationsState["gmail_app_password"]?.set ? (
+                    <span className="text-success">✓ saved ({integrationsState["gmail_app_password"]?.mask})</span>
+                  ) : (
+                    <span className="text-muted-foreground">not set</span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground pt-2 border-t border-border">
+                  Configure in the <button onClick={() => setActiveTab("integrations")} className="text-primary hover:underline">API Keys</button> tab.
+                  Generate an app password at <code>myaccount.google.com/apppasswords</code> (requires 2FA enabled).
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
+                <p className="text-sm font-medium text-card-foreground">2. OAuth (browser-based — recommended)</p>
+                <p className="text-xs text-muted-foreground">
+                  Configure on the web dashboard at applyloop.vercel.app/dashboard/settings →
+                  Email tab → "Connect Gmail". OAuth is more secure and doesn't require
+                  generating an app password. Once connected on the web, it syncs here.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "worker" && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground mb-1">Worker & LLM</h2>
+                <p className="text-sm text-muted-foreground">
+                  The worker process scouts and applies to jobs. The LLM powers form-field
+                  understanding + answer generation. Both live in this desktop app — the
+                  cloud just coordinates state.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-card/50 p-4 space-y-3">
+                <p className="text-sm font-medium text-card-foreground">Runtime configuration</p>
+                <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                  <li>Scout interval: 30 min (all sources) — set via <code>SCOUT_INTERVAL_MINUTES</code> env</li>
+                  <li>Apply cooldown: 30 sec (between jobs) — set via <code>APPLY_COOLDOWN</code> env</li>
+                  <li>Max per company: 3 per rolling 7 days (hard cap, global)</li>
+                  <li>Queue freshness: 24h (stale rows auto-pruned)</li>
+                  <li>Worker token source: <code>~/.applyloop/.env</code> → <code>WORKER_TOKEN</code></li>
+                </ul>
+                <p className="text-xs text-muted-foreground pt-2 border-t border-border">
+                  Advanced LLM settings (provider, model, per-request spend limit) live in the
+                  web dashboard at applyloop.vercel.app/dashboard/settings → Worker & LLM.
+                  Edit there to change globally; this desktop reads the cloud values on startup.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "billing" && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground mb-1">Billing</h2>
+              </div>
+
+              <div className="rounded-lg border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-primary/10 p-6 text-center space-y-3">
+                <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/20">
+                  <Sparkles className="h-6 w-6 text-primary" />
+                </div>
+                <h3 className="text-lg font-semibold text-foreground">Early Adopter — free access</h3>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  You're in the early cohort. Unlimited applications, unlimited scout cycles,
+                  no paywall. Paid tiers will launch later — early adopters will be grandfathered
+                  on their current plan.
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-muted/50 p-4">
+                <p className="text-xs text-muted-foreground">
+                  Questions? Message the admin via Telegram, or open an issue at{" "}
+                  <code>github.com/snehitvaddi/AutoApply/issues</code>.
+                </p>
               </div>
             </div>
           )}

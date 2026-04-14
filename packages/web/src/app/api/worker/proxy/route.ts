@@ -453,14 +453,46 @@ export async function POST(request: NextRequest) {
       }
 
       case "get_telegram_config": {
-        const { data: user } = await supabase
-          .from("users")
-          .select("telegram_chat_id")
-          .eq("id", userId)
-          .single();
+        // Source of truth: user_profiles.integrations_encrypted, where the
+        // new Settings UI saves user-provided bot tokens. Fall back to the
+        // legacy users.telegram_chat_id column, then to the admin's shared
+        // bot env var as last resort. Without this fix, the legacy action
+        // always returned the env-var placeholder even after the user
+        // configured their own bot via the new integrations endpoint.
+        const [profileRes, userRes] = await Promise.all([
+          supabase.from("user_profiles").select("integrations_encrypted").eq("user_id", userId).single(),
+          supabase.from("users").select("telegram_chat_id").eq("id", userId).single(),
+        ]);
+
+        let userBotToken: string | null = null;
+        let userChatId: string | null = null;
+        const rawIntegrations = (profileRes.data as Record<string, unknown> | null)?.integrations_encrypted;
+        if (rawIntegrations && typeof rawIntegrations === "object") {
+          try {
+            const { decryptIntegrationsBlob } = await import("@/lib/crypto");
+            const decrypted = decryptIntegrationsBlob(rawIntegrations as Record<string, string>);
+            if (decrypted.telegram_bot_token) userBotToken = decrypted.telegram_bot_token;
+            if (decrypted.telegram_chat_id) userChatId = decrypted.telegram_chat_id;
+          } catch {
+            // Decryption failure (e.g. ENCRYPTION_KEY mismatch) — fall through
+            // to legacy fields instead of crashing the whole action.
+          }
+        }
+
+        // Legacy chat_id column as fallback
+        if (!userChatId && (userRes.data as { telegram_chat_id?: string } | null)?.telegram_chat_id) {
+          userChatId = (userRes.data as { telegram_chat_id?: string }).telegram_chat_id ?? null;
+        }
+
+        const sharedBotToken = process.env.TELEGRAM_BOT_TOKEN || null;
+        const finalBotToken = userBotToken || sharedBotToken;
+        const isSharedBot = !userBotToken && !!sharedBotToken;
+
         return apiSuccess({
-          chat_id: user?.telegram_chat_id || null,
-          bot_token: process.env.TELEGRAM_BOT_TOKEN || null,
+          chat_id: userChatId,
+          bot_token: finalBotToken,
+          is_shared_bot: isSharedBot,
+          source: userBotToken ? "user_integrations" : (sharedBotToken ? "shared_env" : "none"),
         });
       }
 
