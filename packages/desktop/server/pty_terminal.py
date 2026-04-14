@@ -594,9 +594,19 @@ class PTYSession:
         # Server field names differ: experience → work_experience, but
         # skills and education keep their names.
         if nonempty(cloud_profile.get("work_experience")):
-            local["experience"] = cloud_profile.get("work_experience")
-        elif nonempty(local.get("experience")):
-            push_delta["work_experience"] = local["experience"]
+            # Write both names so consumers can read either (cloud shape or
+            # local nested). work_experience is the canonical name going
+            # forward; "experience" is kept for backward compat with older
+            # clients' profile.json from install.sh.
+            work_exp = cloud_profile.get("work_experience")
+            local["experience"] = work_exp
+            local["work_experience"] = work_exp
+        elif nonempty(local.get("experience")) or nonempty(local.get("work_experience")):
+            work_exp = local.get("work_experience") or local.get("experience")
+            push_delta["work_experience"] = work_exp
+            # Keep both keys in sync locally
+            local["experience"] = work_exp
+            local["work_experience"] = work_exp
 
         if nonempty(cloud_profile.get("skills")):
             local["skills"] = cloud_profile.get("skills")
@@ -899,8 +909,9 @@ class PTYSession:
         work = p.get("work", {}) or {}
         if not work.get("current_company"):
             missing.append("work.current_company")
-        if not p.get("experience"):
-            missing.append("experience[]")
+        # Accept either the legacy "experience" or the canonical "work_experience"
+        if not (p.get("experience") or p.get("work_experience")):
+            missing.append("work_experience[]")
         if not p.get("skills"):
             missing.append("skills[]")
         edu = p.get("education_summary", {}) or {}

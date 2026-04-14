@@ -188,7 +188,7 @@ export async function POST(request: NextRequest) {
         // prevents setting is_admin / approval_status / other sensitive
         // fields that only belong in other tables.
         const PROFILE_COLUMNS = [
-          "first_name", "last_name", "phone",
+          "first_name", "last_name", "email", "phone",
           "linkedin_url", "github_url", "portfolio_url",
           "current_company", "current_title", "years_experience",
           "education_level", "school_name", "degree", "graduation_year",
@@ -344,6 +344,11 @@ export async function POST(request: NextRequest) {
         const PREFERENCE_COLUMNS = [
           "target_titles", "target_keywords",
           "excluded_titles", "excluded_companies",
+          // Per-tenant filter fields added in migration 011 — were
+          // silently dropped before this fix, so desktop Settings saves
+          // for these never persisted. Audit (Apr 14) surfaced it.
+          "excluded_role_keywords", "excluded_levels",
+          "ashby_boards", "greenhouse_boards",
           "min_salary", "preferred_locations",
           "remote_only", "auto_apply", "max_daily",
         ] as const;
