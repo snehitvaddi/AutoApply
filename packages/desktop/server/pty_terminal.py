@@ -1030,11 +1030,12 @@ class PTYSession:
             "with the exact next action to take. Act on those nudges."
         )
         lines.append("")
-        lines.append("USER COMMANDS (via /btw from chat UI or Telegram):")
+        lines.append("USER MESSAGES from chat UI or Telegram:")
         lines.append(
-            "  Messages prefixed with 'USER COMMAND' are direct instructions from "
-            "the user — from the chat UI or Telegram. You MUST act on them, not "
-            "just acknowledge. Examples:"
+            "  Messages tagged '[via chat]' or '[via Telegram]' are from the user "
+            "in real time. Respond to them as you would any user turn — answer "
+            "questions, act on commands. Reply goes back to the user via the same "
+            "channel they sent from. Examples:"
         )
         lines.append(
             "    'stop scouting' → kill the worker subprocess, confirm it stopped"

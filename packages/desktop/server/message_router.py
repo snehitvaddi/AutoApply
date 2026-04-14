@@ -28,37 +28,70 @@ _ANSI_RE = re.compile(
 
 async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
     """
-    Write `/btw <text>\\r` to the PTY, subscribe to output, capture the reply,
-    strip ANSI codes and claude-cli noise, and return a cleaned string.
+    Inject `text` into the PTY as a NORMAL user message (no /btw prefix)
+    and capture Claude's reply. Uses the exact same chunked-write + \\r + \\n
+    sequence as PTYSession._submit_to_pty — the nudge path proved this
+    sequence is what actually makes Claude's TUI submit the message.
 
-    CRITICAL: the terminator must be \\r (carriage return), not \\n.
-    Claude Code's TUI runs the terminal in raw mode and reads keystrokes
-    directly — pressing Enter in an xterm sends \\r (0x0d), which Claude
-    interprets as "submit". Writing \\n (0x0a) alone puts the text into
-    the input buffer but NEVER submits; Claude just sits there waiting
-    for Enter. Manual typing works because xterm.js forwards \\r on Enter;
-    the programmatic path needs to match that byte sequence.
+    Why no /btw:
+      /btw is a Claude Code side-channel. Claude receives it but doesn't
+      always respond (it's "by the way" context, not a user turn). When
+      the user types in chat UI or Telegram, they expect Claude to REPLY
+      — so the message must land as a real user turn. Same fix as the
+      watchdog nudge.
+
+    Why chunked write + separate \\r:
+      Writing the whole message + \\r in one os.write often makes Claude's
+      Ink TUI drop the trailing \\r (it processes the input buffer as a
+      single chunk). Splitting into 16-char chunks with tiny delays, then
+      sending \\r AND \\n as two more separate writes, reliably triggers
+      submit. Verified via live PTY echo test.
+
+    Flatten to one line because \\n inside the body is cursor movement
+    in raw mode, not submit — it corrupts the input buffer.
 
     If no PTY session is alive, returns a friendly error message.
     """
     if not session_manager.pty.is_alive:
         return "⚠️ Claude Code session is not running. Start the app and try again."
 
+    # Flatten newlines to spaces — \n corrupts raw-mode input
+    flat = text.replace("\r\n", " ").replace("\n", " ").replace("\r", "")
+    while "  " in flat:
+        flat = flat.replace("  ", " ")
+    flat = flat.strip()
+    if not flat:
+        return "Empty message"
+
     # Subscribe BEFORE writing so we catch all output
     queue = session_manager.pty.subscribe()
     response_chunks: list[str] = []
 
     try:
-        btw_cmd = f"/btw {text}\r"
-        session_manager.pty.write(btw_cmd.encode("utf-8"))
+        # Clear any stale input first
+        session_manager.pty.write(b"\x15")
+        await asyncio.sleep(0.05)
+
+        # Type the message in chunks (matches xterm.js keypress delivery)
+        CHUNK_SIZE = 16
+        for i in range(0, len(flat), CHUNK_SIZE):
+            chunk = flat[i:i + CHUNK_SIZE]
+            session_manager.pty.write(chunk.encode("utf-8"))
+            await asyncio.sleep(0.01)
+
+        # Pause for TUI to process, then press Enter (\r then \n as backup)
+        await asyncio.sleep(0.3)
+        session_manager.pty.write(b"\r")
+        await asyncio.sleep(0.05)
+        session_manager.pty.write(b"\n")
 
         deadline = time.time() + timeout
         blank_count = 0
         while time.time() < deadline:
             try:
                 data = await asyncio.wait_for(queue.get(), timeout=2.0)
-                chunk = data.decode("utf-8", errors="replace")
-                clean = _ANSI_RE.sub("", chunk)
+                chunk_out = data.decode("utf-8", errors="replace")
+                clean = _ANSI_RE.sub("", chunk_out)
                 clean = re.sub(r'[\r\x00-\x08\x0e-\x1f]', '', clean)
                 stripped = clean.strip()
                 if stripped:
@@ -75,21 +108,28 @@ async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
     finally:
         session_manager.pty.unsubscribe(queue)
 
-    # Post-process: drop /btw echo and claude-cli chrome
+    # Post-process: drop claude-cli chrome + any echo of our own message
     full = "\n".join(response_chunks)
     lines = full.split("\n")
     clean_lines: list[str] = []
+    # The first ~3 lines are typically Claude echoing what we typed (xterm
+    # display echo). Skip those so the returned text is Claude's response,
+    # not the user's own message bounced back.
+    echo_line = flat[:60].lower()
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith("/btw"):
+        if not stripped or len(stripped) < 2:
             continue
+        if stripped.startswith("/btw"):
+            continue  # legacy residue
         if "bypass permissions" in stripped.lower():
             continue
         if "ctrl+" in stripped.lower() or "shift+tab" in stripped.lower():
             continue
         if "esc to" in stripped.lower():
             continue
-        if len(stripped) < 2:
+        # Drop lines that are substring-echoes of our typed message
+        if echo_line and echo_line[:30] in stripped.lower():
             continue
         clean_lines.append(line)
 

@@ -376,10 +376,12 @@ class TelegramGateway:
         else:
             user_text = text.lstrip("!").strip()
             try:
+                # Short tag — Claude sees it as "a message from the user via
+                # Telegram". Verbose "USER MESSAGE (from Telegram...)"
+                # prefix was too long and polluted the conversation.
                 response = await message_router.submit(
                     "telegram",
-                    f"USER MESSAGE (from Telegram — read this and act if needed, "
-                    f"answer if it's a question): {user_text}",
+                    f"[via Telegram] {user_text}",
                     timeout=60.0,
                 )
             except Exception as e:

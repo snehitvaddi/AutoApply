@@ -299,8 +299,7 @@ async def chat_websocket(ws: WebSocket):
                     try:
                         response = await message_router.submit(
                             "chat_ui",
-                            f"USER MESSAGE (from chat — read this and act if "
-                            f"needed, answer if it's a question): {user_text}",
+                            f"[via chat] {user_text}",
                             timeout=60.0,
                         )
                     except Exception as e:
