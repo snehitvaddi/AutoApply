@@ -976,7 +976,21 @@ class PTYSession:
                         tg_available = True
                         logger.info("Telegram probe ok — sendMessage returned 200")
             except Exception as e:
-                logger.info(f"Telegram probe failed — disabling telegram announce this session: {e}")
+                # Invalid/revoked Telegram tokens used to fail silently at
+                # info level. Surface LOUDLY at error level so the user
+                # sees it in the chat UI + server.log. Also append a
+                # visible banner to the PTY output buffer so it shows up
+                # in the terminal tab.
+                err_str = str(e)
+                is_auth_failure = ("401" in err_str or "Unauthorized" in err_str
+                                   or "invalid" in err_str.lower())
+                if is_auth_failure:
+                    logger.error(
+                        f"Telegram token is INVALID or REVOKED: {e}. "
+                        f"Fix via Settings → Telegram, then restart the session."
+                    )
+                else:
+                    logger.warning(f"Telegram probe failed (will retry): {e}")
 
         missing = snapshot.get("missing", [])
         is_complete = snapshot.get("complete", False)

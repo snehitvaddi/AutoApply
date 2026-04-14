@@ -15,7 +15,7 @@
  *   - check_daily_limit: Check if user hit daily limit
  *   - upload_screenshot: Store screenshot URL
  *   - enqueue_jobs: Insert discovered jobs + queue entries
- *   - check_company_rate: Check 30-day company application count
+ *   - check_company_rate: Check 7-day company application count (max 3)
  */
 
 import { NextRequest } from "next/server";
@@ -382,7 +382,11 @@ export async function POST(request: NextRequest) {
       }
 
       case "check_company_rate": {
-        const cutoff = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString();
+        // Rolling 7-day cap of 3 apps per company. Was 5 per 15 days —
+        // simpler rule, easier to reason about, matches real behavior
+        // better (listings expire, repeat attempts to same company rarely
+        // help within a week).
+        const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
         const result = await supabase
           .from("applications")
           .select("id", { count: "exact" })
@@ -390,7 +394,7 @@ export async function POST(request: NextRequest) {
           .ilike("company", `%${params.company}%`)
           .gte("applied_at", cutoff);
         const count = result.count || 0;
-        return apiSuccess({ within_limit: count < 5, count, max: 5 });
+        return apiSuccess({ within_limit: count < 3, count, max: 3 });
       }
 
       case "enqueue_jobs": {

@@ -21,15 +21,17 @@ Forms, custom portals — they're all just web pages with form fields. Treat the
 4. **Screenshot EVERY outcome** — success, failure, timeout, CAPTCHA. Send to Telegram with proof.
 5. **Log EVERY application** to both local dedup DB AND remote API. Missing either = invisible.
 6. **2-minute timeout per job.** Stuck >2 min → screenshot → Telegram → skip → next.
-7. **Max 2 per company per day.** Rank roles by fit, pick top 2, skip rest. Spread across companies.
-8. **Max 5 per company per 15 days.** Hard cap. Re-check BEFORE filling each form (just-in-time).
-9. **24-hour freshness only.** Never apply to jobs older than 24 hours. Verify AFTER API fetch.
-10. **Text fields BEFORE dropdowns.** Dropdown interactions shift refs. Always fill text first.
-11. **Greenhouse: set country dropdown to "United States" BEFORE phone field.**
-12. **Never use web search for scouting.** Use curl API calls and openclaw browser directly.
-13. **Resume via upload command, never file explorer.** `openclaw browser upload` or CDP.
-14. **Short answers** for: sponsorship, salary, location, start date. **Long (3-4 sentences)** only for: "Why interested?", "Tell about a project."
-15. **Start jiggler on startup, stop on exit.** Machine must not sleep during applications.
+7. **Max 3 per company per rolling 7 days.** Hard cap. Re-check BEFORE filling each form (just-in-time). Picks the top 3 roles by fit; spread across companies instead of piling on one.
+8. **24-hour freshness only.** Never apply to jobs older than 24 hours. Verify AFTER API fetch. Prune queue rows older than 24h at the start of each apply loop iteration.
+9. **Text fields BEFORE dropdowns.** Dropdown interactions shift refs. Always fill text first.
+10. **Greenhouse: set country dropdown to "United States" BEFORE phone field.**
+11. **Never use web search for scouting.** Use curl API calls and openclaw browser directly.
+12. **Resume via upload command, never file explorer.** `openclaw browser upload` or CDP.
+13. **Short answers** for: sponsorship, salary, location, start date. **Long (3-4 sentences)** only for: "Why interested?", "Tell about a project."
+14. **Start jiggler on startup, stop on exit.** Machine must not sleep during applications.
+15. **Close the browser tab after EVERY submission.** Don't accumulate tabs. Next job opens a fresh tab.
+16. **Location: use a nearby metro, not exact city.** E.g. "Austin, TX" instead of "Round Rock, TX". Prevents forms defaulting to in-person assumptions for remote/hybrid roles.
+17. **LinkedIn: skip Easy Apply.** Click through to the company's direct Apply button. If LinkedIn blocks the redirect, Google `"{company}" "{role}" careers` and apply from the real careers page.
 
 ---
 
@@ -80,7 +82,8 @@ Board slugs and API URLs → see `packages/worker/config.py`
 - Location matches user's preferred_locations or "Remote"
 - Not blocked: staffing agencies, user's excluded_companies list
 - Dedup: check local applications.db (SQLite) before applying
-- Rate limit: 2/day/company, 5/15days/company
+- Rate limit: 3 applications per company per rolling 7 days
+- Drop queue rows older than 24h at the start of each apply iteration (never apply to stale listings)
 - All filter criteria come from the user's profile — NO hardcoded role/level/location opinions
 
 ### STEP 3: READ JD
@@ -129,7 +132,9 @@ Re-snapshot. Check empty required fields. Fix (max 2 retries).
 Click submit. Check result: success / email verification / CAPTCHA / error / Lever requestSubmit().
 
 ### STEP 7: POST-SUBMIT
-Screenshot → Telegram → log to dedup DB → log to API → heartbeat → next job.
+Screenshot → Telegram (send photo + caption) → **close the browser tab** (`openclaw browser close` — don't accumulate tabs) → log to local SQLite → log to cloud API → heartbeat → next job.
+
+If the Telegram send fails with 401 or "invalid token": log LOUDLY at error level + surface the error to the user via chat UI. Do NOT silently disable Telegram — keep retrying (the token may be rotated mid-session).
 
 ### STEP 8: QUEUE EMPTY
 Don't stop. Scout again. Discover new boards. Send hourly summary.
@@ -139,6 +144,19 @@ Don't stop. Scout again. Discover new boards. Send hourly summary.
 ## SMART PAGE AWARENESS
 After navigating: snapshot. No form? → CAPTCHA/login/filled/blank → screenshot → skip.
 "Apply" button but no form → click Apply, re-snapshot.
+
+## LINKEDIN APPLICATION ROUTING
+
+LinkedIn jobs scout as `ats=linkedin` but LinkedIn itself is an aggregator, not an ATS. Two rules:
+
+1. **Skip "Easy Apply" buttons.** Low submit rates, missing applicant tracking data. Click through to the company's direct "Apply" button on the job page.
+
+2. **If LinkedIn blocks the external redirect** (some jobs show "You must be signed in"), fall back to Google:
+   - Query: `"{company_name}" "{role_title}" careers`
+   - Open the first result that's the company's own careers domain (e.g. `stripe.com/jobs/listing/...`, `jobs.company.com/...`)
+   - Apply there using the universal approach (STEP 4 FILL)
+
+Log any new LinkedIn redirect patterns you encounter to `packages/worker/knowledge/learnings.md` under the "LinkedIn application routing" section so future sessions skip the dead-end attempt.
 
 ## WORKDAY LOGIN WALL (DO NOT SKIP — handle it)
 
@@ -171,7 +189,7 @@ Store the generated password in the user's profile for reuse.
 Poll himalaya every 5s, max 45s. 4 regex patterns. Both 8-individual-box and single-input formats.
 
 ## COMPANY RATE LIMIT
-2/day + 5/15days per company. Multiple roles → rank by fit → top 2 only.
+Max 3 applications per company per rolling 7 days. Multiple roles from the same company → rank by fit → apply to top 3 only. Re-check the count BEFORE filling each form (just-in-time), not just at scout time, because another cycle may have raced ahead.
 
 ## AUTO-DISCOVERY
 Extract ATS slugs from Indeed/LinkedIn/Himalayas URLs → add to discovery list.

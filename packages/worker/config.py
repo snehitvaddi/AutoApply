@@ -66,9 +66,18 @@ BLOCKED_STAFFING = [
 # ─── Scout → Filter → Apply cycle config ────────────────────────────────────
 
 SCOUT_INTERVAL_MINUTES = int(os.environ.get("SCOUT_INTERVAL_MINUTES", "30"))
-MAX_COMPANY_APPS_PER_DAY = 2  # Max 2 per company per day (rank by fit, pick top 2)
-MAX_COMPANY_APPS_PER_15_DAYS = 5  # Hard cap: 5 per company per 15-day window
+# Rolling 7-day cap per company. Simpler than the old 2/day + 5/15d pair —
+# matches real submission behavior and easier for Claude to reason about.
+MAX_COMPANY_APPS_PER_7_DAYS = 3
+# Queue entries older than this are pruned at the start of each apply loop
+# iteration (24h freshness rule — listings expire fast, don't apply to stale ones).
+QUEUE_STALE_HOURS = 24
 JOB_TIMEOUT_SECONDS = 120  # Max time per application before skip
+
+# Backward-compat aliases — any external callers still importing the old
+# names still work for one release cycle. Remove after v1.2.
+MAX_COMPANY_APPS_PER_DAY = MAX_COMPANY_APPS_PER_7_DAYS
+MAX_COMPANY_APPS_PER_15_DAYS = MAX_COMPANY_APPS_PER_7_DAYS
 
 # NOTE: Role/level/location/company opinions moved to TenantConfig.
 # See packages/worker/tenant.py for the frozen per-tenant dataclass and

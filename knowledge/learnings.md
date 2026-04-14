@@ -1043,3 +1043,31 @@ Works: focus → Ctrl+A → Backspace → Input.insertText → blur.
 - Results ~30-50 unique AI/ML jobs per full scrape
 - Dedup by company+title (many dupes across cities)
 - LOW priority in rotation (run ~40% of cycles, heavy on browser resources)
+
+---
+
+## LinkedIn application routing (April 2026)
+
+**Skip LinkedIn Easy Apply.** LinkedIn's "Easy Apply" button keeps the application inside LinkedIn's form, which has:
+- Low submission rates (recruiters often don't see these on par with direct applications)
+- Missing applicant tracking data (no company ATS entry, no automatic profile sync)
+- Frequently blocks after 5-10 submissions per day without warning
+
+**Preferred routing:**
+1. Open the LinkedIn job page
+2. Look for the company's direct "Apply" button (usually labeled `Apply on company website` or shows an external link icon)
+3. Click through to the company's own careers page and apply there using the universal approach (SOUL.md STEP 4)
+
+**If LinkedIn blocks the external redirect** (some jobs show "Sign in to continue"):
+1. Note the company name + role title from the LinkedIn posting
+2. Google: `"{company}" "{role}" careers` OR `"{company}" "{role}" apply`
+3. Open the first result on the company's own careers domain (e.g. `stripe.com/jobs/...`, `jobs.{company}.com/...`)
+4. Apply there — same form-fill flow as any other ATS
+
+**Known redirect patterns:**
+- Greenhouse → `boards.greenhouse.io/{slug}/jobs/{id}` or `job-boards.greenhouse.io/embed/job_app`
+- Lever → `jobs.lever.co/{company}/{uuid}`
+- Ashby → `jobs.ashbyhq.com/{company}`
+- Workday → `{company}.wd{N}.myworkdayjobs.com/{site}/job/...`
+
+Add new patterns here as you encounter them. Companies that do NOT use a known ATS still have a careers page — Google will find it.

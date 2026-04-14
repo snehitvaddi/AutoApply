@@ -12,7 +12,8 @@ from urllib.parse import urlparse
 from config import (
     WORKER_ID, POLL_INTERVAL, APPLY_COOLDOWN, ATS_COOLDOWNS,
     MAX_SYSTEM_APPS_PER_HOUR, BLOCKED_DOMAINS, COMPANY_PAUSES,
-    BLOCKED_STAFFING, SCOUT_INTERVAL_MINUTES, MAX_COMPANY_APPS_PER_15_DAYS,
+    BLOCKED_STAFFING, SCOUT_INTERVAL_MINUTES,
+    MAX_COMPANY_APPS_PER_7_DAYS, QUEUE_STALE_HOURS,
 )
 from tenant import (
     TenantConfig, TenantConfigIncompleteError,
@@ -131,7 +132,7 @@ def is_blocked_company(company: str, tenant: TenantConfig | None = None) -> bool
 # ─── Company Rate Limiting (via API proxy) ─────────────────────────────────
 
 def check_company_rate(user_id: str, company: str) -> bool:
-    """Return True if user can still apply to this company (< 5 in 30 days)."""
+    """Return True if user can still apply to this company (< 3 in last 7 days)."""
     return db_check_company_rate(user_id, company)
 
 
@@ -294,6 +295,37 @@ def _touch_scout_heartbeat() -> None:
         (_WORKSPACE_DIR / "scout.ts").write_text(f"{int(time.time() * 1000)}\n")
     except Exception as e:
         logger.debug(f"Failed to touch scout.ts: {e}")
+
+
+def _prune_stale_queue_locally() -> None:
+    """Delete queue rows older than QUEUE_STALE_HOURS from the local
+    applications.db. Prevents the apply loop from wasting attempts on
+    expired job listings. Best-effort — SQLite errors are silently
+    ignored so a transient DB issue doesn't crash the worker loop.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+    db_path = os.environ.get(
+        "APPLYLOOP_DB", os.path.expanduser("~/.autoapply/workspace/applications.db")
+    )
+    if not os.path.exists(db_path):
+        return
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=QUEUE_STALE_HOURS)).isoformat()
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        try:
+            cur = conn.execute(
+                "DELETE FROM applications WHERE status='queued' AND scouted_at < ?",
+                (cutoff,),
+            )
+            deleted = cur.rowcount
+            conn.commit()
+            if deleted:
+                logger.info(f"Pruned {deleted} stale queue row(s) older than {QUEUE_STALE_HOURS}h")
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug(f"Queue prune failed (non-fatal): {e}")
 
 
 def _read_user_id_from_profile_json() -> str | None:
@@ -486,6 +518,11 @@ def main():
             time.sleep(60)
             continue
 
+        # Prune stale queue entries (>24h old) at the start of each apply
+        # iteration. Job listings expire fast — better to drop old ones
+        # than waste an application attempt on a closed posting.
+        _prune_stale_queue_locally()
+
         try:
             job = claim_next_job(WORKER_ID)
         except WorkerAuthError as e:
@@ -530,7 +567,7 @@ def main():
             update_local_status(job, 'skipped', 'staffing agency')
             continue
 
-        # Company rate limit (max 5 per 30 days)
+        # Company rate limit (max 3 per rolling 7 days)
         if not check_company_rate(user_id, company):
             logger.info(f"Company rate limit reached for {company}, skipping")
             update_queue_status(job['id'], 'cancelled', error='company rate limit (5/30d)')
