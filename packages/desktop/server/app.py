@@ -245,6 +245,41 @@ async def health():
     return {"ok": True, "worker": worker.status()}
 
 
+@app.get("/api/version")
+async def version():
+    """Return the currently-installed commit SHA + short hash for the UI
+    footer. The sha file is written by `applyloop update` after git pull.
+    """
+    import subprocess as _sp
+    sha = "unknown"
+    short = "unknown"
+    try:
+        home = os.path.expanduser("~/.applyloop")
+        ver_file = os.path.join(home, ".applyloop-version")
+        if os.path.isfile(ver_file):
+            with open(ver_file) as f:
+                sha = f.read().strip()
+            if sha:
+                short = sha[:7]
+    except Exception:
+        pass
+    # Fallback: use git itself if the install dir is a git repo
+    if sha == "unknown":
+        try:
+            home = os.path.expanduser("~/.applyloop")
+            if os.path.isdir(os.path.join(home, ".git")):
+                result = _sp.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=home, capture_output=True, text=True, timeout=3,
+                )
+                if result.returncode == 0:
+                    sha = result.stdout.strip()
+                    short = sha[:7]
+        except Exception:
+            pass
+    return {"ok": True, "data": {"sha": sha, "short": short}}
+
+
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/auth/token-masked")

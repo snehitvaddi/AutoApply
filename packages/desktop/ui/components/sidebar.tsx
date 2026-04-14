@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
@@ -31,6 +32,14 @@ interface SidebarProps {
 export function Sidebar({ workerRunning }: SidebarProps) {
   const pathname = usePathname()
   const { theme, toggle } = useTheme()
+  const [version, setVersion] = useState<string>("")
+
+  useEffect(() => {
+    fetch("/api/version")
+      .then((r) => r.json())
+      .then((d) => setVersion(d?.data?.short || ""))
+      .catch(() => {})
+  }, [])
 
   return (
     <aside className="fixed left-0 top-0 z-40 flex h-screen w-16 flex-col border-r border-border bg-sidebar">
@@ -92,6 +101,16 @@ export function Sidebar({ workerRunning }: SidebarProps) {
             {workerRunning ? "Active" : "Idle"}
           </span>
         </div>
+        {version && (
+          <div className="flex flex-col items-center">
+            <span
+              className="text-[9px] font-mono text-muted-foreground/50"
+              title={`Commit ${version} — run 'applyloop update' to refresh`}
+            >
+              {version}
+            </span>
+          </div>
+        )}
       </div>
     </aside>
   )

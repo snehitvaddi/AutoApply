@@ -99,7 +99,13 @@ def _install_shutdown_handlers() -> None:
                 ["pkill", "-TERM", "-P", str(os.getpid())],
                 capture_output=True, timeout=3,
             )
-            for pattern in ("worker.py", "jiggler.sh", "caffeinate -dis"):
+            for pattern in (
+                "worker.py", "jiggler.sh", "caffeinate -dis",
+                # Legacy pre-v1.0 scripts (OpenClaw-era forever loops).
+                # These keep hitting LinkedIn in the background if not
+                # killed — kill any that survived a reinstall.
+                "nonstop-24h", "forever.sh", "openclaw/agents/job-bot",
+            ):
                 subprocess.run(
                     ["pkill", "-TERM", "-f", pattern],
                     capture_output=True, timeout=2,
