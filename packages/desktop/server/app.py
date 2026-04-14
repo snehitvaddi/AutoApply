@@ -249,25 +249,30 @@ async def health():
 async def version():
     """Return the currently-installed commit SHA + short hash for the UI
     footer. The sha file is written by `applyloop update` after git pull.
+
+    Note: `os` is not imported at module level in this file (the existing
+    callers all use `import os as _os` locally). We do the same here so
+    the NameError bug that made this always return "unknown" can't recur.
     """
+    import os as _os
     import subprocess as _sp
     sha = "unknown"
     short = "unknown"
     try:
-        home = os.path.expanduser("~/.applyloop")
-        ver_file = os.path.join(home, ".applyloop-version")
-        if os.path.isfile(ver_file):
+        home = _os.path.expanduser("~/.applyloop")
+        ver_file = _os.path.join(home, ".applyloop-version")
+        if _os.path.isfile(ver_file):
             with open(ver_file) as f:
                 sha = f.read().strip()
             if sha:
                 short = sha[:7]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"version: read .applyloop-version failed: {e}")
     # Fallback: use git itself if the install dir is a git repo
     if sha == "unknown":
         try:
-            home = os.path.expanduser("~/.applyloop")
-            if os.path.isdir(os.path.join(home, ".git")):
+            home = _os.path.expanduser("~/.applyloop")
+            if _os.path.isdir(_os.path.join(home, ".git")):
                 result = _sp.run(
                     ["git", "rev-parse", "HEAD"],
                     cwd=home, capture_output=True, text=True, timeout=3,
@@ -275,8 +280,8 @@ async def version():
                 if result.returncode == 0:
                     sha = result.stdout.strip()
                     short = sha[:7]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"version: git fallback failed: {e}")
     return {"ok": True, "data": {"sha": sha, "short": short}}
 
 
