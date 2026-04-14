@@ -27,17 +27,16 @@ import {
 type Tab = "ai" | "personal" | "work" | "preferences" | "profiles" | "resume" | "integrations"
   | "telegram" | "email" | "worker" | "billing" | "auth"
 
-// IA rework to mirror the web sidebar. Profiles is now the primary tab.
-// Preferences / Telegram / Email were deleted — their content is either
-// absorbed into the Profile editor (preferences) or available via the
-// API Keys tab (telegram/email credentials). Render branches for the
-// removed tabs still exist in the JSX below but are unreachable via the
-// sidebar (dead code, tree-shaken in prod). Safer than a 660-line delete.
+// IA mirrors the web sidebar. Profiles is the primary tab. Work &
+// Education has been dropped — it now lives INSIDE each profile card
+// (per-role narrative, mig 020). Resumes tab kept as the pool manager
+// (profiles pick a PDF by id from this list). Preferences / Telegram /
+// Email removed from the sidebar (dead render branches remain below,
+// tree-shaken in prod).
 const tabs: { id: Tab; label: string; icon: typeof User }[] = [
   { id: "profiles", label: "Profiles", icon: Target },
   { id: "resume", label: "Resumes", icon: FileText },
   { id: "personal", label: "Personal", icon: User },
-  { id: "work", label: "Work & Education", icon: Briefcase },
   { id: "integrations", label: "API Keys", icon: Key },
   { id: "worker", label: "Worker & LLM", icon: Cpu },
   { id: "ai", label: "AI Import", icon: Sparkles },

@@ -855,6 +855,18 @@ def main():
 
         try:
             profile = load_user_profile(user_id)
+            # Per-bundle work history override (mig 020). The profile dict
+            # normally carries the shared user_profiles.work_experience —
+            # but each bundle can have its own role-specific narrative.
+            # Shallow-copy and override so the applier's profile_summary()
+            # sees the bundle's history for every job this loop claims.
+            if job_profile.work_experience is not None:
+                profile = {**profile, "work_experience": job_profile.work_experience}
+            if job_profile.education is not None:
+                profile = {**profile, "education": job_profile.education}
+            if job_profile.skills is not None:
+                profile = {**profile, "skills": job_profile.skills}
+
             # Per-bundle answer key from mig 019. When the bundle has its
             # own answers (different "why interested" per role), use them;
             # otherwise knowledge.build_answer_key falls back to the

@@ -21,6 +21,8 @@ const WRITABLE = [
   "auto_apply", "max_daily",
   // Per-bundle content (mig 019) — per-role answer key + cover letter.
   "answer_key_json", "cover_letter_template",
+  // Per-bundle work history (mig 020) — per-role narrative.
+  "work_experience", "education", "skills",
 ] as const;
 
 async function ownProfile(userId: string, id: string) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { WorkEducationEditor, type WorkExperienceRow, type EducationRow } from "./WorkEducationEditor";
 
 type Profile = {
   id: string;
@@ -25,6 +26,10 @@ type Profile = {
   // user_profiles fallback at apply time.
   answer_key_json: Record<string, unknown> | null;
   cover_letter_template: string | null;
+  // Per-bundle work history (mig 020). null = inherit from user_profiles.
+  work_experience: WorkExperienceRow[] | null;
+  education: EducationRow[] | null;
+  skills: string[] | null;
   has_app_password?: boolean;
 };
 
@@ -99,6 +104,11 @@ export function ProfilesTab({
       max_daily: null,
       answer_key_json: null,
       cover_letter_template: null,
+      // Clone W&E from the default bundle so new profiles start with the
+      // user's base history. They can tailor per-role afterwards.
+      work_experience: defaultProfile?.work_experience ? [...defaultProfile.work_experience] : [],
+      education: defaultProfile?.education ? [...defaultProfile.education] : [],
+      skills: defaultProfile?.skills ? [...defaultProfile.skills] : [],
       same_email_as_default: false,
     });
   };
@@ -316,6 +326,27 @@ export function ProfilesTab({
               />
             </>
           )}
+
+          {/* Per-role work & education (mig 020). Different per bundle
+              so an AI Eng bundle can emphasize ML wins while a DA bundle
+              emphasizes SQL pipelines. Controlled editor — save via the
+              profile's Save button. */}
+          <div className="border-t pt-3 mt-2">
+            <h3 className="text-sm font-semibold mb-2">Work & education</h3>
+            <WorkEducationEditor
+              initial={{
+                work_experience: draft.work_experience || [],
+                education: draft.education || [],
+                skills: draft.skills || [],
+              }}
+              onChange={(next) => setDraft((d) => ({
+                ...d,
+                work_experience: next.work_experience,
+                education: next.education,
+                skills: next.skills,
+              }))}
+            />
+          </div>
 
           {/* Content — answers + cover letter — per role. A "Why are you
               interested in AI Engineering?" answer makes no sense on a

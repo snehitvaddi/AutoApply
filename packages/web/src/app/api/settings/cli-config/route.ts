@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
   const [bundlesRes, emailAccountsRes] = await Promise.all([
     supabase
       .from("user_application_profiles")
-      .select("id, name, slug, is_default, target_titles, target_keywords, excluded_titles, excluded_companies, excluded_role_keywords, excluded_levels, preferred_locations, remote_only, min_salary, ashby_boards, greenhouse_boards, resume_id, email_account_id, application_email, auto_apply, max_daily, answer_key_json, cover_letter_template, updated_at")
+      .select("id, name, slug, is_default, target_titles, target_keywords, excluded_titles, excluded_companies, excluded_role_keywords, excluded_levels, preferred_locations, remote_only, min_salary, ashby_boards, greenhouse_boards, resume_id, email_account_id, application_email, auto_apply, max_daily, answer_key_json, cover_letter_template, work_experience, education, skills, updated_at")
       .eq("user_id", auth.userId)
       .order("is_default", { ascending: false }),
     supabase

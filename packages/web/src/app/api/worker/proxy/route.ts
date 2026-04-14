@@ -237,6 +237,11 @@ export async function POST(request: NextRequest) {
             // keeps single-profile users and old installs working.
             answer_key_json: b.answer_key_json ?? null,
             cover_letter_template: b.cover_letter_template ?? null,
+            // Per-bundle work history (migration 020). Same fallback
+            // pattern — null means "inherit from user_profiles".
+            work_experience: b.work_experience ?? null,
+            education: b.education ?? null,
+            skills: b.skills ?? null,
           };
         }));
 
@@ -288,6 +293,13 @@ export async function POST(request: NextRequest) {
         // legacy user_profiles columns stay in the schema as a read-only
         // fallback for older worker builds during rolling deploy but can
         // no longer be written via the worker proxy.
+        // AI Import + legacy Work & Education tab still write here.
+        // work_experience / education / skills are mirrored into the
+        // user's default bundle AFTER the user_profiles upsert so the
+        // worker (which reads from the bundle as of mig 020) sees them
+        // without forcing every caller to migrate. Per-profile edits
+        // via /api/settings/profiles/[id] PUT remain the authoritative
+        // path for non-default bundles.
         const PROFILE_COLUMNS = [
           "first_name", "last_name", "email", "phone",
           "linkedin_url", "github_url", "portfolio_url",
@@ -311,6 +323,31 @@ export async function POST(request: NextRequest) {
         if (error) {
           return apiError("internal_server_error", error.message);
         }
+
+        // Mirror work_experience / education / skills onto the user's
+        // default application profile bundle. Post mig-020 the worker
+        // reads these from the bundle, so a bare update_profile call
+        // (AI Import, legacy Work & Edu tab) must propagate or the
+        // worker will apply with stale data.
+        const bundleMirror: Record<string, unknown> = {};
+        if ("work_experience" in incoming) bundleMirror.work_experience = incoming.work_experience;
+        if ("education" in incoming) bundleMirror.education = incoming.education;
+        if ("skills" in incoming) bundleMirror.skills = incoming.skills;
+        if (Object.keys(bundleMirror).length > 0) {
+          bundleMirror.updated_at = new Date().toISOString();
+          const { error: mirrorErr } = await supabase
+            .from("user_application_profiles")
+            .update(bundleMirror)
+            .eq("user_id", userId)
+            .eq("is_default", true);
+          if (mirrorErr) {
+            // Legacy upsert already succeeded; log and continue so the
+            // UI doesn't double-flash. Worker will still see the data
+            // via the user_profiles fallback in the meantime.
+            console.warn("update_profile → default bundle mirror failed:", mirrorErr.message);
+          }
+        }
+
         return apiSuccess({ updated: true });
       }
 

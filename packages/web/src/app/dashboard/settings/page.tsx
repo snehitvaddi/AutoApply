@@ -871,16 +871,15 @@ export default function SettingsPage() {
     );
   }
 
-  // Settings IA rework: Profiles first (the primary concept), shared
-  // identity after, tools after that, ops at the end. Preferences /
-  // Telegram / Email tabs were deleted — see migration 019 plan for the
-  // field taxonomy that drove this. Legacy tab IDs stay in the Tab union
-  // so the render branches below still typecheck while we tear them out.
+  // Settings IA rework: Profiles is the primary landing tab. AI Import
+  // stays as a one-time bulk-fill helper at the end. Work & Education
+  // is now per-bundle and lives INSIDE each profile card (mig 020), so
+  // the standalone tab is gone. Gmail credentials are per-bundle too,
+  // so they're under Profiles not API Keys. Removed: Job Preferences
+  // (deprecated), Telegram + Email (folded into API Keys).
   const tabs: { key: Tab; label: string }[] = [
     { key: "profiles", label: "Profiles" },
-    { key: "resume", label: "Resumes" },
     { key: "personal", label: "Personal Info" },
-    { key: "work", label: "Work & Education" },
     { key: "integrations", label: "API Keys" },
     { key: "worker", label: "Worker & LLM" },
     { key: "ai", label: "AI Import" },
@@ -2363,10 +2362,10 @@ backend.passwd.raw = "your-app-password"`}
                 <p className="text-sm text-gray-600 mt-3">
                   Got feedback, hit a limit, or need a custom plan?{" "}
                   <a
-                    href="mailto:support@applyloop.app"
+                    href="mailto:vaddisnehit@gmail.com"
                     className="text-brand-600 font-medium hover:underline"
                   >
-                    support@applyloop.app
+                    vaddisnehit@gmail.com
                   </a>
                 </p>
               </div>

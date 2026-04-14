@@ -104,6 +104,12 @@ class ApplyProfile:
     # level — older installs without migration 019 still work this way.
     answer_key_json: dict | None = None
     cover_letter_template: str | None = None
+    # Per-bundle work history (mig 020). Each profile tells a different
+    # story — AI Eng emphasizes ML projects, DA emphasizes SQL wins.
+    # None falls back to user_profiles.work_experience / education / skills.
+    work_experience: list | None = None
+    education: list | None = None
+    skills: list | None = None
 
     def passes_filter(self, title: str, company: str, location: str) -> bool:
         tl = (title or "").lower()
@@ -302,6 +308,9 @@ class TenantConfig:
                 # so this branch only runs when someone deletes their row.
                 answer_key_json=(profile.get("answer_key_json") if isinstance(profile.get("answer_key_json"), dict) else None),
                 cover_letter_template=(profile.get("cover_letter_template") or None),
+                work_experience=(profile.get("work_experience") if isinstance(profile.get("work_experience"), list) else None),
+                education=(profile.get("education") if isinstance(profile.get("education"), list) else None),
+                skills=(profile.get("skills") if isinstance(profile.get("skills"), list) else None),
             ),)
 
         # Invariant: every loaded tenant has at least one bundle.
@@ -496,6 +505,10 @@ def _build_apply_profile(raw: dict, fallback_email: str = "") -> ApplyProfile:
         # user_profiles.answer_key_json" — handled by the caller.
         answer_key_json=(raw.get("answer_key_json") if isinstance(raw.get("answer_key_json"), dict) else None),
         cover_letter_template=(raw.get("cover_letter_template") if raw.get("cover_letter_template") else None),
+        # Per-bundle history from mig 020. Same None-as-inherit semantics.
+        work_experience=(raw.get("work_experience") if isinstance(raw.get("work_experience"), list) else None),
+        education=(raw.get("education") if isinstance(raw.get("education"), list) else None),
+        skills=(raw.get("skills") if isinstance(raw.get("skills"), list) else None),
     )
 
 

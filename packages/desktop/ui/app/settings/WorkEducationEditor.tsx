@@ -38,26 +38,44 @@ export function WorkEducationEditor({
   initial,
   onSaved,
   onError,
+  onChange,
 }: {
   initial: {
     work_experience?: WorkExperienceRow[];
     education?: EducationRow[];
     skills?: string[];
   };
-  onSaved: () => void;
-  onError: (msg: string) => void;
+  onSaved?: () => void;
+  onError?: (msg: string) => void;
+  // Controlled mode: when onChange is passed, the editor fires onChange
+  // on every edit and HIDES its internal Save button. The parent owns
+  // the save flow (used by ProfilesTab — the profile's Save button
+  // persists W&E to user_application_profiles.{work_experience,...}).
+  onChange?: (next: {
+    work_experience: WorkExperienceRow[];
+    education: EducationRow[];
+    skills: string[];
+  }) => void;
 }) {
   const [workRows, setWorkRows] = useState<WorkExperienceRow[]>([]);
   const [eduRows, setEduRows] = useState<EducationRow[]>([]);
   const [skills, setSkills] = useState<string[]>([]);
   const [skillBuf, setSkillBuf] = useState("");
   const [saving, setSaving] = useState(false);
+  const controlled = typeof onChange === "function";
 
   useEffect(() => {
     setWorkRows(initial.work_experience || []);
     setEduRows(initial.education || []);
     setSkills(initial.skills || []);
   }, [initial.work_experience, initial.education, initial.skills]);
+
+  // In controlled mode, push changes upstream whenever any of the three
+  // state buckets moves.
+  useEffect(() => {
+    if (!controlled) return;
+    onChange?.({ work_experience: workRows, education: eduRows, skills });
+  }, [controlled, onChange, workRows, eduRows, skills]);
 
   const updateWork = (i: number, patch: Partial<WorkExperienceRow>) =>
     setWorkRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -128,9 +146,9 @@ export function WorkEducationEditor({
       }
       setWorkRows(cleanWork);
       setEduRows(cleanEdu);
-      onSaved();
+      onSaved?.();
     } catch (err) {
-      onError(err instanceof Error ? err.message : "Save failed");
+      onError?.(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
     }
@@ -281,13 +299,15 @@ export function WorkEducationEditor({
         />
       </section>
 
-      <button
-        onClick={save}
-        disabled={saving}
-        className="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-      >
-        {saving ? "Saving..." : "Save work & education"}
-      </button>
+      {!controlled && (
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+        >
+          {saving ? "Saving..." : "Save work & education"}
+        </button>
+      )}
     </div>
   );
 }

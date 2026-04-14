@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { WorkEducationEditor, type WorkExperienceRow, type EducationRow } from "./WorkEducationEditor";
 
 type Profile = {
   id: string;
@@ -24,6 +25,10 @@ type Profile = {
   // Per-bundle content (mig 019). null = inherit from shared fallback.
   answer_key_json: Record<string, unknown> | null;
   cover_letter_template: string | null;
+  // Per-bundle work history (mig 020). null = inherit from user_profiles.
+  work_experience: WorkExperienceRow[] | null;
+  education: EducationRow[] | null;
+  skills: string[] | null;
   has_app_password?: boolean;
 };
 
@@ -108,6 +113,12 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
       auto_apply: true,
       answer_key_json: null,
       cover_letter_template: null,
+      // Clone W&E from default bundle when creating a new one so users
+      // don't have to re-type their history for every profile. They can
+      // still tweak per-role afterwards (that's the whole point of mig 020).
+      work_experience: d?.work_experience ? [...d.work_experience] : [],
+      education: d?.education ? [...d.education] : [],
+      skills: d?.skills ? [...d.skills] : [],
       same_email_as_default: false,
     });
   };
@@ -233,6 +244,27 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
             />
           </>
         )}
+
+        {/* Per-role Work & Education (mig 020). Each bundle tells a
+            different story — AI Eng emphasizes ML wins, DA emphasizes
+            pipelines. Controlled mode: editor fires onChange, profile
+            Save button persists to user_application_profiles. */}
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-2">Per-role work & education</h3>
+          <WorkEducationEditor
+            initial={{
+              work_experience: draft.work_experience || [],
+              education: draft.education || [],
+              skills: draft.skills || [],
+            }}
+            onChange={(next) => setDraft((d) => ({
+              ...d,
+              work_experience: next.work_experience,
+              education: next.education,
+              skills: next.skills,
+            }))}
+          />
+        </div>
 
         {/* Per-role content — answer key + cover letter. Different per
             bundle so "Why AI Engineering?" doesn't leak onto a DA app. */}
