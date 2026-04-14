@@ -273,9 +273,14 @@ export default function SettingsPage() {
     setIntegrationsLoading(true)
     try {
       const res = await getIntegrations()
-      const d = res?.data as { data?: { integrations?: Record<string, { set: boolean; mask: string }> } } | undefined
-      if (d?.data?.integrations) {
-        setIntegrationsState(d.data.integrations)
+      // The /api/integrations endpoint returns { ok, data: { integrations: {...} } }
+      // — res.data.integrations, NOT res.data.data.integrations. The old code
+      // assumed a nested-data wrapper that the proxy doesn't actually apply,
+      // so the integrations always came back empty and the UI showed "(not set)"
+      // even when the backend had the full encrypted payload.
+      const integrations = res?.data?.integrations
+      if (integrations) {
+        setIntegrationsState(integrations)
       }
     } catch {
       /* silent — keep whatever we had before */
@@ -334,13 +339,16 @@ export default function SettingsPage() {
     setIntegrationsMsg(null)
     try {
       const res = await updateIntegrations(Object.fromEntries(dirty))
-      const payload = res?.data as { data?: { updated?: string[]; integrations?: Record<string, { set: boolean; mask: string }> }; error?: string } | undefined
-      if (payload?.error) {
-        setIntegrationsMsg({ text: payload.error, type: "err" })
-      } else if (payload?.data?.integrations) {
-        setIntegrationsState(payload.data.integrations)
+      // /api/integrations PUT returns { ok, data: { updated, integrations } }
+      // — top-level 'data' wrapper, no nested 'data.data'. Same fix as
+      // refreshIntegrations above.
+      const r = res as { error?: string; data?: { updated?: string[]; integrations?: Record<string, { set: boolean; mask: string }> } }
+      if (r?.error) {
+        setIntegrationsMsg({ text: r.error, type: "err" })
+      } else if (r?.data?.integrations) {
+        setIntegrationsState(r.data.integrations)
         setIntegrationsDraft({})
-        setIntegrationsMsg({ text: `Saved: ${(payload.data.updated || []).join(", ")}`, type: "ok" })
+        setIntegrationsMsg({ text: `Saved: ${(r.data.updated || []).join(", ")}`, type: "ok" })
         setTimeout(() => setIntegrationsMsg(null), 3000)
       }
     } catch (e) {
@@ -354,11 +362,11 @@ export default function SettingsPage() {
     setIntegrationsSaving(true)
     try {
       const res = await updateIntegrations({ [key]: "" })
-      const payload = res?.data as { data?: { integrations?: Record<string, { set: boolean; mask: string }> }; error?: string } | undefined
-      if (payload?.error) {
-        setIntegrationsMsg({ text: payload.error, type: "err" })
-      } else if (payload?.data?.integrations) {
-        setIntegrationsState(payload.data.integrations)
+      const r = res as { error?: string; data?: { integrations?: Record<string, { set: boolean; mask: string }> } }
+      if (r?.error) {
+        setIntegrationsMsg({ text: r.error, type: "err" })
+      } else if (r?.data?.integrations) {
+        setIntegrationsState(r.data.integrations)
         setIntegrationsDraft((d) => { const next = { ...d }; delete next[key]; return next })
         setIntegrationsMsg({ text: `${key} cleared`, type: "ok" })
         setTimeout(() => setIntegrationsMsg(null), 3000)
