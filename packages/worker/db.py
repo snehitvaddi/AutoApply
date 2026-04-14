@@ -166,23 +166,64 @@ def _get_local_conn() -> sqlite3.Connection:
     return conn
 
 
+def _resolve_ats_for_log(ats: str, apply_url: str) -> str:
+    """Map aggregator tags (linkedin/indeed/himalayas/jsearch/ziprecruiter)
+    to the real ATS by inspecting the apply_url. Jobs scouted from
+    aggregators link to the actual company ATS (greenhouse/lever/ashby/
+    workday/smartrecruiters). Without this, the By-Platform donut chart
+    showed "100% LinkedIn" even when Claude actually submitted to Greenhouse
+    via LinkedIn's external-apply redirect.
+    """
+    aggregators = {"linkedin", "indeed", "himalayas", "jsearch", "ziprecruiter", ""}
+    if ats and ats.lower() not in aggregators:
+        return ats
+    url = (apply_url or "").lower()
+    patterns = {
+        "greenhouse": ["greenhouse.io", "boards.greenhouse.io", "job-boards.greenhouse.io"],
+        "lever": ["lever.co"],
+        "ashby": ["ashbyhq.com"],
+        "workday": ["myworkdayjobs.com", "myworkday.com", "wd1.", "wd2.", "wd3.", "wd4.", "wd5."],
+        "smartrecruiters": ["smartrecruiters.com"],
+        "icims": ["icims.com"],
+        "bamboohr": ["bamboohr.com"],
+        "taleo": ["taleo.net"],
+        "jobvite": ["jobvite.com"],
+    }
+    for real_ats, fragments in patterns.items():
+        if any(frag in url for frag in fragments):
+            return real_ats
+    return ats or "other"
+
+
 def _log_to_local_db(job: dict, result: dict):
-    """Write application to local SQLite database for desktop UI."""
+    """Write application to local SQLite database for desktop UI.
+
+    ATS is resolved from the apply_url before write — so a LinkedIn-scouted
+    job that actually submitted to a Greenhouse page gets tagged 'greenhouse'
+    in the stats, not 'linkedin'. Fixes the By-Platform donut showing 100%
+    LinkedIn while the chart showed Greenhouse submissions.
+    """
     try:
         conn = _get_local_conn()
         now = datetime.now(timezone.utc).isoformat()
         company = job.get("company", "")
         job_id = job.get("job_id") or job.get("external_id") or ""
+        apply_url = job.get("apply_url", "")
+        # Resolve aggregator → real ATS for accurate platform stats
+        raw_ats = job.get("ats", "")
+        resolved_ats = _resolve_ats_for_log(raw_ats, apply_url)
+        if resolved_ats != raw_ats:
+            logger.info(f"Logging ATS resolved: {raw_ats} → {resolved_ats} (from URL)")
         conn.execute("""
             INSERT INTO applications (company, role, url, ats, source, location, posted_at, applied_at, updated_at, status, notes, screenshot, dedup_token)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(dedup_token) DO UPDATE SET
                 status=excluded.status, applied_at=excluded.applied_at,
                 updated_at=excluded.updated_at, screenshot=excluded.screenshot,
-                notes=excluded.notes
+                notes=excluded.notes, ats=excluded.ats
         """, (
-            company, job.get("title", ""), job.get("apply_url", ""),
-            job.get("ats", ""), job.get("source", ""), job.get("location", ""),
+            company, job.get("title", ""), apply_url,
+            resolved_ats, job.get("source", "") or raw_ats, job.get("location", ""),
             job.get("posted_at"), now, now,
             result.get("status", "submitted"), result.get("error"),
             result.get("screenshot_url"),

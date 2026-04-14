@@ -118,7 +118,16 @@ def _query_one(sql: str, params: tuple = ()) -> dict:
 
 
 def get_stats() -> dict:
-    """Dashboard stat cards."""
+    """Dashboard stat cards.
+
+    All "today" counting uses the USER'S LOCAL day. SQLite's `strftime` with
+    the 'localtime' modifier converts the stored UTC timestamp to the local
+    tz the server process is running in. This keeps applied_today, the daily
+    chart, and the recent-activity list consistent — previously get_stats
+    filtered by UTC-date (via Python's date.today()) while the chart grouped
+    by UTC-date too, but Python's date.today() actually returns local date,
+    so they disagreed whenever the user was west of UTC at night.
+    """
     conn = _connect()
     if not conn:
         return {"applied_today": 0, "total_applied": 0, "in_queue": 0, "success_rate": 0}
@@ -126,10 +135,14 @@ def get_stats() -> dict:
         total_submitted = conn.execute("SELECT COUNT(*) FROM applications WHERE status='submitted'").fetchone()[0]
         total_failed = conn.execute("SELECT COUNT(*) FROM applications WHERE status='failed'").fetchone()[0]
         in_queue = conn.execute("SELECT COUNT(*) FROM applications WHERE status IN ('queued','scouted')").fetchone()[0]
-        today_submitted = conn.execute(
-            "SELECT COUNT(*) FROM applications WHERE status='submitted' AND applied_at LIKE ? || '%'",
-            (__import__('datetime').date.today().isoformat(),)
-        ).fetchone()[0]
+        # Count rows where applied_at (stored UTC) falls on today's LOCAL date.
+        # strftime('%Y-%m-%d', applied_at, 'localtime') handles both tz-aware
+        # ISO strings ("...+00:00") AND naked ISO ("...123456") consistently.
+        today_submitted = conn.execute("""
+            SELECT COUNT(*) FROM applications
+            WHERE status='submitted'
+              AND strftime('%Y-%m-%d', applied_at, 'localtime') = date('now', 'localtime')
+        """).fetchone()[0]
 
         total = total_submitted + total_failed
         rate = round(total_submitted / total * 100) if total > 0 else 0
@@ -146,15 +159,16 @@ def get_stats() -> dict:
 
 
 def get_daily_breakdown() -> list[dict]:
-    """Applications per day for the area chart."""
+    """Applications per day for the area chart. Grouped by LOCAL date so it
+    matches the 'applied_today' stat card and Recent Applications list."""
     rows = _query("""
         SELECT
-            strftime('%Y-%m-%d', applied_at) as date,
+            strftime('%Y-%m-%d', applied_at, 'localtime') as date,
             SUM(CASE WHEN status='submitted' THEN 1 ELSE 0 END) as submitted,
             SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed
         FROM applications
         WHERE status IN ('submitted','failed') AND applied_at IS NOT NULL
-        GROUP BY strftime('%Y-%m-%d', applied_at)
+        GROUP BY strftime('%Y-%m-%d', applied_at, 'localtime')
         ORDER BY date
     """)
     # Format dates as "Mar 9" style

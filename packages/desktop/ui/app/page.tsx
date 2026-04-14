@@ -126,11 +126,6 @@ export default function DashboardPage() {
           <StatCard
             title="Applied Today"
             value={loading ? "—" : String(stats?.applied_today ?? 0)}
-            badge={
-              stats?.applied_today
-                ? { text: `+${stats.applied_today}`, variant: "success" as const }
-                : undefined
-            }
           />
           <StatCard
             title="Total Applied"
