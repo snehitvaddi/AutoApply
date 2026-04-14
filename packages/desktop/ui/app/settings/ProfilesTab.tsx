@@ -1,0 +1,286 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+type Profile = {
+  id: string;
+  name: string;
+  slug: string;
+  is_default: boolean;
+  updated_at?: string;
+  target_titles: string[];
+  target_keywords: string[];
+  excluded_companies: string[];
+  excluded_role_keywords: string[];
+  excluded_levels: string[];
+  preferred_locations: string[];
+  remote_only: boolean;
+  min_salary: number | null;
+  resume_id: string | null;
+  email_account_id: string | null;
+  application_email: string | null;
+  auto_apply: boolean;
+  max_daily: number | null;
+  has_app_password?: boolean;
+};
+
+type Resume = { id: string; file_name: string; is_default: boolean };
+type EmailAccount = { id: string; email: string; label: string | null; has_app_password: boolean };
+
+// Talks to the LOCAL FastAPI endpoints (/api/profiles, /api/email-accounts)
+// which proxy to the cloud with the stored worker token. The desktop UI is
+// served by the FastAPI itself, so same-origin fetches work without a port.
+async function call(path: string, init?: RequestInit) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
+  if (!res.ok) {
+    // FastAPI HTTPException body is { detail: "..." }.
+    let msg = `HTTP ${res.status}`;
+    try {
+      const j = await res.json();
+      msg = (j?.detail as string) || (j?.error as string) || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "success" | "error") => void }) {
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [resumes, setResumes] = useState<Resume[]>([]);
+  const [emailAccounts, setEmailAccounts] = useState<EmailAccount[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Partial<Profile> & { application_email_app_password?: string; same_email_as_default?: boolean }>({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Each call independently try/caught so one failure doesn't
+      // unhandled-reject the whole Promise.all.
+      const safe = async <T,>(p: Promise<T>, fallback: T): Promise<T> => {
+        try { return await p; } catch { return fallback; }
+      };
+      const [p, r, e] = await Promise.all([
+        safe(call("/api/profiles"), { data: { profiles: [] } }),
+        safe(call("/api/resumes"), { data: { resumes: [] } }),
+        safe(call("/api/email-accounts"), { data: { email_accounts: [] } }),
+      ]);
+      setProfiles(p?.data?.profiles || []);
+      setResumes(r?.data?.resumes || []);
+      setEmailAccounts(e?.data?.email_accounts || []);
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (editingId === null) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [editingId]);
+
+  const startCreate = () => {
+    const d = profiles.find((p) => p.is_default);
+    setEditingId("__new__");
+    setDraft({
+      name: "",
+      target_titles: [],
+      target_keywords: [],
+      excluded_companies: [],
+      excluded_role_keywords: [],
+      excluded_levels: [],
+      preferred_locations: d?.preferred_locations || ["United States"],
+      remote_only: false,
+      resume_id: null,
+      email_account_id: null,
+      application_email: "",
+      auto_apply: true,
+      same_email_as_default: false,
+    });
+  };
+
+  const save = async () => {
+    if (!draft.name) return onMessage("Name is required", "error");
+    if (!draft.target_titles || draft.target_titles.length === 0) {
+      return onMessage("Add at least one target title so the scout knows what to look for", "error");
+    }
+    const isNew = editingId === "__new__";
+    if (draft.same_email_as_default) {
+      const d = profiles.find((p) => p.is_default);
+      if (d?.email_account_id) {
+        draft.email_account_id = d.email_account_id;
+      } else if (d?.application_email) {
+        draft.application_email = d.application_email;
+        if (!draft.application_email_app_password) {
+          return onMessage(
+            "Default profile uses an inline email. Re-enter the Gmail app password here, or move the default to the email-account pool first.",
+            "error",
+          );
+        }
+      }
+    }
+    const body: Record<string, unknown> = { ...draft };
+    delete body.same_email_as_default;
+    if (!isNew) delete body.is_default;  // PUT writable list excludes this
+    if (!isNew && draft.updated_at) body.if_updated_at = draft.updated_at;
+    const path = isNew ? "/api/profiles" : `/api/profiles/${editingId}`;
+    try {
+      await call(path, { method: isNew ? "POST" : "PUT", body: JSON.stringify(body) });
+    } catch (err) {
+      return onMessage(err instanceof Error ? err.message : "Save failed", "error");
+    }
+    draft.application_email_app_password = "";
+    onMessage(isNew ? "Profile created" : "Profile updated", "success");
+    setEditingId(null); setDraft({}); load();
+  };
+
+  const del = async (id: string) => {
+    if (!confirm("Delete this profile?")) return;
+    try {
+      await call(`/api/profiles/${id}`, { method: "DELETE" });
+    } catch (err) {
+      return onMessage(err instanceof Error ? err.message : "Delete failed", "error");
+    }
+    onMessage("Profile deleted", "success"); load();
+  };
+
+  const setDefault = async (id: string) => {
+    try {
+      await call(`/api/profiles/${id}/set-default`, { method: "POST" });
+    } catch (err) {
+      return onMessage(err instanceof Error ? err.message : "Set default failed", "error");
+    }
+    onMessage("Default updated", "success"); load();
+  };
+
+  if (loading) return <div className="text-sm text-muted-foreground">Loading profiles...</div>;
+
+  if (editingId !== null) {
+    return (
+      <div className="space-y-3">
+        <TextField label="Profile name" value={draft.name || ""} onChange={(v) => setDraft({ ...draft, name: v })} />
+        <ChipField label="Target titles" values={draft.target_titles || []} onChange={(v) => setDraft({ ...draft, target_titles: v })} />
+        <ChipField label="Target keywords" values={draft.target_keywords || []} onChange={(v) => setDraft({ ...draft, target_keywords: v })} />
+        <ChipField label="Excluded companies" values={draft.excluded_companies || []} onChange={(v) => setDraft({ ...draft, excluded_companies: v })} />
+        <ChipField label="Excluded role keywords" values={draft.excluded_role_keywords || []} onChange={(v) => setDraft({ ...draft, excluded_role_keywords: v })} />
+        <ChipField label="Excluded levels" values={draft.excluded_levels || []} onChange={(v) => setDraft({ ...draft, excluded_levels: v })} />
+        <ChipField label="Preferred locations" values={draft.preferred_locations || []} onChange={(v) => setDraft({ ...draft, preferred_locations: v })} />
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.remote_only} onChange={(e) => setDraft({ ...draft, remote_only: e.target.checked })} /> Remote only</label>
+
+        <div>
+          <label className="text-sm font-medium block mb-1">Resume</label>
+          <select className="border rounded px-2 py-1 w-full bg-background" value={draft.resume_id || ""} onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}>
+            <option value="">(none)</option>
+            {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
+          </select>
+        </div>
+
+        {editingId === "__new__" && profiles.some((p) => p.is_default) && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={!!draft.same_email_as_default} onChange={(e) => setDraft({ ...draft, same_email_as_default: e.target.checked })} />
+            Use same apply-from email as Default profile
+          </label>
+        )}
+
+        {!draft.same_email_as_default && (
+          <>
+            <div>
+              <label className="text-sm font-medium block mb-1">Apply-from email account</label>
+              <select className="border rounded px-2 py-1 w-full bg-background" value={draft.email_account_id || ""} onChange={(e) => setDraft({ ...draft, email_account_id: e.target.value || null })}>
+                <option value="">(use inline email)</option>
+                {emailAccounts.map((e) => <option key={e.id} value={e.id}>{e.email}{e.has_app_password ? " ✓" : ""}</option>)}
+              </select>
+            </div>
+            {!draft.email_account_id && (
+              <TextField label="Apply-from email (inline)" value={draft.application_email || ""} onChange={(v) => setDraft({ ...draft, application_email: v })} />
+            )}
+            <TextField
+              label={draft.has_app_password ? "Gmail app password (stored ✓ — leave blank to keep)" : "Gmail app password"}
+              type="password"
+              autoComplete="new-password"
+              value={draft.application_email_app_password || ""}
+              onChange={(v) => setDraft({ ...draft, application_email_app_password: v })}
+            />
+          </>
+        )}
+
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active</label>
+
+        <div className="flex gap-2 pt-2">
+          <button onClick={save} className="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground">Save</button>
+          <button onClick={() => { setEditingId(null); setDraft({}); }} className="px-4 py-2 text-sm rounded-lg border">Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">Each bundle binds its own resume, apply-from email, and target titles. The worker routes each job to the matching bundle.</p>
+        <button onClick={startCreate} className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground">+ Add</button>
+      </div>
+      {profiles.map((p) => {
+        const resumeFile = p.resume_id ? resumes.find((r) => r.id === p.resume_id)?.file_name : undefined;
+        const resumeMissing = !!p.resume_id && !resumeFile;
+        const noEmail = !p.application_email && !p.email_account_id;
+        return (
+        <div key={p.id} className="border rounded-lg p-3 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-medium">{p.name}</span>
+              {p.is_default && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">DEFAULT</span>}
+              {resumeMissing && <span className="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded">⚠ missing resume</span>}
+              {noEmail && <span className="text-xs bg-warning/10 text-warning px-2 py-0.5 rounded">no apply email</span>}
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">
+              {p.application_email || "no email"} · {(p.target_titles || []).slice(0, 3).join(", ") || "no titles"} · resume: {resumeFile || (resumeMissing ? "⚠ deleted" : "none")}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {!p.is_default && <button onClick={() => setDefault(p.id)} className="text-xs text-primary hover:underline">Default</button>}
+            <button onClick={() => { setEditingId(p.id); setDraft({ ...p }); }} className="text-xs hover:underline">Edit</button>
+            {!p.is_default && <button onClick={() => del(p.id)} className="text-xs text-destructive hover:underline">Delete</button>}
+          </div>
+        </div>
+        );
+      })}
+      {profiles.length === 0 && <div className="text-sm text-muted-foreground">No profiles yet.</div>}
+    </div>
+  );
+}
+
+function TextField({ label, value, onChange, type = "text", autoComplete }: { label: string; value: string; onChange: (v: string) => void; type?: string; autoComplete?: string }) {
+  return (
+    <div>
+      <label className="text-sm font-medium block mb-1">{label}</label>
+      <input type={type} autoComplete={autoComplete} className="border rounded px-2 py-1 w-full bg-background" value={value} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  );
+}
+
+function ChipField({ label, values, onChange }: { label: string; values: string[]; onChange: (v: string[]) => void }) {
+  const [buf, setBuf] = useState("");
+  const commit = () => {
+    const parts = buf.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length) onChange([...(values || []), ...parts]);
+    setBuf("");
+  };
+  return (
+    <div>
+      <label className="text-sm font-medium block mb-1">{label}</label>
+      <div className="flex flex-wrap gap-1 mb-1">
+        {(values || []).map((v, i) => (
+          <span key={i} className="text-xs bg-muted rounded px-2 py-0.5 flex items-center gap-1">
+            {v}<button onClick={() => onChange((values || []).filter((_, j) => j !== i))}>×</button>
+          </span>
+        ))}
+      </div>
+      <input className="border rounded px-2 py-1 w-full bg-background" value={buf} onChange={(e) => setBuf(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); commit(); } }} onBlur={commit} placeholder="type + Enter" />
+    </div>
+  );
+}

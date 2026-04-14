@@ -8,6 +8,7 @@ export const API_ERROR_CODES = {
   not_found: { statusCode: 404, message: "Resource not found" },
   rate_limit_exceeded: { statusCode: 429, message: "Rate limit exceeded" },
   daily_limit_exceeded: { statusCode: 429, message: "Daily application limit reached" },
+  conflict: { statusCode: 409, message: "Resource was modified by another client" },
   invite_invalid: { statusCode: 400, message: "Invalid or expired invite code" },
   max_users_reached: { statusCode: 403, message: "Maximum user limit reached" },
   internal_server_error: { statusCode: 500, message: "An unexpected error occurred" },

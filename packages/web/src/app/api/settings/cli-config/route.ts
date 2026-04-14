@@ -80,6 +80,36 @@ export async function GET(request: NextRequest) {
     }];
   }
 
+  // Fetch multi-profile bundles so desktop can render the Profiles list +
+  // Claude can enumerate them in the initial prompt. No encrypted blobs
+  // in this endpoint — passwords flow only through /api/worker/proxy
+  // (service-role, worker-token gated).
+  //
+  // Resolve application_email server-side: pool binding (email_account_id)
+  // wins over inline application_email. Without this join, a bundle bound
+  // via the email-accounts pool surfaces application_email=null and the
+  // desktop prompt renders "—". We fetch pool accounts once and map.
+  const [bundlesRes, emailAccountsRes] = await Promise.all([
+    supabase
+      .from("user_application_profiles")
+      .select("id, name, slug, is_default, target_titles, target_keywords, excluded_titles, excluded_companies, excluded_role_keywords, excluded_levels, preferred_locations, remote_only, min_salary, ashby_boards, greenhouse_boards, resume_id, email_account_id, application_email, auto_apply, max_daily, updated_at")
+      .eq("user_id", auth.userId)
+      .order("is_default", { ascending: false }),
+    supabase
+      .from("user_email_accounts")
+      .select("id, email")
+      .eq("user_id", auth.userId),
+  ]);
+  const rawBundles = (bundlesRes.data || []) as Record<string, unknown>[];
+  const emailAccountMap = new Map(
+    ((emailAccountsRes.data || []) as Array<{ id: string; email: string }>).map((e) => [e.id, e.email]),
+  );
+  const bundles = rawBundles.map((b) => {
+    const poolEmail = b.email_account_id ? emailAccountMap.get(b.email_account_id as string) : undefined;
+    const resolved = poolEmail || (b.application_email as string | null | undefined) || null;
+    return { ...b, application_email: resolved };
+  });
+
   const response: Record<string, unknown> = {
     ai_cli_mode: user.ai_cli_mode || "own_account",
     tier: user.tier,
@@ -91,6 +121,7 @@ export async function GET(request: NextRequest) {
     profile: p,
     preferences: preferencesResult.data || {},
     resumes: resumesResult.data || [],
+    application_profiles: bundles || [],
     supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL,
     supabase_anon_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     telegram_chat_id: user.telegram_chat_id || null,

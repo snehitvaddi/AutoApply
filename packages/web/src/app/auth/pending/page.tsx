@@ -50,12 +50,26 @@ export default function PendingApprovalPage() {
           </svg>
         </div>
         <h1 className="text-xl font-bold mb-2">Pending Approval</h1>
-        <p className="text-gray-500 mb-4">
-          Your account ({email}) is waiting for admin approval.
-          You&apos;ll be redirected automatically once approved.
+        <p className="text-gray-600 mb-3">
+          Your account <span className="font-mono text-sm">{email}</span> is in the review queue.
         </p>
-        <p className="text-sm text-gray-400 mb-6">
-          This page checks for approval every 10 seconds.
+        <div className="text-left bg-gray-50 rounded-lg p-4 mb-4 text-sm text-gray-600 space-y-2">
+          <p>
+            <strong className="text-gray-900">Typical wait:</strong> under 24 hours. We review
+            every request manually to keep the system sustainable for everyone.
+          </p>
+          <p>
+            <strong className="text-gray-900">What happens next:</strong> once approved, this page
+            redirects you automatically to onboarding. You don&apos;t need to refresh or keep
+            the tab open — you can close it and come back later.
+          </p>
+          <p>
+            <strong className="text-gray-900">Questions?</strong> Reply to the signup confirmation
+            email or reach out on the project&apos;s GitHub Issues.
+          </p>
+        </div>
+        <p className="text-xs text-gray-400 mb-6">
+          This page polls for approval every 10 seconds.
         </p>
         <button
           onClick={handleSignOut}

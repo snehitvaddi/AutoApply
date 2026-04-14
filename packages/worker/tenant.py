@@ -62,6 +62,91 @@ DEFAULT_SECURITY_CLEARANCE_COMPANIES: list[str] = [
 
 
 @dataclass(frozen=True)
+class ApplyProfile:
+    """A single application bundle within a tenant.
+
+    Each bundle binds target roles + resume + apply-from email + app password
+    + per-bundle answer key. The worker picks the matching bundle at apply
+    time via TenantConfig.pick_profile_for_job(). Single-profile users have
+    exactly one bundle with is_default=True.
+    """
+    id: str
+    name: str
+    slug: str
+    is_default: bool
+
+    target_titles: tuple[str, ...]
+    target_keywords: tuple[str, ...]
+    excluded_titles: tuple[str, ...]
+    excluded_companies: tuple[str, ...]
+    excluded_role_keywords: tuple[str, ...]
+    excluded_levels: tuple[str, ...]
+    preferred_locations: tuple[str, ...]
+    remote_only: bool
+    min_salary: int | None
+    ashby_boards: tuple[str, ...]
+    greenhouse_boards: tuple[str, ...]
+
+    resume_path: str | None            # local cache path of resume PDF
+    resume_file_name: str | None
+    resume_signed_url: str | None      # cloud URL for lazy download
+    # application_email / app_password: None signals "fall back to .env"
+    # (install.sh's GMAIL_EMAIL / GMAIL_APP_PASSWORD). Empty string means
+    # explicitly blank (which the worker should also treat as "no override").
+    application_email: str | None
+    application_email_app_password: str | None  # DECRYPTED — in-memory only
+
+    auto_apply: bool
+    max_daily: int | None
+
+    def passes_filter(self, title: str, company: str, location: str) -> bool:
+        tl = (title or "").lower()
+        cl = (company or "").lower()
+        ll = (location or "").lower()
+        kwf = self.target_keywords or tuple(t.lower() for t in self.target_titles)
+        if not kwf:
+            return False
+        if not any(_keyword_hit(kw, tl) for kw in kwf):
+            return False
+        if any(kw in tl for kw in self.excluded_role_keywords):
+            return False
+        if any(lvl in tl for lvl in self.excluded_levels):
+            return False
+        if any(ec in cl for ec in self.excluded_companies):
+            return False
+        if self.preferred_locations:
+            locs = [loc.lower() for loc in self.preferred_locations]
+            if ll and not any(loc in ll for loc in locs):
+                return False
+        elif self.remote_only:
+            # Remote-only tenants: reject blank locations too. A missing
+            # location field almost always means in-office.
+            if not ll or "remote" not in ll:
+                return False
+        return True
+
+    def match_score(self, title: str, company: str = "", location: str = "") -> float:
+        """Score how well a job matches this bundle. 0.0 means no match
+        (passes_filter=False). Higher = better. Ties broken by is_default
+        at the TenantConfig level."""
+        if not self.passes_filter(title, company, location):
+            return 0.0
+        tl = (title or "").lower()
+        score = 0.0
+        for t in self.target_titles:
+            if t.lower() in tl:
+                score += 2.0
+        for kw in self.target_keywords:
+            if kw.lower() in tl:
+                score += 1.0
+        # No baseline — if zero titles/keywords actually substring-hit the
+        # title, this bundle does not claim the job. Previously we returned
+        # 0.1 which let a DA bundle claim an "AI Engineer" job whenever
+        # its excluded_role_keywords didn't explicitly blacklist "ai".
+        return score
+
+
+@dataclass(frozen=True)
 class TenantConfig:
     """Frozen per-tenant configuration for scout/filter/apply.
 
@@ -98,10 +183,43 @@ class TenantConfig:
     profile: dict                             # full user_profiles row
     answer_key: dict                          # EEO + standard Q&A
 
+    # Application bundles (1..N). Single-profile users have exactly one
+    # with is_default=True that mirrors the top-level fields above.
+    profiles: tuple[ApplyProfile, ...] = ()
+
     # Metadata
-    tenant_name: str                          # "first_name last_name" for logging/prompts
-    tenant_email: str
-    complete: bool                            # False → setup unfinished; worker refuses to run
+    tenant_name: str = ""                     # "first_name last_name" for logging/prompts
+    tenant_email: str = ""
+    complete: bool = False                    # False → setup unfinished; worker refuses to run
+
+    def default_profile(self) -> "ApplyProfile":
+        for p in self.profiles:
+            if p.is_default:
+                return p
+        if self.profiles:
+            return self.profiles[0]
+        raise TenantConfigIncompleteError(self.user_id, ["application_profile"])
+
+    def profile_by_id(self, pid: str | None) -> "ApplyProfile | None":
+        if not pid:
+            return None
+        for p in self.profiles:
+            if p.id == pid:
+                return p
+        return None
+
+    def pick_profile_for_job(self, title: str, company: str = "", location: str = "") -> "ApplyProfile | None":
+        """Score each bundle, return the best match. Ties broken by is_default.
+        Returns None if NO bundle accepts the job — caller should drop it
+        (or fall back to default if default has a resume)."""
+        if not self.profiles:
+            return None
+        scored = [(p.match_score(title, company, location), p) for p in self.profiles]
+        scored = [(s, p) for (s, p) in scored if s > 0]
+        if not scored:
+            return None
+        scored.sort(key=lambda sp: (sp[0], 1 if sp[1].is_default else 0), reverse=True)
+        return scored[0][1]
 
     # ── Loader ─────────────────────────────────────────────────────────────
 
@@ -119,39 +237,106 @@ class TenantConfig:
             raise TenantConfigIncompleteError(user_id, ["api_unreachable"])
 
         profile = raw.get("profile") or {}
-        prefs = raw  # get_tenant_config flattens prefs into top-level
+        prefs = raw  # get_tenant_config flattens fields into top-level
 
-        target_titles = [t.strip() for t in (prefs.get("search_queries") or []) if t and t.strip()]
-        target_keywords = [k.strip() for k in (prefs.get("keyword_filter") or []) if k and k.strip()]
-        preferred_locations = [loc.strip() for loc in (prefs.get("preferred_locations") or []) if loc and loc.strip()]
-
-        # Board overrides: None/empty-list from API → use global default
-        raw_ashby = prefs.get("ashby_boards")
-        ashby_boards = tuple(raw_ashby) if raw_ashby else tuple(DEFAULT_ASHBY_BOARDS)
-        raw_gh = prefs.get("greenhouse_boards")
-        greenhouse_boards = tuple(raw_gh) if raw_gh else tuple(DEFAULT_GREENHOUSE_BOARDS)
-
-        # Merge excluded_companies: user's list + visa-dependent clearance list
-        user_excluded = [c.lower().strip() for c in (prefs.get("excluded_companies") or [])]
         work_auth = (profile.get("work_authorization") or "unknown").lower().strip()
         visa_blocked = work_auth in ("opt", "h1b", "f1", "tn", "l1", "l2", "opt-stem")
+
+        tenant_name = f"{profile.get('first_name','')} {profile.get('last_name','')}".strip() or "unknown"
+        tenant_email = prefs.get("tenant_email") or profile.get("email") or ""
+
+        # Build profiles[] FIRST — bundles are the source of truth after the
+        # multi-profile refactor. The legacy top-level fields on `prefs` are
+        # only a fallback for the auto-wrap path when cloud returned no
+        # bundles (which now never happens post-backfill, but we keep the
+        # path for robustness against deleted rows).
+        raw_profiles = raw.get("profiles") or []
+        profile_tuple: tuple[ApplyProfile, ...]
+        if raw_profiles:
+            profile_tuple = tuple(_build_apply_profile(rp, fallback_email=tenant_email) for rp in raw_profiles)
+        else:
+            # Legacy auto-wrap: build one default bundle from top-level prefs.
+            legacy_titles = [t.strip() for t in (prefs.get("search_queries") or []) if t and t.strip()]
+            legacy_keywords = [k.strip() for k in (prefs.get("keyword_filter") or []) if k and k.strip()]
+            legacy_locs = [loc.strip() for loc in (prefs.get("preferred_locations") or []) if loc and loc.strip()]
+            legacy_user_excluded = [c.lower().strip() for c in (prefs.get("excluded_companies") or [])]
+            legacy_excluded_companies = (
+                tuple(sorted(set(legacy_user_excluded + DEFAULT_SECURITY_CLEARANCE_COMPANIES)))
+                if visa_blocked else tuple(sorted(set(legacy_user_excluded)))
+            )
+            raw_ashby = prefs.get("ashby_boards")
+            legacy_ashby = tuple(raw_ashby) if raw_ashby else tuple(DEFAULT_ASHBY_BOARDS)
+            raw_gh = prefs.get("greenhouse_boards")
+            legacy_gh = tuple(raw_gh) if raw_gh else tuple(DEFAULT_GREENHOUSE_BOARDS)
+            profile_tuple = (ApplyProfile(
+                id=f"legacy-{user_id[:8]}",
+                name="Default",
+                slug="default",
+                is_default=True,
+                target_titles=tuple(legacy_titles),
+                target_keywords=tuple(legacy_keywords),
+                excluded_titles=(),
+                excluded_companies=legacy_excluded_companies,
+                excluded_role_keywords=tuple(k.lower().strip() for k in (prefs.get("excluded_role_keywords") or []) if k),
+                excluded_levels=tuple(k.lower().strip() for k in (prefs.get("excluded_levels") or []) if k),
+                preferred_locations=tuple(legacy_locs),
+                remote_only=bool(prefs.get("remote_only", False)),
+                min_salary=prefs.get("min_salary"),
+                ashby_boards=legacy_ashby,
+                greenhouse_boards=legacy_gh,
+                resume_path=None,
+                resume_file_name=None,
+                resume_signed_url=None,
+                application_email=None,  # fall through to .env GMAIL_EMAIL
+                application_email_app_password=None,
+                auto_apply=True,
+                max_daily=None,
+            ),)
+
+        # Invariant: every loaded tenant has at least one bundle.
+        assert profile_tuple, "TenantConfig.load: profile_tuple must be non-empty"
+
+        # Derive top-level fields from bundles. The default bundle wins for
+        # scalar fields (remote_only, min_salary, excluded_* — used only by
+        # legacy passes_filter fallback). Lists are UNIONED across all
+        # bundles for scout queries so every bundle's roles get scouted.
+        default_bundle = next((p for p in profile_tuple if p.is_default), profile_tuple[0])
+
+        union_titles: list[str] = []
+        union_keywords: list[str] = []
+        for p in profile_tuple:
+            for t in p.target_titles:
+                if t and t not in union_titles:
+                    union_titles.append(t)
+            for k in p.target_keywords:
+                if k and k not in union_keywords:
+                    union_keywords.append(k)
+        # If a bundle has no target_keywords, its titles still drive filter
+        # matches via the lowered-titles fallback in ApplyProfile.passes_filter.
+        target_titles = union_titles
+        target_keywords = union_keywords
+
+        # Board overrides: take default bundle's override, else global list.
+        ashby_boards = default_bundle.ashby_boards or tuple(DEFAULT_ASHBY_BOARDS)
+        greenhouse_boards = default_bundle.greenhouse_boards or tuple(DEFAULT_GREENHOUSE_BOARDS)
+
+        # Excluded companies: default bundle's list + visa-dependent clearance.
+        user_excluded = [c.lower().strip() for c in default_bundle.excluded_companies]
         if visa_blocked:
             excluded_companies = tuple(sorted(set(user_excluded + DEFAULT_SECURITY_CLEARANCE_COMPANIES)))
         else:
             excluded_companies = tuple(sorted(set(user_excluded)))
 
-        # Completeness: must have at least one target_title + first_name + email
+        preferred_locations = list(default_bundle.preferred_locations)
+
+        # Completeness checks. A bundle with zero target_titles is unusable.
         missing: list[str] = []
         if not target_titles:
-            missing.append("target_titles (Settings → Preferences → Target Roles)")
+            missing.append("target_titles (Settings → Profiles → Target Roles)")
         if not profile.get("first_name"):
             missing.append("first_name (Settings → Personal)")
-        if not profile.get("email") and not prefs.get("tenant_email"):
+        if not profile.get("email") and not tenant_email:
             missing.append("email (Settings → Personal)")
-
-        tenant_name = f"{profile.get('first_name','')} {profile.get('last_name','')}".strip() or "unknown"
-        tenant_email = prefs.get("tenant_email") or profile.get("email") or ""
-
         if missing:
             raise TenantConfigIncompleteError(user_id, missing)
 
@@ -162,17 +347,21 @@ class TenantConfig:
             ashby_boards=ashby_boards,
             greenhouse_boards=greenhouse_boards,
             keyword_filter=tuple(target_keywords or [t.lower() for t in target_titles]),
-            excluded_role_keywords=tuple(k.lower().strip() for k in (prefs.get("excluded_role_keywords") or []) if k),
-            excluded_levels=tuple(k.lower().strip() for k in (prefs.get("excluded_levels") or []) if k),
+            excluded_role_keywords=tuple(k.lower() for k in default_bundle.excluded_role_keywords),
+            excluded_levels=tuple(k.lower() for k in default_bundle.excluded_levels),
             excluded_companies=excluded_companies,
             preferred_locations=tuple(preferred_locations),
-            remote_only=bool(prefs.get("remote_only", False)),
-            min_salary=prefs.get("min_salary"),
+            remote_only=bool(default_bundle.remote_only),
+            min_salary=default_bundle.min_salary,
             work_auth=work_auth,
             requires_sponsorship=bool(profile.get("requires_sponsorship", True)),
-            daily_apply_limit=int(prefs.get("daily_apply_limit", 25)),
+            # Default matches the SQL schema (001_schema.sql:20) so the
+            # Python fallback doesn't silently diverge from what the DB
+            # would use if users.daily_apply_limit were ever NULL.
+            daily_apply_limit=int(prefs.get("daily_apply_limit", 5)),
             profile=profile,
             answer_key=profile.get("answer_key_json") or {},
+            profiles=profile_tuple,
             tenant_name=tenant_name,
             tenant_email=tenant_email,
             complete=True,
@@ -252,6 +441,40 @@ class TenantConfig:
 # (e.g. "ai" shouldn't match "Retail Associate"). Longer keywords can use
 # plain substring match.
 _SHORT_KEYWORDS = frozenset({"ai", "ml", "nlp", "llm", "genai", "ux", "ui", "qa", "ios", "ba"})
+
+
+def _build_apply_profile(raw: dict, fallback_email: str = "") -> ApplyProfile:
+    """Construct an ApplyProfile from a cloud profiles[] entry."""
+    def _tup(key: str) -> tuple[str, ...]:
+        v = raw.get(key) or []
+        return tuple(str(x).strip() for x in v if str(x).strip())
+
+    resume = raw.get("resume") or {}
+    return ApplyProfile(
+        id=str(raw.get("id") or ""),
+        name=str(raw.get("name") or "Default"),
+        slug=str(raw.get("slug") or "default"),
+        is_default=bool(raw.get("is_default", False)),
+        target_titles=_tup("target_titles"),
+        target_keywords=_tup("target_keywords"),
+        excluded_titles=_tup("excluded_titles"),
+        excluded_companies=_tup("excluded_companies"),
+        excluded_role_keywords=tuple(k.lower() for k in _tup("excluded_role_keywords")),
+        excluded_levels=tuple(k.lower() for k in _tup("excluded_levels")),
+        preferred_locations=_tup("preferred_locations"),
+        remote_only=bool(raw.get("remote_only", False)),
+        min_salary=raw.get("min_salary"),
+        ashby_boards=tuple(raw.get("ashby_boards") or ()) or tuple(DEFAULT_ASHBY_BOARDS),
+        greenhouse_boards=tuple(raw.get("greenhouse_boards") or ()) or tuple(DEFAULT_GREENHOUSE_BOARDS),
+        resume_path=None,  # filled in by desktop when the file is cached locally
+        resume_file_name=(resume.get("file_name") if isinstance(resume, dict) else None),
+        resume_signed_url=(resume.get("signed_url") if isinstance(resume, dict) else None),
+        # None means "fall back to .env" — preserved so worker can detect it.
+        application_email=(raw.get("application_email") if raw.get("application_email") else None),
+        application_email_app_password=(raw.get("application_email_app_password") if raw.get("application_email_app_password") else None),
+        auto_apply=bool(raw.get("auto_apply", True)),
+        max_daily=raw.get("max_daily"),
+    )
 
 
 def _keyword_hit(kw: str, text: str) -> bool:

@@ -1,7 +1,33 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef, type ReactNode } from "react";
+
+function renderHelpWithLinks(text: string): ReactNode {
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((part, i) => {
+    if (/^https?:\/\//.test(part)) {
+      const match = part.match(/^(.*?)([.,;:!?)\]]*)$/);
+      const url = match?.[1] || part;
+      const trailing = match?.[2] || "";
+      return (
+        <span key={i}>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-gray-700"
+          >
+            {url}
+          </a>
+          {trailing}
+        </span>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
 import { AI_PROFILE_PROMPT, parseAiResponseSafe } from "@/lib/profile-schema";
+import { ProfilesTab } from "./ProfilesTab";
 
 const ROLE_PRESETS = [
   "AI Engineer", "ML Engineer", "Data Scientist", "Data Engineer",
@@ -10,7 +36,7 @@ const ROLE_PRESETS = [
   "ML Platform Engineer", "AI Infrastructure Engineer",
 ];
 
-type Tab = "ai-import" | "personal" | "work" | "preferences" | "resumes" | "integrations" | "telegram" | "email" | "worker" | "billing";
+type Tab = "ai" | "personal" | "work" | "preferences" | "profiles" | "resume" | "integrations" | "telegram" | "email" | "worker" | "billing";
 
 // Structured shapes for the Work & Education tab's new array editors.
 // Match what parseAiResponseSafe produces + what the AI_PROFILE_PROMPT
@@ -107,7 +133,7 @@ interface Resume {
 }
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("ai-import");
+  const [activeTab, setActiveTab] = useState<Tab>("ai");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -147,6 +173,10 @@ export default function SettingsPage() {
   const [resumeTargetRoles, setResumeTargetRoles] = useState("");
   const [resumeIsDefault, setResumeIsDefault] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // Upload progress 0..100 for the resume XHR. fetch() can't observe
+  // upload bytes, so the upload path below uses XMLHttpRequest instead.
+  const [uploadPct, setUploadPct] = useState(0);
+  const uploadXhrRef = useRef<XMLHttpRequest | null>(null);
 
   // Work & Education (multi-entry arrays from AI import). Rendered as
   // editable cards above the existing scalar fields. Persisted via the
@@ -536,8 +566,16 @@ export default function SettingsPage() {
       }),
     });
     setSaving(false);
-    if (res.ok) showMessage("Preferences saved!");
-    else showMessage("Failed to save preferences", "error");
+    if (res.ok) {
+      // Backend attaches `warning` when the default-bundle mirror was a
+      // no-op (user has zero bundles) — surface it so they know the
+      // worker isn't actually going to see these edits yet.
+      const body = await res.json().catch(() => null);
+      const warning = body?.data?.warning as string | undefined;
+      showMessage(warning || "Preferences saved!", warning ? "error" : "success");
+    } else {
+      showMessage("Failed to save preferences", "error");
+    }
   }
 
   async function saveTelegram() {
@@ -593,25 +631,65 @@ export default function SettingsPage() {
 
   async function uploadResume() {
     if (!resumeFile) return;
+    // XHR (not fetch) so we can observe upload.progress and expose an
+    // abort handle. Users on slow connections previously saw a disabled
+    // button for 30+ seconds with no indication it was working.
     setUploading(true);
+    setUploadPct(0);
     const formData = new FormData();
     formData.append("resume", resumeFile);
     formData.append("target_roles", resumeTargetRoles);
     formData.append("is_default", String(resumeIsDefault));
 
-    const res = await fetch("/api/settings/resumes", { method: "POST", body: formData });
-    setUploading(false);
+    await new Promise<void>((resolve) => {
+      const xhr = new XMLHttpRequest();
+      uploadXhrRef.current = xhr;
+      xhr.open("POST", "/api/settings/resumes");
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) {
+          setUploadPct(Math.round((ev.loaded / ev.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        setUploading(false);
+        setUploadPct(0);
+        uploadXhrRef.current = null;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          showMessage("Resume uploaded!");
+          setResumeFile(null);
+          setResumeTargetRoles("");
+          setResumeIsDefault(false);
+          fetchResumes();
+        } else {
+          try {
+            const body = JSON.parse(xhr.responseText || "{}");
+            showMessage(body.message || `Upload failed (${xhr.status})`, "error");
+          } catch {
+            showMessage(`Upload failed (${xhr.status})`, "error");
+          }
+        }
+        resolve();
+      };
+      xhr.onerror = () => {
+        setUploading(false);
+        setUploadPct(0);
+        uploadXhrRef.current = null;
+        showMessage("Upload failed — network error", "error");
+        resolve();
+      };
+      xhr.onabort = () => {
+        setUploading(false);
+        setUploadPct(0);
+        uploadXhrRef.current = null;
+        showMessage("Upload cancelled", "error");
+        resolve();
+      };
+      xhr.send(formData);
+    });
+  }
 
-    if (res.ok) {
-      showMessage("Resume uploaded!");
-      setResumeFile(null);
-      setResumeTargetRoles("");
-      setResumeIsDefault(false);
-      fetchResumes();
-    } else {
-      const json = await res.json();
-      showMessage(json.message || "Upload failed", "error");
-    }
+  function cancelUpload() {
+    uploadXhrRef.current?.abort();
   }
 
   async function deleteResume(id: string) {
@@ -794,11 +872,12 @@ export default function SettingsPage() {
   }
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "ai-import", label: "AI Import" },
+    { key: "ai", label: "AI Import" },
     { key: "personal", label: "Personal Info" },
     { key: "work", label: "Work & Education" },
     { key: "preferences", label: "Job Preferences" },
-    { key: "resumes", label: "Resumes" },
+    { key: "profiles", label: "Profiles" },
+    { key: "resume", label: "Resumes" },
     { key: "integrations", label: "API Keys" },
     { key: "telegram", label: "Telegram" },
     { key: "email", label: "Email" },
@@ -840,7 +919,7 @@ export default function SettingsPage() {
       </div>
 
       {/* AI Import Tab */}
-      {activeTab === "ai-import" && (
+      {activeTab === "ai" && (
         <section className="bg-white rounded-xl border p-6">
           <h2 className="font-semibold mb-2">Quick Import from AI</h2>
           <p className="text-sm text-gray-500 mb-4">
@@ -1347,6 +1426,22 @@ export default function SettingsPage() {
       {/* Job Preferences Tab */}
       {activeTab === "preferences" && (
         <section className="bg-white rounded-xl border p-6">
+          <div className="mb-4 flex items-start gap-3 rounded-lg border border-brand-200 bg-brand-50 p-3 text-sm">
+            <div className="flex-1">
+              <p className="font-medium text-brand-900">
+                Heads up — these fields now mirror to your <strong>default Profile</strong>.
+              </p>
+              <p className="text-brand-800 text-xs mt-1">
+                For per-role targeting (different titles, resumes, or apply emails), use the <strong>Profiles</strong> tab. This tab stays here for quick edits to your default bundle.
+              </p>
+            </div>
+            <button
+              onClick={() => setActiveTab("profiles")}
+              className="text-xs px-3 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 whitespace-nowrap"
+            >
+              Go to Profiles →
+            </button>
+          </div>
           <h2 className="font-semibold mb-4">Job Preferences</h2>
           <div className="space-y-4">
             <div>
@@ -1480,7 +1575,11 @@ export default function SettingsPage() {
       )}
 
       {/* Resumes Tab */}
-      {activeTab === "resumes" && (
+      {activeTab === "profiles" && (
+        <ProfilesTab onMessage={(text, type) => { setMessage(text); setMessageType(type); }} />
+      )}
+
+      {activeTab === "resume" && (
         <section className="space-y-6">
           {/* Existing resumes */}
           <div className="bg-white rounded-xl border p-6">
@@ -1584,13 +1683,36 @@ export default function SettingsPage() {
                 />
                 <span className="text-sm">Set as default resume</span>
               </label>
-              <button
-                onClick={uploadResume}
-                disabled={uploading || !resumeFile}
-                className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
-              >
-                {uploading ? "Uploading..." : "Upload Resume"}
-              </button>
+              {uploading && (
+                <div className="space-y-2">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                    <div
+                      className="h-full bg-brand-600 transition-all"
+                      style={{ width: `${uploadPct}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Uploading… {uploadPct}% {resumeFile ? `(${Math.round(resumeFile.size / 1024)} KB)` : ""}
+                  </p>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={uploadResume}
+                  disabled={uploading || !resumeFile}
+                  className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {uploading ? `Uploading ${uploadPct}%` : "Upload Resume"}
+                </button>
+                {uploading && (
+                  <button
+                    onClick={cancelUpload}
+                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </section>
@@ -1648,7 +1770,7 @@ export default function SettingsPage() {
                       </button>
                     )}
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">{def.help}</p>
+                  <p className="mt-1 text-xs text-gray-500">{renderHelpWithLinks(def.help)}</p>
                 </div>
               );
             })}

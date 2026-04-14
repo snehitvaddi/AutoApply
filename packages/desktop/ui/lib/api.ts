@@ -20,6 +20,23 @@ export async function checkAuth() {
   return apiFetch<{ authenticated: boolean; profile?: Record<string, unknown> }>("/auth/status");
 }
 
+/**
+ * Worker heartbeat — reflects what the worker thinks it's doing right now.
+ * last_action="awaiting_setup" means the worker refused to boot because
+ * target_titles is empty. The dashboard uses this to render a "finish
+ * setup" banner instead of pretending everything's fine with zero stats.
+ */
+export async function getHeartbeat() {
+  return apiFetch<{
+    ok: boolean;
+    data: {
+      last_action?: string;
+      details?: string;
+      updated_at?: string;
+    };
+  }>("/heartbeat");
+}
+
 export async function saveToken(token: string) {
   return apiFetch("/auth/token", {
     method: "POST",

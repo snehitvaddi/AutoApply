@@ -12,9 +12,10 @@ import {
   getAuthState,
   getCurrentlyApplying,
   focusBrowser,
+  getHeartbeat,
   type CurrentlyApplyingJob,
 } from "@/lib/api"
-import { Key, AlertTriangle, ArrowRight, Loader2, ExternalLink } from "lucide-react"
+import { Key, AlertTriangle, ArrowRight, Loader2, ExternalLink, Settings } from "lucide-react"
 
 // Banner state reflects /api/auth/state, which is the desktop server's
 // real view of whether the saved worker token still authenticates against
@@ -22,6 +23,13 @@ import { Key, AlertTriangle, ArrowRight, Loader2, ExternalLink } from "lucide-re
 // it returns authenticated:true whenever the token file exists on disk,
 // swallowing 401s from the upstream proxy.
 type AuthBanner = null | "no_token" | "revoked"
+
+// Worker heartbeat banner — reflects the worker's self-reported state.
+// "awaiting_setup" means the worker refused to boot because the user
+// hasn't finished Settings (target_titles missing, no resume, etc.).
+// Without this the dashboard shows a sea of zeros and the user has no
+// idea why nothing is happening — audit-flagged #1 abandonment risk.
+type HeartbeatBanner = null | { action: string; details: string }
 
 function elapsedTime(dateStr?: string): string {
   if (!dateStr) return ""
@@ -34,6 +42,19 @@ function elapsedTime(dateStr?: string): string {
 export default function DashboardPage() {
   const { stats, daily, platforms, recent, loading, error } = useStats()
   const [authBanner, setAuthBanner] = useState<AuthBanner>(null)
+  const [heartbeatBanner, setHeartbeatBanner] = useState<HeartbeatBanner>(null)
+  // Until the first heartbeat fetch returns, we don't know whether to show
+  // a setup banner or not. If the user is brand-new and the worker is
+  // silent, the dashboard would look deceptively empty for up to 15s.
+  // Render a neutral "checking worker state" placeholder instead.
+  const [heartbeatChecked, setHeartbeatChecked] = useState(false)
+  // First-application celebration. Tracks the applied_today value at
+  // mount so we can fire a toast the first time it increments during
+  // this session. Prevents the user from missing their first successful
+  // application — previously the only signal was a stats counter ticking.
+  const [firstMountAppliedToday, setFirstMountAppliedToday] = useState<number | null>(null)
+  const [celebrated, setCelebrated] = useState(false)
+  const [showCelebration, setShowCelebration] = useState(false)
   const [current, setCurrent] = useState<CurrentlyApplyingJob | null>(null)
 
   useEffect(() => {
@@ -58,6 +79,34 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [])
 
+  // Poll worker heartbeat every 15s to catch "awaiting_setup" (worker
+  // refused to boot due to missing target_titles / resume / etc.) and
+  // surface it as a Finish-Setup banner. The dashboard's stat cards are
+  // all zero in this state; without a banner the user has no idea why.
+  useEffect(() => {
+    const check = () => {
+      getHeartbeat()
+        .then((res) => {
+          const act = res?.data?.last_action || ""
+          const setupStates = ["awaiting_setup", "awaiting_preferences", "awaiting_resume"]
+          if (setupStates.includes(act)) {
+            setHeartbeatBanner({ action: act, details: res?.data?.details || "" })
+          } else {
+            setHeartbeatBanner(null)
+          }
+          setHeartbeatChecked(true)
+        })
+        .catch(() => {
+          // Transient — leave banner as-is but flip checked so we don't
+          // show the "checking" skeleton forever if the endpoint is down.
+          setHeartbeatChecked(true)
+        })
+    }
+    check()
+    const interval = setInterval(check, 15000)
+    return () => clearInterval(interval)
+  }, [])
+
   const refreshCurrent = useCallback(async () => {
     try {
       const res = await getCurrentlyApplying()
@@ -70,6 +119,21 @@ export default function DashboardPage() {
     const interval = setInterval(refreshCurrent, 5000)
     return () => clearInterval(interval)
   }, [refreshCurrent])
+
+  // Capture the baseline applied_today count on first stats load, then
+  // fire a celebration toast the first time that number increments.
+  useEffect(() => {
+    if (loading || stats?.applied_today == null) return
+    if (firstMountAppliedToday === null) {
+      setFirstMountAppliedToday(stats.applied_today)
+      return
+    }
+    if (!celebrated && stats.applied_today > firstMountAppliedToday) {
+      setCelebrated(true)
+      setShowCelebration(true)
+      window.setTimeout(() => setShowCelebration(false), 6000)
+    }
+  }, [loading, stats?.applied_today, firstMountAppliedToday, celebrated])
 
   const handleFocusBrowser = async () => {
     try {
@@ -115,6 +179,101 @@ export default function DashboardPage() {
               <p className="text-sm font-medium text-foreground">API Token Required</p>
               <p className="text-xs text-muted-foreground">
                 Redeem an activation code to connect this desktop to your ApplyLoop account.
+              </p>
+            </div>
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+          </Link>
+        )}
+
+        {/* Empty-state welcome card — brand-new user with no heartbeat
+            banner, no applications yet, no currently-applying job. Shows
+            a 3-step checklist so they're not staring at an empty
+            dashboard wondering what to do. Hidden as soon as they have
+            any apps or the worker starts running. */}
+        {!authBanner && heartbeatChecked && !heartbeatBanner && !current &&
+         !loading && (stats?.total_applied ?? 0) === 0 && (
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-5">
+            <h3 className="text-sm font-semibold text-foreground mb-2">
+              Welcome to ApplyLoop 👋
+            </h3>
+            <p className="text-xs text-muted-foreground mb-3">
+              You&apos;re all set up. Finish these three steps and the worker
+              will start applying on your behalf — usually within a few minutes.
+            </p>
+            <ol className="space-y-2 text-sm">
+              <li className="flex items-start gap-2">
+                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-medium text-primary">1</span>
+                <Link href="/settings/" className="flex-1 text-foreground hover:underline">
+                  Open Settings → Profiles → add at least one target title
+                </Link>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-medium text-primary">2</span>
+                <Link href="/settings/" className="flex-1 text-foreground hover:underline">
+                  Settings → Resumes → upload your PDF
+                </Link>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-medium text-primary">3</span>
+                <Link href="/settings/" className="flex-1 text-foreground hover:underline">
+                  Settings → API Keys → add Gmail app password + Telegram bot
+                </Link>
+              </li>
+            </ol>
+          </div>
+        )}
+
+        {/* Celebration toast — fires once per session when applied_today
+            first increments past the value observed at mount. Auto-
+            dismisses after 6 seconds. */}
+        {showCelebration && (
+          <div className="flex items-center gap-3 rounded-xl border border-success/30 bg-success/5 p-4">
+            <div className="text-2xl">🎉</div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">Application submitted</p>
+              <p className="text-xs text-muted-foreground">
+                The worker just submitted a new application. Details in Recent Applications below.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowCelebration(false)}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* Neutral placeholder shown before the first heartbeat fetch
+            resolves. Prevents a new user from staring at zero stats with
+            no explanation for up to 15s on slow networks. */}
+        {!authBanner && !heartbeatChecked && (
+          <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/30 p-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">Checking worker state…</p>
+          </div>
+        )}
+
+        {/* Setup-incomplete banner — worker is alive but refusing to apply
+            because required data is missing. Replaces the blank-dashboard
+            abandonment risk: instead of zero stats with no explanation,
+            the user sees exactly which step to finish + a direct link. */}
+        {!authBanner && heartbeatChecked && heartbeatBanner && (
+          <Link
+            href="/settings/"
+            className="flex items-center gap-3 rounded-xl border border-warning/30 bg-warning/5 p-4 transition-colors hover:bg-warning/10"
+          >
+            <Settings className="h-5 w-5 text-warning" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">
+                {heartbeatBanner.action === "awaiting_resume"
+                  ? "Upload a resume to start applying"
+                  : heartbeatBanner.action === "awaiting_preferences"
+                  ? "Set your target roles to start scouting"
+                  : "Finish setup to start the worker"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {heartbeatBanner.details || "The worker is waiting for setup to be completed."}
               </p>
             </div>
             <ArrowRight className="h-4 w-4 text-muted-foreground" />

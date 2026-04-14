@@ -22,7 +22,8 @@ from tenant import (
 from scout import REGISTERED_SOURCES
 from db import (
     claim_next_job, load_user_profile, update_queue_status, log_application,
-    check_daily_limit, get_answer_key, download_resume, upload_screenshot,
+    check_daily_limit, count_profile_applied_today,
+    get_answer_key, download_resume, download_resume_by_url, upload_screenshot,
     fetch_user_job_preferences, enqueue_discovered_jobs, update_heartbeat as db_heartbeat,
     check_company_rate as db_check_company_rate,
     update_local_status,
@@ -229,6 +230,22 @@ def run_scout_cycle(tenant: TenantConfig) -> int:
             logger.warning(f"{source.name} scout failed: {e}")
             counts[source.name] = 0
 
+    # Tag every job with the best-matching profile bundle (multi-profile).
+    # Single-profile users: every job gets default.id. Jobs no bundle
+    # accepts fall back to the default so scout behavior is unchanged.
+    if tenant.profiles:
+        default = tenant.default_profile()
+        tagged: list[dict] = []
+        for j in all_jobs:
+            picked = tenant.pick_profile_for_job(
+                j.get("title", ""), j.get("company", ""), j.get("location", "")
+            )
+            if not picked:
+                picked = default
+            j["application_profile_id"] = picked.id
+            tagged.append(j)
+        all_jobs = tagged
+
     summary = ", ".join(f"{v} {k}" for k, v in counts.items() if v > 0)
     logger.info(f"Scout: {summary} = {len(all_jobs)} total (after per-source filter)")
 
@@ -246,15 +263,81 @@ def run_scout_cycle(tenant: TenantConfig) -> int:
     return enqueued
 
 
-def scout_loop(tenant: TenantConfig) -> None:
-    """Background thread: runs scout cycle every SCOUT_INTERVAL_MINUTES for
-    the per-tenant TenantConfig. Never called with a 'system' user_id."""
+# ── Live tenant reference + reload thread ──────────────────────────────────
+#
+# The worker used to call TenantConfig.load() exactly once at main() boot
+# and hold the frozen dataclass for the process lifetime. That meant a user
+# rotating their Gmail app password, creating a new bundle, or changing
+# target_titles on the web dashboard would NOT be picked up until worker
+# restart — silent staleness that only surfaced as "SMTP failed" with no
+# explanation.
+#
+# Now: `_current_tenant` is a module-level ref that both the scout thread
+# and the apply loop read. A background thread refreshes it every
+# TENANT_RELOAD_INTERVAL_SECS. Both loops pick up the new tenant at the top
+# of their next iteration. TenantConfig is still frozen — we just replace
+# the reference atomically.
+
+_current_tenant: TenantConfig | None = None
+_tenant_lock = threading.Lock()
+TENANT_RELOAD_INTERVAL_SECS = int(os.environ.get("APPLYLOOP_TENANT_RELOAD_SECS", "300"))
+
+
+def get_current_tenant() -> TenantConfig:
+    """Return the most-recently-loaded TenantConfig. Raises if boot hasn't
+    loaded one yet — that should never happen post-main()."""
+    with _tenant_lock:
+        if _current_tenant is None:
+            raise RuntimeError("get_current_tenant() before main() loaded one")
+        return _current_tenant
+
+
+def _set_current_tenant(tc: TenantConfig) -> None:
+    global _current_tenant
+    with _tenant_lock:
+        _current_tenant = tc
+
+
+def tenant_reload_loop(user_id: str) -> None:
+    """Background thread: periodically reload TenantConfig so mid-run
+    edits (new bundles, rotated Gmail app passwords, new target_titles)
+    propagate without a worker restart. Failures are logged but don't
+    crash — we keep the last good tenant."""
+    while running:
+        for _ in range(TENANT_RELOAD_INTERVAL_SECS):
+            if not running:
+                return
+            time.sleep(1)
+        try:
+            fresh = TenantConfig.load(user_id)
+            prev = _current_tenant
+            _set_current_tenant(fresh)
+            if prev is not None and prev.profiles != fresh.profiles:
+                logger.info(
+                    f"Tenant reload: bundles changed "
+                    f"({len(prev.profiles)} → {len(fresh.profiles)})"
+                )
+        except TenantConfigIncompleteError as e:
+            logger.warning(f"Tenant reload skipped (incomplete): {e}")
+        except Exception as e:
+            logger.warning(f"Tenant reload failed (keeping previous): {e}")
+
+
+def scout_loop(_initial_tenant: TenantConfig) -> None:
+    """Background thread: runs scout cycle every SCOUT_INTERVAL_MINUTES.
+    Reads the live tenant from `_current_tenant` at each cycle so bundle
+    additions propagate without worker restart. The initial arg is kept
+    only so the thread signature stays backward compatible for callers."""
     while running:
         try:
+            tenant = get_current_tenant()
             run_scout_cycle(tenant)
         except Exception as e:
             logger.exception(f"Scout cycle error: {e}")
-            update_heartbeat(tenant.user_id, "error", str(e))
+            try:
+                update_heartbeat(get_current_tenant().user_id, "error", str(e))
+            except Exception:
+                pass
 
         # Sleep in small increments so we can respond to shutdown
         for _ in range(SCOUT_INTERVAL_MINUTES * 60):
@@ -481,7 +564,16 @@ def main():
         return
 
     logger.info(f"Tenant loaded: {tenant.profile_summary_hint()}")
+    _set_current_tenant(tenant)
     _write_worker_pid()
+
+    # Start the tenant reload thread — refreshes _current_tenant every
+    # TENANT_RELOAD_INTERVAL_SECS so password rotations / bundle edits
+    # take effect without worker restart.
+    reload_thread = threading.Thread(
+        target=tenant_reload_loop, args=(user_id,), daemon=True, name="tenant-reload"
+    )
+    reload_thread.start()
 
     global_template = load_global_template()
     hourly_count = 0
@@ -504,6 +596,14 @@ def main():
     )
 
     while running:
+        # Refresh tenant reference at the top of each iteration. The
+        # reload thread updates `_current_tenant` every N seconds; we just
+        # read it here so each apply cycle uses the freshest bundle list +
+        # decrypted app passwords. Never falls back to the boot-time
+        # tenant — if reload ever nullified it, something's wrong and the
+        # RuntimeError will surface rather than silently using stale creds.
+        tenant = get_current_tenant()
+
         # Daily update check — on first loop of each new day, pull latest code/learnings
         if check_and_pull_updates():
             global_template = load_global_template()  # reload after update
@@ -661,9 +761,68 @@ def main():
             time.sleep(120)
             continue
 
-        # Resume: probe download_resume. Wave 3 fix preserved.
+        # Resolve the profile bundle for this job BEFORE resume + answer_key.
+        # Multi-profile: the queue row carries application_profile_id tagged
+        # at scout time. If the tag points at a bundle that was DELETED
+        # after enqueue, we fail the job loudly rather than silently falling
+        # back to default (which would apply with the wrong resume/creds).
+        tagged_pid = job.get('application_profile_id')
+        if tagged_pid:
+            job_profile = tenant.profile_by_id(tagged_pid)
+            if not job_profile:
+                logger.warning(
+                    f"Job {job['id']} tagged with bundle {tagged_pid[:8]} "
+                    f"which no longer exists — marking failed"
+                )
+                update_queue_status(job['id'], 'failed', error='profile_deleted')
+                update_local_status(job, 'failed', 'profile bundle was deleted')
+                continue
+        else:
+            job_profile = tenant.default_profile()
+
+        # Per-bundle daily cap. This is independent of the user-wide
+        # daily_apply_limit checked upstream (which uses the cloud API's
+        # aggregate count). A user can set max_daily on a bundle to
+        # reserve slots for a second bundle (e.g. 10 AI apps + 10 DA
+        # apps per day) or to cap spam. None OR 0 means "no cap" — to
+        # pause a bundle entirely, use auto_apply=false instead. This
+        # avoids the "0 means permanently blocked" ambiguity flagged in
+        # the code audit.
+        if job_profile.max_daily is not None and job_profile.max_daily > 0:
+            applied_today = count_profile_applied_today(job_profile.id)
+            if applied_today >= job_profile.max_daily:
+                logger.info(
+                    f"Bundle '{job_profile.name}' hit max_daily={job_profile.max_daily} "
+                    f"(applied_today={applied_today}) — returning job {job['id']} to queue"
+                )
+                update_queue_status(job['id'], 'pending', error=f"bundle_max_daily:{job_profile.name}")
+                time.sleep(30)
+                continue
+
+        # Creds are passed to applier + knowledge.py EXPLICITLY. We no
+        # longer mutate os.environ — that pattern leaked plaintext app
+        # passwords to subprocess/Chrome children via env inheritance,
+        # and was a thread-safety footgun across scout/apply/heartbeat.
+        # None means "fall back to .env" (legacy single-profile behavior).
+        bundle_email = job_profile.application_email
+        bundle_app_password = job_profile.application_email_app_password
+        logger.info(
+            f"Job {job['id']} bound to profile '{job_profile.name}' "
+            f"(email={bundle_email or 'env-fallback'}, "
+            f"resume={job_profile.resume_file_name or 'legacy-picker'})"
+        )
+
+        # Resume: prefer the bundle's bound resume. Fall back to the legacy
+        # title-based picker only when the bundle has no resume_id.
         try:
-            resume_path = download_resume(user_id, job.get('title'))
+            if job_profile.resume_signed_url:
+                resume_path = download_resume_by_url(
+                    job_profile.resume_signed_url,
+                    job_profile.resume_file_name or "resume.pdf",
+                    cache_key=job_profile.id[:8],
+                )
+            else:
+                resume_path = download_resume(user_id, job.get('title'))
         except WorkerAuthError:
             raise
         except Exception as e:
@@ -696,7 +855,9 @@ def main():
 
         try:
             profile = load_user_profile(user_id)
-            answer_key = build_answer_key(profile, global_template)
+            answer_key = build_answer_key(
+                profile, global_template, profile_email=bundle_email,
+            )
 
             # Resolve real ATS from aggregator URLs (Indeed/Himalayas/LinkedIn
             # jobs link to real ATS pages — detect which one from the URL)
@@ -724,7 +885,11 @@ def main():
                 continue
 
             try:
-                applier = ApplierClass(profile, answer_key, resume_path)
+                applier = ApplierClass(
+                    profile, answer_key, resume_path,
+                    profile_email=bundle_email,
+                    profile_app_password=bundle_app_password,
+                )
             except MissingResumeError as e:
                 logger.error(f"Resume missing for job {job['id']}: {e}")
                 update_queue_status(job['id'], 'failed', error=f"resume file missing: {e}")
@@ -741,7 +906,10 @@ def main():
                     screenshot_url = upload_screenshot(user_id, result.screenshot)
                 update_queue_status(job['id'], 'submitted')
                 log_application(user_id, job, {'status': 'submitted', 'screenshot_url': screenshot_url})
-                send_application_result(user_id, job, result.screenshot)
+                # Only render the bundle name for multi-profile users so
+                # single-profile users see the pre-refactor caption.
+                _bundle_name = job_profile.name if len(tenant.profiles) > 1 else None
+                send_application_result(user_id, job, result.screenshot, profile_name=_bundle_name)
                 hourly_count += 1
                 update_heartbeat(user_id, "applied", f"{company} — {job.get('title', '')}")
             else:

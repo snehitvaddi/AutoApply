@@ -27,8 +27,16 @@ def _telegram_api(method: str, **kwargs) -> dict:
     return resp.json()
 
 
-def send_application_result(user_id: str, job: dict, screenshot_path: str | None):
-    """Send a photo + caption to the user's Telegram after a successful application."""
+def send_application_result(
+    user_id: str,
+    job: dict,
+    screenshot_path: str | None,
+    profile_name: str | None = None,
+):
+    """Send a photo + caption to the user's Telegram after a successful
+    application. `profile_name` is the name of the multi-profile bundle
+    this application was submitted under — only rendered when the user
+    has >1 bundle, so single-profile users see no change."""
     chat_id = get_user_telegram_chat_id(user_id)
     if not chat_id:
         logger.warning(f"No Telegram chat_id for user {user_id}, skipping notification")
@@ -39,8 +47,9 @@ def send_application_result(user_id: str, job: dict, screenshot_path: str | None
     posted = job.get("posted_at", "N/A")
     ats = job.get("ats", "N/A")
 
+    profile_line = f"\n*Profile:* {profile_name}" if profile_name else ""
     caption = (
-        f"*Applied*\n"
+        f"*Applied*{profile_line}\n"
         f"*Role:* {role}\n"
         f"*Company:* {company}\n"
         f"*ATS:* {ats}\n"

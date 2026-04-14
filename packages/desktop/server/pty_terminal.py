@@ -635,6 +635,28 @@ class PTYSession:
         if cloud_prefs:
             local["preferences"] = cloud_prefs
 
+        # Multi-profile bundles. Cloud is authoritative — no three-way
+        # reconcile. Distinguish "key absent" (old cli-config, don't touch
+        # local cache) from "key present but empty list" (user deleted all
+        # bundles — clear local so worker stops acting on deleted bundles).
+        if "application_profiles" in data:
+            new_bundles = data.get("application_profiles") or []
+            local["application_profiles"] = new_bundles
+            # Track max bundle updated_at for cross-session staleness
+            # detection. If the cloud's max moves forward vs what we last
+            # saw, log it so the next PTY prompt build knows to re-render.
+            try:
+                new_max = max((b.get("updated_at") or "") for b in new_bundles) if new_bundles else ""
+            except Exception:
+                new_max = ""
+            prev_max = meta.get("last_bundles_updated_at") or ""
+            if new_max and new_max > prev_max:
+                logger.info(
+                    f"Bundle cache advanced: {prev_max or '<none>'} → {new_max} "
+                    f"({len(new_bundles)} bundle(s))"
+                )
+            meta["last_bundles_updated_at"] = new_max
+
         try:
             with open(profile_path, "w", encoding="utf-8") as f:
                 json.dump(local, f, indent=2)
@@ -955,6 +977,28 @@ class PTYSession:
         current_title = work.get("current_title") or "unknown role"
         target_titles = ", ".join((prefs.get("target_titles") or [])[:6]) or "roles listed in profile.json"
 
+        # Multi-profile: render a compact enumeration when the user has >1
+        # bundle. Single-profile users get no extra block — pre-multi-profile
+        # wording stays exact.
+        bundles = p.get("application_profiles") or []
+        multi_profile_block = ""
+        if isinstance(bundles, list) and len(bundles) > 1:
+            lines = []
+            for i, b in enumerate(bundles, 1):
+                tag = " (DEFAULT)" if b.get("is_default") else ""
+                name = b.get("name") or f"Profile {i}"
+                email = b.get("application_email") or "—"
+                titles = ", ".join((b.get("target_titles") or [])[:4]) or "—"
+                lines.append(f"  {i}. \"{name}\"{tag} → {email}, targets: {titles}")
+            multi_profile_block = (
+                "\nYou have the following application profile bundles:\n"
+                + "\n".join(lines)
+                + "\n\nThe WORKER tags each job with the right application_profile_id at claim "
+                + "time. You do NOT pick the bundle — form-fill with whatever bundle the worker "
+                + "hands you for the current job (via GMAIL_EMAIL / GMAIL_APP_PASSWORD env + the "
+                + "resume it downloads). See SOUL.md STEP 2.5.\n"
+            )
+
         # A real Telegram bot token is ~45+ chars in the shape
         # "<bot_id>:<secret>" — anything shorter (e.g. "placeholder") is
         # a stub from an incomplete admin-side config. Treat stubs as
@@ -1014,6 +1058,8 @@ class PTYSession:
         lines.append("You are the ApplyLoop agent booting fresh for the user.")
         lines.append(f"User: {first_name} — currently {current_title} at {current_company}.")
         lines.append(f"Target roles: {target_titles}.")
+        if multi_profile_block:
+            lines.append(multi_profile_block)
         lines.append(f"Preferred locations: {preferred_locations}.")
         lines.append("")
         lines.append("MISSION STATEMENT — internalize this and never deviate:")

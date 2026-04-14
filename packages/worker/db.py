@@ -253,13 +253,14 @@ def enqueue_to_local_db(jobs: list[dict]) -> int:
             dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else f"{company.lower().replace(' ', '-')}|{(job.get('title', '')).lower().replace(' ', '-')}"
             try:
                 conn.execute("""
-                    INSERT INTO applications (company, role, url, ats, source, location, posted_at, scouted_at, updated_at, status, dedup_token)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+                    INSERT INTO applications (company, role, url, ats, source, location, posted_at, scouted_at, updated_at, status, dedup_token, application_profile_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)
                     ON CONFLICT(dedup_token) DO NOTHING
                 """, (
                     company, job.get("title", ""), job.get("apply_url", ""),
                     job.get("ats", ""), job.get("source", ""), job.get("location", ""),
                     job.get("posted_at"), now, now, dedup_token,
+                    job.get("application_profile_id"),
                 ))
                 inserted += conn.total_changes  # approximate
             except sqlite3.IntegrityError:
@@ -315,13 +316,20 @@ def _ensure_local_schema(conn: sqlite3.Connection):
             applied_at TEXT, updated_at TEXT,
             status TEXT NOT NULL DEFAULT 'scouted'
                 CHECK(status IN ('scouted','queued','applying','submitted','failed','skipped','blocked','interview','rejected','offer')),
-            notes TEXT, screenshot TEXT, dedup_token TEXT UNIQUE
+            notes TEXT, screenshot TEXT, dedup_token TEXT UNIQUE,
+            application_profile_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_status ON applications(status);
         CREATE INDEX IF NOT EXISTS idx_company ON applications(company);
         CREATE INDEX IF NOT EXISTS idx_applied_at ON applications(applied_at);
         CREATE INDEX IF NOT EXISTS idx_dedup ON applications(dedup_token);
     """)
+    # Additive column migration for existing databases. SQLite is fine
+    # with duplicate ADD COLUMN failing — we swallow the exception.
+    try:
+        conn.execute("ALTER TABLE applications ADD COLUMN application_profile_id TEXT")
+    except sqlite3.OperationalError:
+        pass
 
 
 # ── User profile ──────────────────────────────────────────────────────────
@@ -337,6 +345,28 @@ def check_daily_limit(user_id: str) -> bool:
     """Return True if user hasn't exceeded daily limit."""
     result = _api_call("check_daily_limit")
     return result.get("within_limit", True)
+
+
+def count_profile_applied_today(profile_id: str) -> int:
+    """Count how many applications this bundle has submitted today, from
+    the local SQLite mirror. Used by the apply loop to enforce the
+    per-bundle `max_daily` cap independently of the user-level daily_apply_limit.
+    Returns 0 when the table or bundle has nothing to show."""
+    try:
+        conn = _get_local_conn()
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM applications
+            WHERE status='submitted'
+              AND application_profile_id = ?
+              AND strftime('%Y-%m-%d', applied_at, 'localtime') = date('now', 'localtime')
+            """,
+            (profile_id,),
+        ).fetchone()
+        conn.close()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
 
 
 def check_company_rate(user_id: str, company: str) -> bool:
@@ -370,6 +400,28 @@ def get_global_knowledge(key: str):
 
 
 # ── Resume download ───────────────────────────────────────────────────────
+
+def download_resume_by_url(signed_url: str, file_name: str, cache_key: str = "") -> str:
+    """Download a bundle-bound resume by its signed URL. Used when the
+    worker has a bundle's resume_signed_url in hand (multi-profile path)
+    and wants to skip the legacy title-based picker.
+
+    cache_key is folded into the local filename so different bundles don't
+    clobber each other when they share a file_name.
+    """
+    os.makedirs(RESUME_DIR, exist_ok=True)
+    # Sanitize file name and prefix with cache_key to avoid collisions.
+    safe = "".join(c for c in file_name if c.isalnum() or c in "._-") or "resume.pdf"
+    local_path = os.path.join(RESUME_DIR, f"{cache_key}_{safe}" if cache_key else safe)
+    if not os.path.exists(local_path):
+        client = _get_client()
+        resp = client.get(signed_url)
+        resp.raise_for_status()
+        with open(local_path, "wb") as f:
+            f.write(resp.content)
+        logger.info(f"Downloaded bundle resume → {local_path}")
+    return local_path
+
 
 def download_resume(user_id: str, job_title: str | None = None) -> str:
     """Download the best-matching resume to local path."""

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { AppShell } from "@/components/app-shell"
 import {
@@ -11,6 +11,12 @@ import {
   type ResumeRow,
 } from "@/lib/api"
 import { AI_PROFILE_PROMPT, parseAiResponseSafe } from "@/lib/profile-schema"
+import { ProfilesTab } from "./ProfilesTab"
+import {
+  WorkEducationEditor,
+  type WorkExperienceRow,
+  type EducationRow,
+} from "./WorkEducationEditor"
 import { cn } from "@/lib/utils"
 import {
   Save, Loader2, Check, User, Briefcase, Target, Key,
@@ -18,7 +24,7 @@ import {
   Send, Mail, Cpu, CreditCard,
 } from "lucide-react"
 
-type Tab = "ai" | "personal" | "work" | "preferences" | "resume" | "integrations"
+type Tab = "ai" | "personal" | "work" | "preferences" | "profiles" | "resume" | "integrations"
   | "telegram" | "email" | "worker" | "billing" | "auth"
 
 const tabs: { id: Tab; label: string; icon: typeof User }[] = [
@@ -26,6 +32,7 @@ const tabs: { id: Tab; label: string; icon: typeof User }[] = [
   { id: "personal", label: "Personal", icon: User },
   { id: "work", label: "Work & Education", icon: Briefcase },
   { id: "preferences", label: "Job Preferences", icon: Target },
+  { id: "profiles", label: "Profiles", icon: Target },
   { id: "resume", label: "Resumes", icon: FileText },
   { id: "integrations", label: "API Keys", icon: Key },
   { id: "telegram", label: "Telegram", icon: Send },
@@ -96,6 +103,35 @@ const DESKTOP_INTEGRATION_FIELDS: DesktopIntegrationFieldDef[] = [
 // work_experience / education / skills" extraction rules, default values,
 // EEO fields, and the generated target_titles instruction. One source of
 // truth now, mirrored manually between the web + desktop packages.
+
+// Autolink bare URLs inside integration help strings so users can click
+// through instead of copy-pasting (audit-flagged friction). Strip trailing
+// punctuation (. , ; : ! ? ) ]) that's almost never part of a URL — a
+// user writing "see foo.com." doesn't want the period in the link.
+function renderHelpWithLinks(text: string): ReactNode {
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((part, i) => {
+    if (/^https?:\/\//.test(part)) {
+      const match = part.match(/^(.*?)([.,;:!?)\]]*)$/);
+      const url = match?.[1] || part;
+      const trailing = match?.[2] || "";
+      return (
+        <span key={i}>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-foreground"
+          >
+            {url}
+          </a>
+          {trailing}
+        </span>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
 
 function Input({
   label,
@@ -184,6 +220,13 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [profile, setProfile] = useState<Record<string, string>>({})
+  // Array-shaped profile data. Kept separate from `profile` (which is
+  // Record<string,string> for the flat field editors) so TS doesn't
+  // complain and so the scalar Personal/Work fields can save independently
+  // from the Work & Education array editor.
+  const [workExperience, setWorkExperience] = useState<WorkExperienceRow[]>([])
+  const [education, setEducation] = useState<EducationRow[]>([])
+  const [skills, setSkills] = useState<string[]>([])
   const [prefs, setPrefs] = useState<Record<string, string>>({})
   const [token, setToken] = useState("")
   const [maskedToken, setMaskedToken] = useState("")
@@ -245,6 +288,11 @@ export default function SettingsPage() {
           work_authorization: String(p?.work_authorization ?? ""),
           requires_sponsorship: p?.requires_sponsorship ? "Yes" : "No",
         })
+        // Hydrate the array fields so the new Work & Education editor
+        // can render them. These were previously write-only via AI Import.
+        if (Array.isArray(p?.work_experience)) setWorkExperience(p.work_experience as WorkExperienceRow[])
+        if (Array.isArray(p?.education)) setEducation(p.education as EducationRow[])
+        if (Array.isArray(p?.skills)) setSkills(p.skills as string[])
       }
       if (prefsRes.status === "fulfilled") {
         const rawP = prefsRes.value?.data as Record<string, unknown> ?? {}
@@ -602,6 +650,7 @@ export default function SettingsPage() {
   const showTopSave = activeTab !== "ai" && activeTab !== "resume"
     && activeTab !== "telegram" && activeTab !== "email"
     && activeTab !== "worker" && activeTab !== "billing"
+    && activeTab !== "profiles"
 
   return (
     <AppShell>
@@ -758,10 +807,23 @@ export default function SettingsPage() {
               {aiParsed && !aiError && (
                 <div className="flex items-start gap-2 rounded-lg border border-success/30 bg-success/5 p-3 text-xs text-success">
                   <Check className="h-4 w-4 flex-shrink-0" />
-                  <span>
-                    Parsed successfully. Review the fields in the Personal, Work, and Preferences tabs
-                    and click <strong>Save &amp; Sync</strong> below when ready.
-                  </span>
+                  <div>
+                    <div className="font-medium">Parsed successfully.</div>
+                    <div className="mt-1 text-success/90">
+                      Imported:
+                      {" "}
+                      {(pendingArraysRef.current.work_experience as unknown[] | undefined)?.length ?? 0} job{((pendingArraysRef.current.work_experience as unknown[] | undefined)?.length ?? 0) === 1 ? "" : "s"},
+                      {" "}
+                      {(pendingArraysRef.current.education as unknown[] | undefined)?.length ?? 0} education entr{((pendingArraysRef.current.education as unknown[] | undefined)?.length ?? 0) === 1 ? "y" : "ies"},
+                      {" "}
+                      {(pendingArraysRef.current.skills as unknown[] | undefined)?.length ?? 0} skills,
+                      {" "}
+                      {Object.keys((pendingArraysRef.current.answer_key_json as Record<string, unknown> | undefined) || {}).length} answer-key entries.
+                    </div>
+                    <div className="mt-1">
+                      Review in the Personal, Work, and Preferences tabs, then click <strong>Save &amp; Sync</strong>.
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -805,21 +867,56 @@ export default function SettingsPage() {
           )}
 
           {activeTab === "work" && (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Input label="Current Company" value={profile.current_company ?? ""} onChange={(v) => updateField("current_company", v)} />
-              <Input label="Current Title" value={profile.current_title ?? ""} onChange={(v) => updateField("current_title", v)} />
-              <Input label="Years of Experience" value={profile.years_experience ?? ""} onChange={(v) => updateField("years_experience", v)} type="number" />
-              <Input label="Education Level" value={profile.education_level ?? ""} onChange={(v) => updateField("education_level", v)} placeholder="bachelors / masters / phd" />
-              <Input label="School Name" value={profile.school_name ?? ""} onChange={(v) => updateField("school_name", v)} placeholder="Stanford University" />
-              <Input label="Degree" value={profile.degree ?? ""} onChange={(v) => updateField("degree", v)} placeholder="MS Computer Science" />
-              <Input label="Graduation Year" value={profile.graduation_year ?? ""} onChange={(v) => updateField("graduation_year", v)} type="number" />
-              <Input label="Work Authorization" value={profile.work_authorization ?? ""} onChange={(v) => updateField("work_authorization", v)} placeholder="us_citizen / green_card / h1b / opt" />
-              <Input label="Requires Sponsorship" value={profile.requires_sponsorship ?? ""} onChange={(v) => updateField("requires_sponsorship", v)} placeholder="Yes or No" />
+            <div className="space-y-6">
+              {/* Flat fields — fast-path overview. Saved by the top-right
+                  Save button via the page-level handleSave/updateProfile
+                  flow. The structured row editors below save separately
+                  via their own button. */}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Input label="Current Company" value={profile.current_company ?? ""} onChange={(v) => updateField("current_company", v)} />
+                <Input label="Current Title" value={profile.current_title ?? ""} onChange={(v) => updateField("current_title", v)} />
+                <Input label="Years of Experience" value={profile.years_experience ?? ""} onChange={(v) => updateField("years_experience", v)} type="number" />
+                <Input label="Education Level" value={profile.education_level ?? ""} onChange={(v) => updateField("education_level", v)} placeholder="bachelors / masters / phd" />
+                <Input label="School Name" value={profile.school_name ?? ""} onChange={(v) => updateField("school_name", v)} placeholder="Stanford University" />
+                <Input label="Degree" value={profile.degree ?? ""} onChange={(v) => updateField("degree", v)} placeholder="MS Computer Science" />
+                <Input label="Graduation Year" value={profile.graduation_year ?? ""} onChange={(v) => updateField("graduation_year", v)} type="number" />
+                <Input label="Work Authorization" value={profile.work_authorization ?? ""} onChange={(v) => updateField("work_authorization", v)} placeholder="us_citizen / green_card / h1b / opt" />
+                <Input label="Requires Sponsorship" value={profile.requires_sponsorship ?? ""} onChange={(v) => updateField("requires_sponsorship", v)} placeholder="Yes or No" />
+              </div>
+
+              {/* Structured array editors — the applier reads these when
+                  filling multi-entry form sections. Previously the desktop
+                  could only write them via AI Import paste (audit-flagged
+                  regression). */}
+              <div className="border-t pt-6">
+                <WorkEducationEditor
+                  initial={{ work_experience: workExperience, education: education, skills: skills }}
+                  onSaved={() => {
+                    setSaved(true)
+                    setTimeout(() => setSaved(false), 2000)
+                  }}
+                  onError={(msg) => setSaveError(msg)}
+                />
+              </div>
             </div>
           )}
 
           {activeTab === "preferences" && (
             <div className="space-y-4">
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm flex items-start gap-3">
+                <div className="flex-1">
+                  <p className="font-medium text-foreground">Heads up — these fields mirror to your default Profile.</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    For per-role targeting, use the <strong>Profiles</strong> tab. This tab stays for quick edits to the default bundle.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab("profiles")}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground whitespace-nowrap"
+                >
+                  Go to Profiles →
+                </button>
+              </div>
               <TextArea
                 label="Target Roles (comma-separated)"
                 value={prefs.target_titles ?? ""}
@@ -838,6 +935,10 @@ export default function SettingsPage() {
                 <Input label="Auto Apply" value={prefs.auto_apply ?? ""} onChange={(v) => updateField("auto_apply", v)} placeholder="Yes or No" />
               </div>
             </div>
+          )}
+
+          {activeTab === "profiles" && (
+            <ProfilesTab onMessage={(text, type) => { if (type === "error") setSaveError(text); else { setSaved(true); setTimeout(() => setSaved(false), 2000); } }} />
           )}
 
           {activeTab === "resume" && (
@@ -950,6 +1051,11 @@ export default function SettingsPage() {
                   Stored encrypted in your cloud profile. Synced across the web dashboard,
                   this desktop app, and your running Claude session. Update any field any time.
                 </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  <strong>Heads up:</strong> the running worker refreshes credentials every ~5 min.
+                  If you rotate a Gmail password now, apps submitted in the next few minutes may
+                  still use the old one. Restart the worker for an immediate pickup.
+                </p>
               </div>
 
               {integrationsMsg && (
@@ -1004,7 +1110,7 @@ export default function SettingsPage() {
                           </button>
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{def.help}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{renderHelpWithLinks(def.help)}</p>
                     </div>
                   )
                 })}

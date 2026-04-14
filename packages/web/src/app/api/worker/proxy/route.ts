@@ -18,7 +18,7 @@
  *   - check_company_rate: Check 7-day company application count (max 3)
  */
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import crypto from "crypto";
@@ -73,6 +73,9 @@ export async function POST(request: NextRequest) {
           queueRow.posted_at = jobDetail.posted_at;
           queueRow.location = jobDetail.location;
         }
+        // Surface profile binding so the worker can load the right bundle
+        // (email, resume, app password, answer_key) for this job.
+        queueRow.application_profile_id = queueRow.application_profile_id || null;
         return apiSuccess({ job: queueRow });
       }
 
@@ -138,46 +141,131 @@ export async function POST(request: NextRequest) {
       }
 
       case "get_tenant_config": {
-        // Single round trip that resolves everything TenantConfig.load()
-        // needs: profile, preferences, email, daily limit. The Python side
-        // builds a frozen TenantConfig from this payload and the worker
-        // pipeline never touches admin defaults again.
-        const [userRes, profileRes, prefsRes] = await Promise.all([
+        // HARD FAIL when ENCRYPTION_KEY is unset. Without this check,
+        // decryptString silently returns "" for every password, the worker
+        // gets empty creds, and every SMTP login silently fails with no
+        // surfaced error. Better to 500 here so the operator sees it.
+        if (!process.env.ENCRYPTION_KEY) {
+          return apiError(
+            "internal_server_error",
+            "ENCRYPTION_KEY is not configured — cannot decrypt tenant app passwords",
+          );
+        }
+        // Returns identity + integrations + the full profiles[] array.
+        // Single-profile users get a one-element array that mirrors the
+        // legacy top-level fields — worker's TenantConfig.load() auto-wraps
+        // either shape into profiles[].
+        const [userRes, profileRes, prefsRes, bundlesRes, resumesRes, emailAccountsRes] = await Promise.all([
           supabase.from("users").select("email,daily_apply_limit").eq("id", userId).single(),
           supabase.from("user_profiles").select("*").eq("user_id", userId).single(),
           supabase.from("user_job_preferences").select("*").eq("user_id", userId).single(),
+          supabase.from("user_application_profiles").select("*").eq("user_id", userId).order("is_default", { ascending: false }),
+          supabase.from("user_resumes").select("id, storage_path, file_name, is_default, target_keywords").eq("user_id", userId),
+          supabase.from("user_email_accounts").select("id, email, app_password_enc, label").eq("user_id", userId),
         ]);
 
         const profile = (profileRes.data ?? {}) as Record<string, unknown>;
         const prefs = (prefsRes.data ?? {}) as Record<string, unknown>;
         const user = (userRes.data ?? {}) as Record<string, unknown>;
+        const bundles = (bundlesRes.data ?? []) as Record<string, unknown>[];
+        const resumes = (resumesRes.data ?? []) as Record<string, unknown>[];
+        const emailAccounts = (emailAccountsRes.data ?? []) as Record<string, unknown>[];
 
         const targetTitles: string[] = Array.isArray(prefs.target_titles) ? (prefs.target_titles as string[]) : [];
         const targetKeywords: string[] = Array.isArray(prefs.target_keywords) ? (prefs.target_keywords as string[]) : [];
 
-        return apiSuccess({
+        // Decrypt app passwords for the worker (only the worker — decrypted
+        // values are NEVER returned to web/desktop UI endpoints). Import lazily.
+        const { decryptString } = await import("@/lib/crypto");
+        const resumeMap = new Map(resumes.map((r) => [r.id, r]));
+        const emailAccountMap = new Map(emailAccounts.map((e) => [e.id, e]));
+
+        const signedResumeUrl = async (storage_path: string): Promise<string | null> => {
+          const { data } = await supabase.storage.from("resumes").createSignedUrl(storage_path, 3600);
+          return data?.signedUrl ?? null;
+        };
+
+        const profilesOut = await Promise.all(bundles.map(async (b) => {
+          const resume = b.resume_id ? resumeMap.get(b.resume_id) : null;
+          const emailAcct = b.email_account_id ? emailAccountMap.get(b.email_account_id) : null;
+          // Resolve application_email. Pool binding wins; else inline;
+          // else null (signals worker to fall back to .env GMAIL_EMAIL —
+          // matches legacy single-profile behavior).
+          const rawInline = b.application_email as string | null | undefined;
+          const appEmail = (emailAcct?.email as string | undefined) || (rawInline ? rawInline : null);
+          let appPassword: string | null = null;
+          const enc = (emailAcct?.app_password_enc as string | undefined) || (b.application_email_app_password_enc as string | undefined);
+          if (enc) {
+            try {
+              const dec = decryptString(enc);
+              appPassword = dec || null;  // empty string → null (fall back to .env)
+            } catch { /* leave null */ }
+          }
+          let resumeUrl: string | null = null;
+          if (resume?.storage_path) {
+            try { resumeUrl = await signedResumeUrl(resume.storage_path as string); } catch {}
+          }
+          return {
+            id: b.id,
+            name: b.name,
+            slug: b.slug,
+            is_default: b.is_default,
+            target_titles: b.target_titles ?? [],
+            target_keywords: b.target_keywords ?? [],
+            excluded_titles: b.excluded_titles ?? [],
+            excluded_companies: b.excluded_companies ?? [],
+            excluded_role_keywords: b.excluded_role_keywords ?? [],
+            excluded_levels: b.excluded_levels ?? [],
+            preferred_locations: b.preferred_locations ?? [],
+            remote_only: !!b.remote_only,
+            min_salary: b.min_salary ?? null,
+            ashby_boards: b.ashby_boards ?? null,
+            greenhouse_boards: b.greenhouse_boards ?? null,
+            auto_apply: b.auto_apply !== false,
+            max_daily: b.max_daily ?? null,
+            resume: resume ? {
+              id: resume.id,
+              file_name: resume.file_name,
+              storage_path: resume.storage_path,
+              signed_url: resumeUrl,
+            } : null,
+            application_email: appEmail,
+            application_email_app_password: appPassword,
+          };
+        }));
+
+        // This response contains DECRYPTED Gmail app passwords for the
+        // worker. Force no-store so intermediaries (CDN, Vercel edge cache,
+        // dev proxies) never retain the body.
+        const tenantBody = {
           user_id: userId,
           tenant_email: (user.email as string | undefined) || (profile.email as string | undefined) || "",
-          // Scout
+          // Legacy top-level fields — mirror the default profile so old
+          // worker builds keep working until they switch to profiles[].
           search_queries: targetTitles,
           keyword_filter: targetKeywords.length > 0 ? targetKeywords : targetTitles,
           ashby_boards: (prefs.ashby_boards as string[] | null | undefined) ?? null,
           greenhouse_boards: (prefs.greenhouse_boards as string[] | null | undefined) ?? null,
-          // Filter
           excluded_role_keywords: (prefs.excluded_role_keywords as string[] | undefined) ?? [],
           excluded_levels: (prefs.excluded_levels as string[] | undefined) ?? [],
           excluded_companies: (prefs.excluded_companies as string[] | undefined) ?? [],
           preferred_locations: (prefs.preferred_locations as string[] | undefined) ?? [],
           remote_only: !!prefs.remote_only,
-          // Apply
           min_salary: (prefs.min_salary as number | null | undefined) ?? null,
           daily_apply_limit: (user.daily_apply_limit as number | undefined) ?? 25,
-          // Full profile for the applier
           profile: profile,
-          // Completeness hint — worker refuses to boot without these
+          // NEW: authoritative profile bundles array
+          profiles: profilesOut,
           complete: targetTitles.length > 0
             && !!profile.first_name
             && (!!profile.email || !!user.email),
+        };
+        return NextResponse.json({ data: tenantBody }, {
+          status: 200,
+          headers: {
+            "Cache-Control": "no-store, private, max-age=0, must-revalidate",
+            "Pragma": "no-cache",
+          },
         });
       }
 
@@ -404,6 +492,14 @@ export async function POST(request: NextRequest) {
 
       case "enqueue_jobs": {
         const jobs = params.jobs || [];
+        // Load this user's bundle IDs once so we can validate every
+        // incoming application_profile_id belongs to them. FK alone only
+        // proves the id exists somewhere; we need to prove it belongs here.
+        const { data: myBundles } = await supabase
+          .from("user_application_profiles")
+          .select("id")
+          .eq("user_id", userId);
+        const ownedBundleIds = new Set((myBundles || []).map((b) => b.id));
         let enqueued = 0;
         for (const job of jobs) {
           // Dedup
@@ -435,13 +531,20 @@ export async function POST(request: NextRequest) {
           const jobId = (dj.data as Record<string, unknown> | null)?.id;
           if (!jobId) continue;
 
-          // Queue
+          // Queue — carry profile_id forward if scout tagged the job, but
+          // drop IDs that aren't this user's. Prevents a compromised worker
+          // from tagging rows with another tenant's bundle id.
+          const taggedProfileId =
+            job.application_profile_id && ownedBundleIds.has(job.application_profile_id)
+              ? job.application_profile_id
+              : null;
           await supabase.from("application_queue").insert({
             user_id: userId,
             job_id: jobId,
             status: "pending",
             company: job.company,
             apply_url: job.apply_url,
+            application_profile_id: taggedProfileId,
           });
           enqueued++;
         }

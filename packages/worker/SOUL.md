@@ -86,6 +86,30 @@ Board slugs and API URLs → see `packages/worker/config.py`
 - Drop queue rows older than 24h at the start of each apply iteration (never apply to stale listings)
 - All filter criteria come from the user's profile — NO hardcoded role/level/location opinions
 
+### STEP 2.5: MULTI-PROFILE ROUTING
+
+A user may have MULTIPLE application bundles (e.g. "AI Eng" with
+aieng@gmail.com + resume_ai.pdf, "Data Analyst" with daeng@gmail.com +
+resume_da.pdf). You do NOT pick which profile to use.
+
+How it works:
+- Scout discovers a job → worker scores it against each bundle's
+  target_titles + target_keywords → tags the queue row with `application_profile_id`.
+- At apply time, the worker loads that bundle's apply email + app password
+  (via `GMAIL_EMAIL` / `GMAIL_APP_PASSWORD` env overrides), resume, and
+  answer_key, and hands them to the applier.
+- You form-fill with exactly what the worker provides. Never cross-pollinate
+  fields across bundles.
+
+If the user asks "which profile are you applying as?", look up
+`application_profile_id` on the current queue row and answer with that
+bundle's display name from `profile.json:application_profiles[]`.
+
+Single-profile users: exactly one default bundle, every job is tagged
+with it — identical to pre-multi-profile behavior.
+
+Rate limits (3/company/7d) and URL dedup are PER USER, not per bundle.
+
 ### STEP 3: READ JD
 Before opening form: check years required vs user's experience, domain match, skip if wrong fit.
 

@@ -324,3 +324,84 @@ async def get_settings_preferences() -> dict:
     result = await _proxy("load_preferences")
     data = result.get("data", {})
     return {"data": {"preferences": data.get("preferences", data)}}
+
+
+# ── Multi-profile bundle helpers ─────────────────────────────────────────
+# Proxy to the cloud's /api/settings/profiles endpoints using the worker
+# token. The cloud routes already accept worker-token auth via
+# authenticateRequest, so the desktop doesn't need a per-user service key.
+
+class SettingsCallError(Exception):
+    """Raised by _settings_call when the cloud returns HTTP >= 400.
+    Carries the cloud's status + friendly message so the FastAPI route
+    can re-raise as a proper HTTPException instead of wrapping 4xx errors
+    in success bodies (the old behavior made validation errors silently
+    invisible in the desktop UI)."""
+    def __init__(self, status: int, message: str):
+        self.status = status
+        self.message = message
+        super().__init__(f"HTTP {status}: {message}")
+
+
+async def _settings_call(method: str, path: str, body: dict | None = None) -> dict:
+    token = load_token()
+    if not token:
+        raise SettingsCallError(401, "No API token configured")
+    url = f"{APP_URL}{path}"
+    headers = {"X-Worker-Token": token, "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        if method == "GET":
+            resp = await client.get(url, headers=headers)
+        elif method == "POST":
+            resp = await client.post(url, headers=headers, json=body or {})
+        elif method == "PUT":
+            resp = await client.put(url, headers=headers, json=body or {})
+        elif method == "DELETE":
+            resp = await client.delete(url, headers=headers)
+        else:
+            raise SettingsCallError(500, f"unknown method {method}")
+    if resp.status_code >= 400:
+        # Parse the cloud's apiError shape. It's a FLAT body:
+        #   { statusCode, name, message, details? }
+        # — NOT nested under `error`. Read the top-level `message`.
+        friendly = f"HTTP {resp.status_code}"
+        try:
+            body_json = resp.json() or {}
+            if isinstance(body_json, dict):
+                friendly = body_json.get("message") or friendly
+        except Exception:
+            pass
+        raise SettingsCallError(resp.status_code, friendly)
+    return (resp.json() or {}).get("data", {})
+
+
+async def list_profiles() -> dict:
+    return await _settings_call("GET", "/api/settings/profiles")
+
+
+async def create_profile(body: dict) -> dict:
+    return await _settings_call("POST", "/api/settings/profiles", body)
+
+
+async def update_profile_bundle(profile_id: str, body: dict) -> dict:
+    return await _settings_call("PUT", f"/api/settings/profiles/{profile_id}", body)
+
+
+async def delete_profile_bundle(profile_id: str) -> dict:
+    return await _settings_call("DELETE", f"/api/settings/profiles/{profile_id}")
+
+
+async def set_default_profile(profile_id: str) -> dict:
+    return await _settings_call("POST", f"/api/settings/profiles/{profile_id}/set-default")
+
+
+async def list_email_accounts() -> dict:
+    return await _settings_call("GET", "/api/settings/email-accounts")
+
+
+async def create_email_account(body: dict) -> dict:
+    return await _settings_call("POST", "/api/settings/email-accounts", body)
+
+
+async def delete_email_account(account_id: str) -> dict:
+    return await _settings_call("DELETE", f"/api/settings/email-accounts/{account_id}")

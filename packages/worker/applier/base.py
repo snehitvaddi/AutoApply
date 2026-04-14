@@ -22,10 +22,22 @@ class MissingResumeError(FileNotFoundError):
 
 
 class BaseApplier(ABC):
-    def __init__(self, profile: dict, answer_key: dict, resume_path: str):
+    def __init__(
+        self,
+        profile: dict,
+        answer_key: dict,
+        resume_path: str,
+        *,
+        profile_email: str | None = None,
+        profile_app_password: str | None = None,
+    ):
         self.profile = profile
         self.answer_key = answer_key
         self.resume_path = resume_path
+        # Explicit per-bundle credentials — passed by worker.py at apply
+        # time. When None, falls back to os.environ (install.sh default).
+        self.profile_email = profile_email
+        self.profile_app_password = profile_app_password
         # Fail fast: no resume means no upload, and every ATS applier
         # eventually hits `page.set_input_files(...)` with this path. We
         # check now so we error before any browser automation starts.
@@ -54,10 +66,12 @@ class BaseApplier(ABC):
         user = p.get("user", {}) or {}
         prof = p.get("profile", {}) or {}
 
-        # Application email: prefer GMAIL_EMAIL from .env (the email the user
-        # wants on applications + where OTPs land) over the signup email.
+        # Application email: explicit profile_email (bundle-bound) > env
+        # GMAIL_EMAIL > signup email. Explicit kwarg eliminates the env-
+        # as-IPC footgun that worker.py used to use for bundle routing.
+        _explicit = (self.profile_email or "").strip() if self.profile_email else ""
         _gmail_email = _os.environ.get("GMAIL_EMAIL", "").strip()
-        _app_email = _gmail_email or prof.get("email") or p.get("email") or user.get("email") or ""
+        _app_email = _explicit or _gmail_email or prof.get("email") or p.get("email") or user.get("email") or ""
 
         # Helper: check profile sub-object first, then top-level, then user
         def _f(key: str, default: str = "") -> str:

@@ -24,7 +24,7 @@ def load_global_template() -> dict:
     return {}
 
 
-def build_answer_key(profile: dict, global_template: dict) -> dict:
+def build_answer_key(profile: dict, global_template: dict, *, profile_email: str | None = None) -> dict:
     """Build a filled answer_key by substituting profile values into the global template.
 
     The template contains {placeholder} strings that map to profile fields.
@@ -59,12 +59,15 @@ def build_answer_key(profile: dict, global_template: dict) -> dict:
                 return v
         return default
 
-    # Application email: prefer GMAIL_EMAIL from .env (the email the user
-    # wants on applications + where OTPs land) over profile emails. A user
-    # may sign up with personal@gmail.com but apply with professional@gmail.com
-    # (which has the app password configured).
+    # Application email resolution order:
+    #   1. profile_email kwarg (bundle-bound, passed explicitly by worker.py)
+    #   2. os.environ GMAIL_EMAIL (.env — install.sh's setup value)
+    #   3. profile field from Supabase
+    # Explicit kwarg wins so multi-profile routing doesn't rely on the
+    # env-as-IPC footgun that worker.py used to use.
+    explicit = (profile_email or "").strip() if profile_email else ""
     gmail_email = os.environ.get("GMAIL_EMAIL", "").strip()
-    app_email = gmail_email or _f("email", "")
+    app_email = explicit or gmail_email or _f("email", "")
 
     # Build substitution map from profile fields
     first_name = _f("first_name", "")

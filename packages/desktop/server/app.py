@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, UploadFile, File, Form
+from fastapi import FastAPI, WebSocket, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -1067,6 +1067,84 @@ async def put_integrations(body: dict):
 # data instead of waiting for the 5-minute background tick. Runs the same
 # three helpers the background poll runs (pull profile from cloud, push
 # any local-only integration keys up, pull integrations down into .env).
+
+# ── Multi-profile bundles ─────────────────────────────────────────────────
+#
+# Every route here propagates cloud HTTP 4xx/5xx as FastAPI HTTPException
+# so the desktop UI's `call()` wrapper actually throws on validation
+# errors. The old `{ok: False, error: str}` shape was returned as HTTP 200
+# and the UI mistook validation errors for successes.
+
+def _raise_settings_error(e: Exception):
+    from .stats import SettingsCallError
+    if isinstance(e, SettingsCallError):
+        raise HTTPException(status_code=e.status, detail=e.message)
+    raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/profiles")
+async def list_profiles():
+    try:
+        return {"ok": True, "data": await stats.list_profiles()}
+    except Exception as e:
+        _raise_settings_error(e)
+
+
+@app.post("/api/profiles")
+async def create_profile(body: dict):
+    try:
+        return {"ok": True, "data": await stats.create_profile(body)}
+    except Exception as e:
+        _raise_settings_error(e)
+
+
+@app.put("/api/profiles/{profile_id}")
+async def update_profile_bundle(profile_id: str, body: dict):
+    try:
+        return {"ok": True, "data": await stats.update_profile_bundle(profile_id, body)}
+    except Exception as e:
+        _raise_settings_error(e)
+
+
+@app.delete("/api/profiles/{profile_id}")
+async def delete_profile_bundle(profile_id: str):
+    try:
+        return {"ok": True, "data": await stats.delete_profile_bundle(profile_id)}
+    except Exception as e:
+        _raise_settings_error(e)
+
+
+@app.post("/api/profiles/{profile_id}/set-default")
+async def set_default_profile(profile_id: str):
+    try:
+        return {"ok": True, "data": await stats.set_default_profile(profile_id)}
+    except Exception as e:
+        _raise_settings_error(e)
+
+
+@app.get("/api/email-accounts")
+async def list_email_accounts():
+    try:
+        return {"ok": True, "data": await stats.list_email_accounts()}
+    except Exception as e:
+        _raise_settings_error(e)
+
+
+@app.post("/api/email-accounts")
+async def create_email_account(body: dict):
+    try:
+        return {"ok": True, "data": await stats.create_email_account(body)}
+    except Exception as e:
+        _raise_settings_error(e)
+
+
+@app.delete("/api/email-accounts/{account_id}")
+async def delete_email_account(account_id: str):
+    try:
+        return {"ok": True, "data": await stats.delete_email_account(account_id)}
+    except Exception as e:
+        _raise_settings_error(e)
+
 
 @app.post("/api/sync/now")
 async def sync_now():
