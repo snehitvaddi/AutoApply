@@ -231,6 +231,12 @@ export async function POST(request: NextRequest) {
             } : null,
             application_email: appEmail,
             application_email_app_password: appPassword,
+            // Per-bundle content (migration 019). Falls back to
+            // user_profiles.answer_key_json / cover_letter_template on
+            // the worker side when the bundle's value is null — that
+            // keeps single-profile users and old installs working.
+            answer_key_json: b.answer_key_json ?? null,
+            cover_letter_template: b.cover_letter_template ?? null,
           };
         }));
 
@@ -275,6 +281,13 @@ export async function POST(request: NextRequest) {
         // token can never write another user's profile. Column allowlist
         // prevents setting is_admin / approval_status / other sensitive
         // fields that only belong in other tables.
+        // answer_key_json + cover_letter_template are intentionally NOT in
+        // this allowlist as of migration 019. Those fields are now per-
+        // bundle — edits go through /api/settings/profiles/[id] PUT and
+        // land on user_application_profiles.answer_key_json instead. The
+        // legacy user_profiles columns stay in the schema as a read-only
+        // fallback for older worker builds during rolling deploy but can
+        // no longer be written via the worker proxy.
         const PROFILE_COLUMNS = [
           "first_name", "last_name", "email", "phone",
           "linkedin_url", "github_url", "portfolio_url",
@@ -282,7 +295,6 @@ export async function POST(request: NextRequest) {
           "education_level", "school_name", "degree", "graduation_year",
           "work_authorization", "requires_sponsorship",
           "gender", "race_ethnicity", "veteran_status", "disability_status",
-          "cover_letter_template", "answer_key_json",
           "work_experience", "education", "skills",
         ] as const;
         const payload: Record<string, unknown> = {

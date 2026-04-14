@@ -855,8 +855,14 @@ def main():
 
         try:
             profile = load_user_profile(user_id)
+            # Per-bundle answer key from mig 019. When the bundle has its
+            # own answers (different "why interested" per role), use them;
+            # otherwise knowledge.build_answer_key falls back to the
+            # user_profiles.answer_key_json legacy shared value.
             answer_key = build_answer_key(
-                profile, global_template, profile_email=bundle_email,
+                profile, global_template,
+                profile_email=bundle_email,
+                bundle_answer_key=job_profile.answer_key_json,
             )
 
             # Resolve real ATS from aggregator URLs (Indeed/Himalayas/LinkedIn

@@ -99,6 +99,12 @@ class ApplyProfile:
     auto_apply: bool
     max_daily: int | None
 
+    # Per-bundle content (mig 019). None falls back to the tenant-wide
+    # user_profiles.answer_key_json / cover_letter_template at the worker
+    # level — older installs without migration 019 still work this way.
+    answer_key_json: dict | None = None
+    cover_letter_template: str | None = None
+
     def passes_filter(self, title: str, company: str, location: str) -> bool:
         tl = (title or "").lower()
         cl = (company or "").lower()
@@ -291,6 +297,11 @@ class TenantConfig:
                 application_email_app_password=None,
                 auto_apply=True,
                 max_daily=None,
+                # Legacy path: read content from user_profiles (shared) as
+                # a safety net. Post-mig-019 every real user has a bundle
+                # so this branch only runs when someone deletes their row.
+                answer_key_json=(profile.get("answer_key_json") if isinstance(profile.get("answer_key_json"), dict) else None),
+                cover_letter_template=(profile.get("cover_letter_template") or None),
             ),)
 
         # Invariant: every loaded tenant has at least one bundle.
@@ -360,7 +371,14 @@ class TenantConfig:
             # would use if users.daily_apply_limit were ever NULL.
             daily_apply_limit=int(prefs.get("daily_apply_limit", 5)),
             profile=profile,
-            answer_key=profile.get("answer_key_json") or {},
+            # Answer key precedence: default bundle's per-profile answer_key
+            # (mig 019) → user_profiles.answer_key_json (legacy shared) → {}.
+            # Non-default bundles' answer keys are applied per-job in
+            # worker.py via knowledge.build_answer_key; this top-level
+            # value is the tenant default used when no bundle override fires.
+            answer_key=(default_bundle.answer_key_json
+                        or profile.get("answer_key_json")
+                        or {}),
             profiles=profile_tuple,
             tenant_name=tenant_name,
             tenant_email=tenant_email,
@@ -474,6 +492,10 @@ def _build_apply_profile(raw: dict, fallback_email: str = "") -> ApplyProfile:
         application_email_app_password=(raw.get("application_email_app_password") if raw.get("application_email_app_password") else None),
         auto_apply=bool(raw.get("auto_apply", True)),
         max_daily=raw.get("max_daily"),
+        # Per-bundle content from mig 019. None means "fall back to
+        # user_profiles.answer_key_json" — handled by the caller.
+        answer_key_json=(raw.get("answer_key_json") if isinstance(raw.get("answer_key_json"), dict) else None),
+        cover_letter_template=(raw.get("cover_letter_template") if raw.get("cover_letter_template") else None),
     )
 
 

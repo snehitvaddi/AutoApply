@@ -133,7 +133,7 @@ interface Resume {
 }
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("ai");
+  const [activeTab, setActiveTab] = useState<Tab>("profiles");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -871,17 +871,19 @@ export default function SettingsPage() {
     );
   }
 
+  // Settings IA rework: Profiles first (the primary concept), shared
+  // identity after, tools after that, ops at the end. Preferences /
+  // Telegram / Email tabs were deleted — see migration 019 plan for the
+  // field taxonomy that drove this. Legacy tab IDs stay in the Tab union
+  // so the render branches below still typecheck while we tear them out.
   const tabs: { key: Tab; label: string }[] = [
-    { key: "ai", label: "AI Import" },
-    { key: "personal", label: "Personal Info" },
-    { key: "work", label: "Work & Education" },
-    { key: "preferences", label: "Job Preferences" },
     { key: "profiles", label: "Profiles" },
     { key: "resume", label: "Resumes" },
+    { key: "personal", label: "Personal Info" },
+    { key: "work", label: "Work & Education" },
     { key: "integrations", label: "API Keys" },
-    { key: "telegram", label: "Telegram" },
-    { key: "email", label: "Email" },
     { key: "worker", label: "Worker & LLM" },
+    { key: "ai", label: "AI Import" },
     { key: "billing", label: "Billing" },
   ];
 

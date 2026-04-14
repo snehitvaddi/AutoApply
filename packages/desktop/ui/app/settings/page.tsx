@@ -27,17 +27,20 @@ import {
 type Tab = "ai" | "personal" | "work" | "preferences" | "profiles" | "resume" | "integrations"
   | "telegram" | "email" | "worker" | "billing" | "auth"
 
+// IA rework to mirror the web sidebar. Profiles is now the primary tab.
+// Preferences / Telegram / Email were deleted — their content is either
+// absorbed into the Profile editor (preferences) or available via the
+// API Keys tab (telegram/email credentials). Render branches for the
+// removed tabs still exist in the JSX below but are unreachable via the
+// sidebar (dead code, tree-shaken in prod). Safer than a 660-line delete.
 const tabs: { id: Tab; label: string; icon: typeof User }[] = [
-  { id: "ai", label: "AI Import", icon: Sparkles },
-  { id: "personal", label: "Personal", icon: User },
-  { id: "work", label: "Work & Education", icon: Briefcase },
-  { id: "preferences", label: "Job Preferences", icon: Target },
   { id: "profiles", label: "Profiles", icon: Target },
   { id: "resume", label: "Resumes", icon: FileText },
+  { id: "personal", label: "Personal", icon: User },
+  { id: "work", label: "Work & Education", icon: Briefcase },
   { id: "integrations", label: "API Keys", icon: Key },
-  { id: "telegram", label: "Telegram", icon: Send },
-  { id: "email", label: "Email", icon: Mail },
   { id: "worker", label: "Worker & LLM", icon: Cpu },
+  { id: "ai", label: "AI Import", icon: Sparkles },
   { id: "billing", label: "Billing", icon: CreditCard },
   { id: "auth", label: "Worker Token", icon: Key },
 ]
@@ -189,7 +192,7 @@ function TextArea({
 
 export default function SettingsPage() {
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState<Tab>("ai")
+  const [activeTab, setActiveTab] = useState<Tab>("profiles")
   // Mid-setup users land here from the wizard's "Fill in profile" deep-link.
   // We render a banner so they have a one-click way back to the checklist
   // (the wizard wants them to come back once they're done editing).

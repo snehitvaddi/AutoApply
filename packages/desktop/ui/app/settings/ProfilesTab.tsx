@@ -21,6 +21,9 @@ type Profile = {
   application_email: string | null;
   auto_apply: boolean;
   max_daily: number | null;
+  // Per-bundle content (mig 019). null = inherit from shared fallback.
+  answer_key_json: Record<string, unknown> | null;
+  cover_letter_template: string | null;
   has_app_password?: boolean;
 };
 
@@ -51,6 +54,8 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<Profile> & { application_email_app_password?: string; same_email_as_default?: boolean }>({});
+  const [answerKeyText, setAnswerKeyText] = useState<string>("");
+  const [answerKeyError, setAnswerKeyError] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,6 +91,8 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
   const startCreate = () => {
     const d = profiles.find((p) => p.is_default);
     setEditingId("__new__");
+    setAnswerKeyText("");
+    setAnswerKeyError("");
     setDraft({
       name: "",
       target_titles: [],
@@ -99,6 +106,8 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
       email_account_id: null,
       application_email: "",
       auto_apply: true,
+      answer_key_json: null,
+      cover_letter_template: null,
       same_email_as_default: false,
     });
   };
@@ -108,6 +117,23 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
     if (!draft.target_titles || draft.target_titles.length === 0) {
       return onMessage("Add at least one target title so the scout knows what to look for", "error");
     }
+    // Parse the answer_key JSON textarea — same contract as the web tab.
+    let parsedAnswerKey: Record<string, unknown> | null = null;
+    const trimmed = answerKeyText.trim();
+    if (trimmed) {
+      try {
+        parsedAnswerKey = JSON.parse(trimmed);
+        if (typeof parsedAnswerKey !== "object" || parsedAnswerKey === null || Array.isArray(parsedAnswerKey)) {
+          setAnswerKeyError("Answer key must be a JSON object");
+          return onMessage("Answer key is not a JSON object", "error");
+        }
+        setAnswerKeyError("");
+      } catch (err) {
+        setAnswerKeyError(err instanceof Error ? err.message : "Invalid JSON");
+        return onMessage("Answer key JSON is invalid — see the error under the field", "error");
+      }
+    }
+    draft.answer_key_json = parsedAnswerKey;
     const isNew = editingId === "__new__";
     if (draft.same_email_as_default) {
       const d = profiles.find((p) => p.is_default);
@@ -208,7 +234,42 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
           </>
         )}
 
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active</label>
+        {/* Per-role content — answer key + cover letter. Different per
+            bundle so "Why AI Engineering?" doesn't leak onto a DA app. */}
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-2">Per-role content</h3>
+          <div className="mb-3">
+            <label className="text-sm font-medium block mb-1">
+              Answer key (JSON)
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                Role-specific answers.
+              </span>
+            </label>
+            <textarea
+              rows={6}
+              placeholder={'{\n  "why_interested": "Because..."\n}'}
+              className="border rounded px-2 py-1 w-full bg-background font-mono text-xs"
+              value={answerKeyText}
+              onChange={(e) => { setAnswerKeyText(e.target.value); setAnswerKeyError(""); }}
+            />
+            {answerKeyError && <p className="text-xs text-destructive mt-1">⚠ {answerKeyError}</p>}
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1">Cover letter template</label>
+            <textarea
+              rows={6}
+              placeholder="Dear {hiring_manager},&#10;&#10;I'm excited to apply for {role} at {company}..."
+              className="border rounded px-2 py-1 w-full bg-background text-sm"
+              value={draft.cover_letter_template || ""}
+              onChange={(e) => setDraft({ ...draft, cover_letter_template: e.target.value || null })}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Leave blank to inherit the default profile&apos;s template.
+            </p>
+          </div>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm pt-2 border-t"><input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active</label>
 
         <div className="flex gap-2 pt-2">
           <button onClick={save} className="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground">Save</button>
@@ -243,7 +304,15 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
           </div>
           <div className="flex gap-2">
             {!p.is_default && <button onClick={() => setDefault(p.id)} className="text-xs text-primary hover:underline">Default</button>}
-            <button onClick={() => { setEditingId(p.id); setDraft({ ...p }); }} className="text-xs hover:underline">Edit</button>
+            <button
+              onClick={() => {
+                setEditingId(p.id);
+                setDraft({ ...p });
+                setAnswerKeyText(p.answer_key_json ? JSON.stringify(p.answer_key_json, null, 2) : "");
+                setAnswerKeyError("");
+              }}
+              className="text-xs hover:underline"
+            >Edit</button>
             {!p.is_default && <button onClick={() => del(p.id)} className="text-xs text-destructive hover:underline">Delete</button>}
           </div>
         </div>

@@ -21,6 +21,10 @@ type Profile = {
   application_email: string | null;
   auto_apply: boolean;
   max_daily: number | null;
+  // Per-bundle content (mig 019). null = inherit from shared
+  // user_profiles fallback at apply time.
+  answer_key_json: Record<string, unknown> | null;
+  cover_letter_template: string | null;
   has_app_password?: boolean;
 };
 
@@ -36,6 +40,11 @@ export function ProfilesTab({
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<Profile> & { application_email_app_password?: string; same_email_as_default?: boolean }>({});
+  // Free-form JSON text for the answer_key editor. Kept separate from
+  // draft.answer_key_json so the user can type invalid JSON while editing
+  // without losing their work — we validate + parse on save.
+  const [answerKeyText, setAnswerKeyText] = useState<string>("");
+  const [answerKeyError, setAnswerKeyError] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,6 +80,8 @@ export function ProfilesTab({
   const startCreate = () => {
     const defaultProfile = profiles.find((p) => p.is_default);
     setEditingId("__new__");
+    setAnswerKeyText("");
+    setAnswerKeyError("");
     setDraft({
       name: "",
       target_titles: [],
@@ -86,6 +97,8 @@ export function ProfilesTab({
       application_email: "",
       auto_apply: true,
       max_daily: null,
+      answer_key_json: null,
+      cover_letter_template: null,
       same_email_as_default: false,
     });
   };
@@ -93,9 +106,16 @@ export function ProfilesTab({
   const startEdit = (p: Profile) => {
     setEditingId(p.id);
     setDraft({ ...p });
+    setAnswerKeyText(p.answer_key_json ? JSON.stringify(p.answer_key_json, null, 2) : "");
+    setAnswerKeyError("");
   };
 
-  const cancelEdit = () => { setEditingId(null); setDraft({}); };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDraft({});
+    setAnswerKeyText("");
+    setAnswerKeyError("");
+  };
 
   const save = async () => {
     if (!draft.name) return onMessage("Name is required", "error");
@@ -105,6 +125,25 @@ export function ProfilesTab({
     if (!draft.target_titles || draft.target_titles.length === 0) {
       return onMessage("Add at least one target title so the scout knows what to look for", "error");
     }
+    // Parse the answer_key JSON textarea. Blank = clear (null), non-JSON
+    // = reject with a specific error so the user knows where to look.
+    // The editor keeps the raw text in state so edit-while-broken works.
+    let parsedAnswerKey: Record<string, unknown> | null = null;
+    const trimmed = answerKeyText.trim();
+    if (trimmed) {
+      try {
+        parsedAnswerKey = JSON.parse(trimmed);
+        if (typeof parsedAnswerKey !== "object" || parsedAnswerKey === null || Array.isArray(parsedAnswerKey)) {
+          setAnswerKeyError("Answer key must be a JSON object (e.g. {\"why_interested\": \"...\"})");
+          return onMessage("Answer key is not a JSON object", "error");
+        }
+        setAnswerKeyError("");
+      } catch (err) {
+        setAnswerKeyError(err instanceof Error ? err.message : "Invalid JSON");
+        return onMessage("Answer key JSON is invalid — see the error under the field", "error");
+      }
+    }
+    draft.answer_key_json = parsedAnswerKey;
     const isNew = editingId === "__new__";
 
     // Same-email-as-default: prefer the pooled email_account_id (so
@@ -278,7 +317,52 @@ export function ProfilesTab({
             </>
           )}
 
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active (uncheck to pause this bundle)</label>
+          {/* Content — answers + cover letter — per role. A "Why are you
+              interested in AI Engineering?" answer makes no sense on a
+              Data Analyst bundle, so these are bundle-scoped (mig 019). */}
+          <div className="border-t pt-3 mt-2">
+            <h3 className="text-sm font-semibold mb-2">Per-role content</h3>
+
+            <div className="mb-3">
+              <label className="text-sm font-medium block mb-1">
+                Answer key (JSON)
+                <span className="ml-2 text-xs font-normal text-gray-500">
+                  Role-specific answers. Key = question slug, value = your answer.
+                </span>
+              </label>
+              <textarea
+                rows={6}
+                placeholder={'{\n  "why_interested": "Because...",\n  "tell_about_a_project": "I built..."\n}'}
+                className="border rounded px-2 py-1 w-full font-mono text-xs"
+                value={answerKeyText}
+                onChange={(e) => { setAnswerKeyText(e.target.value); setAnswerKeyError(""); }}
+              />
+              {answerKeyError && (
+                <p className="text-xs text-red-600 mt-1">⚠ {answerKeyError}</p>
+              )}
+              {draft.answer_key_json === null && !answerKeyText && !profiles.find((p) => p.id === editingId)?.is_default && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Leave blank to inherit the default profile&apos;s answer key.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="text-sm font-medium block mb-1">Cover letter template</label>
+              <textarea
+                rows={6}
+                placeholder="Dear {hiring_manager},&#10;&#10;I'm excited to apply for {role} at {company}..."
+                className="border rounded px-2 py-1 w-full text-sm"
+                value={draft.cover_letter_template || ""}
+                onChange={(e) => setDraft({ ...draft, cover_letter_template: e.target.value || null })}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Leave blank to inherit the default profile&apos;s template. Placeholders: {"{role}, {company}, {first_name}"} etc.
+              </p>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm pt-2 border-t"><input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active (uncheck to pause this bundle)</label>
 
           <div className="flex gap-2 pt-2">
             <button onClick={save} className="px-4 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">Save profile</button>

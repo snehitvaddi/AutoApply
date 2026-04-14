@@ -19,6 +19,8 @@ const WRITABLE = [
   "resume_id", "email_account_id",
   "application_email",
   "auto_apply", "max_daily",
+  // Per-bundle content (mig 019) — per-role answer key + cover letter.
+  "answer_key_json", "cover_letter_template",
 ] as const;
 
 async function ownProfile(userId: string, id: string) {

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import logging
@@ -24,13 +26,22 @@ def load_global_template() -> dict:
     return {}
 
 
-def build_answer_key(profile: dict, global_template: dict, *, profile_email: str | None = None) -> dict:
+def build_answer_key(
+    profile: dict,
+    global_template: dict,
+    *,
+    profile_email: str | None = None,
+    bundle_answer_key: dict | None = None,
+) -> dict:
     """Build a filled answer_key by substituting profile values into the global template.
 
     The template contains {placeholder} strings that map to profile fields.
     For example, {first_name} is replaced with profile["profile"]["first_name"].
 
-    The user's own answer_key_json overrides are merged on top.
+    Override precedence (highest first):
+      1. bundle_answer_key kwarg (per-bundle from mig 019 — set by worker.py)
+      2. profile.answer_key_json (user_profiles, legacy shared fallback)
+      3. profile.standard_answers (local nested cache key)
     """
     # The profile dict can arrive in THREE shapes depending on the caller:
     #   A) Flat cloud response (from /api/worker/proxy load_profile):
@@ -99,9 +110,11 @@ def build_answer_key(profile: dict, global_template: dict, *, profile_email: str
     answer_key = _substitute(global_template, substitutions)
 
     # Merge user-specific overrides on top. Key name varies by source:
-    # cloud → answer_key_json, local nested → standard_answers.
+    # cloud → answer_key_json, local nested → standard_answers. Bundle
+    # override (passed explicitly by worker.py at apply time) wins.
     user_overrides = (
-        profile_data.get("answer_key_json")
+        bundle_answer_key
+        or profile_data.get("answer_key_json")
         or profile.get("answer_key_json")
         or profile.get("standard_answers")
         or {}
