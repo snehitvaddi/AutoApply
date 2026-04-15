@@ -631,7 +631,18 @@ function InlineResumeUpload({
       const res = await fetch(url, { method: "POST" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(json?.message || `Parse HTTP ${res.status}`);
+        // Translate the most common operator-side failures into actionable
+        // copy. The route returns 500 with a specific message when
+        // OPENAI_API_KEY_SHARED is unset on Vercel — surface that verbatim
+        // so the user (or whoever's debugging) knows exactly what to do.
+        const raw = json?.message || `HTTP ${res.status}`;
+        const friendly = raw.includes("OPENAI_API_KEY_SHARED")
+          ? "AI parser isn't configured on the server (OPENAI_API_KEY_SHARED env missing on Vercel). Resume IS uploaded — set the env var and re-open this profile to retry."
+          : raw.includes("not look like a PDF")
+          ? "That file isn't a valid PDF. Re-export from your resume editor and upload again."
+          : `Parse failed: ${raw}`;
+        setError(friendly);
+        console.warn("extract-resume failed:", { status: res.status, body: json });
         setPhase("idle");
         return;
       }
