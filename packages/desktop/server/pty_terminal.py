@@ -1648,19 +1648,21 @@ exec /bin/zsh -l
                 action = (
                     "scout ran 3x with ZERO enqueues — worker scout is stuck "
                     "(filters too strict OR all sources dry). YOU run title-based "
-                    "scout now: Himalayas + LinkedIn public + Google dorks "
-                    "site:jobs.ashbyhq.com. Enqueue via /api/worker/proxy enqueue_jobs."
+                    "scout now: Himalayas + LinkedIn public + Google dorks across "
+                    "ALL ATS (site:jobs.ashbyhq.com OR site:boards.greenhouse.io OR "
+                    "site:jobs.lever.co OR site:myworkdayjobs.com). "
+                    "Enqueue via /api/worker/proxy enqueue_jobs."
                 )
             elif tick <= 1:
                 action = (
-                    "queue empty — YOU scout now. hit Ashby/Greenhouse/Lever direct "
-                    "for our target companies, filter against profile, enqueue, apply."
+                    "queue empty — YOU scout now. hit Ashby/Greenhouse/Lever/Workday "
+                    "direct for our target companies, filter against profile, enqueue, apply."
                 )
             elif tick == 2:
                 action = (
                     "queue STILL empty — broaden: title-based search on Himalayas + "
-                    "LinkedIn public (f_TPR=r86400) + Google dorks site:jobs.ashbyhq.com. "
-                    "Enqueue then apply."
+                    "LinkedIn public (f_TPR=r86400) + Google dorks across all ATS "
+                    "(ashbyhq / greenhouse / lever / myworkdayjobs). Enqueue then apply."
                 )
             else:
                 action = (
