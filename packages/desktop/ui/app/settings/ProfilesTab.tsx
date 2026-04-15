@@ -64,6 +64,10 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
   const [draft, setDraft] = useState<Partial<Profile> & { application_email_app_password?: string; same_email_as_default?: boolean }>({});
   const [answerKeyText, setAnswerKeyText] = useState<string>("");
   const [answerKeyError, setAnswerKeyError] = useState<string>("");
+  // See web ProfilesTab — bumps on every successful resume parse so the
+  // WorkEducationEditor remounts via React key and pulls the parsed
+  // values out of `initial` cleanly without the onChange-loop glitch.
+  const [parseSeq, setParseSeq] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -238,20 +242,27 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
           </label>
         </div>
 
-        {/* Per-bundle board overrides. Blank = use global defaults. */}
+        {/* Per-bundle board overrides — mirrors the web copy 1:1 so
+            the UX matches whether the user opens Settings on the web
+            or in the desktop app. */}
         <div className="border-t pt-3 mt-2">
           <h3 className="text-sm font-semibold mb-1">Board overrides (optional)</h3>
-          <p className="text-xs text-muted-foreground mb-2">Leave blank to use the global default board lists.</p>
-          <ChipField
-            label="Ashby boards"
-            values={draft.ashby_boards || []}
-            onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })}
-          />
-          <ChipField
-            label="Greenhouse boards"
-            values={draft.greenhouse_boards || []}
-            onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })}
-          />
+          <p className="text-xs text-muted-foreground mb-2">
+            Most users leave this blank. Only fill in if you want this profile to scout a specific subset of companies instead of the global default list.
+          </p>
+          <details className="mb-3 text-xs text-muted-foreground">
+            <summary className="cursor-pointer text-foreground hover:text-primary">What&apos;s a board?</summary>
+            <div className="mt-2 pl-3 border-l-2 border-border space-y-1">
+              <p>
+                <strong>Ashby</strong> and <strong>Greenhouse</strong> are job-board platforms. Companies host their job postings under a slug like <code className="bg-muted px-1 rounded">jobs.ashbyhq.com/<span className="text-primary">openai</span></code> or <code className="bg-muted px-1 rounded">boards.greenhouse.io/<span className="text-primary">stripe</span></code>.
+              </p>
+              <p>Leaving these fields blank means ApplyLoop scouts a curated list of ~hundreds of company slugs we maintain.</p>
+              <p>Override only when you want to scope this profile tightly — e.g. <em>&quot;my Data Analyst bundle should only watch Stripe + Datadog + Airbnb&quot;</em>.</p>
+              <p><strong>Format:</strong> just the company slug, not the full URL. <code className="bg-muted px-1 rounded">stripe</code>, not <code className="bg-muted px-1 rounded">boards.greenhouse.io/stripe</code>.</p>
+            </div>
+          </details>
+          <ChipField label="Ashby boards" values={draft.ashby_boards || []} onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })} />
+          <ChipField label="Greenhouse boards" values={draft.greenhouse_boards || []} onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })} />
         </div>
 
         {/* Resume — inline upload + pool dropdown. Replaces the
@@ -275,38 +286,99 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
                 education: (parsed.education as never) || d.education,
                 skills: (parsed.skills as never) || d.skills,
               }));
+              // Force the WorkEducationEditor to remount so its internal
+              // state re-syncs from `initial` cleanly — same anti-loop
+              // pattern as the web tab.
+              setParseSeq((n) => n + 1);
             }}
           />
         </div>
 
-        {editingId === "__new__" && profiles.some((p) => p.is_default) && (
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={!!draft.same_email_as_default} onChange={(e) => setDraft({ ...draft, same_email_as_default: e.target.checked })} />
-            Use same apply-from email as Default profile
-          </label>
-        )}
+        {/* Apply-from Gmail — mirrors the web two-mode radio UX so the
+            relationship between "saved account" and "new account" is
+            obvious instead of a confusing pool dropdown + opaque
+            "(use inline email)" placeholder. */}
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-1">Apply-from Gmail</h3>
+          <p className="text-xs text-muted-foreground mb-3">
+            This profile sends applications from this Gmail account. Each profile uses its own mailbox so OTP codes route correctly.{" "}
+            <span className="text-muted-foreground/70">Need an app password? Enable 2FA on your Google account, then generate one at <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="underline">myaccount.google.com/apppasswords</a>.</span>
+          </p>
 
-        {!draft.same_email_as_default && (
-          <>
-            <div>
-              <label className="text-sm font-medium block mb-1">Apply-from email account</label>
-              <select className="border rounded px-2 py-1 w-full bg-background" value={draft.email_account_id || ""} onChange={(e) => setDraft({ ...draft, email_account_id: e.target.value || null })}>
-                <option value="">(use inline email)</option>
-                {emailAccounts.map((e) => <option key={e.id} value={e.id}>{e.email}{e.has_app_password ? " ✓" : ""}</option>)}
-              </select>
-            </div>
-            {!draft.email_account_id && (
-              <TextField label="Apply-from email (inline)" value={draft.application_email || ""} onChange={(v) => setDraft({ ...draft, application_email: v })} />
-            )}
-            <TextField
-              label={draft.has_app_password ? "Gmail app password (stored ✓ — leave blank to keep)" : "Gmail app password"}
-              type="password"
-              autoComplete="new-password"
-              value={draft.application_email_app_password || ""}
-              onChange={(v) => setDraft({ ...draft, application_email_app_password: v })}
-            />
-          </>
-        )}
+          {(() => {
+            const hasPool = emailAccounts.length > 0;
+            const mode = draft.email_account_id ? "saved" : "new";
+            return (
+              <div className="space-y-3">
+                {hasPool && (
+                  <div className="flex gap-4 text-sm">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name={`gmail-mode-${editingId || "new"}`}
+                        checked={mode === "saved"}
+                        onChange={() => setDraft({
+                          ...draft,
+                          email_account_id: emailAccounts[0].id,
+                          application_email: "",
+                          application_email_app_password: "",
+                        })}
+                      />
+                      Use a saved Gmail account
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name={`gmail-mode-${editingId || "new"}`}
+                        checked={mode === "new"}
+                        onChange={() => setDraft({ ...draft, email_account_id: null })}
+                      />
+                      Enter a new Gmail account
+                    </label>
+                  </div>
+                )}
+
+                {mode === "saved" && hasPool && (
+                  <div>
+                    <label className="text-sm font-medium block mb-1">Saved account</label>
+                    <select
+                      className="border rounded px-2 py-1 w-full bg-background"
+                      value={draft.email_account_id || ""}
+                      onChange={(e) => setDraft({ ...draft, email_account_id: e.target.value || null })}
+                    >
+                      {emailAccounts.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.email}{e.has_app_password ? "  (password saved ✓)" : "  (no password)"}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">Rotating the password? Switch to <strong>Enter a new account</strong> with the same email — it&apos;ll update the saved entry.</p>
+                  </div>
+                )}
+
+                {mode === "new" && (
+                  <>
+                    <TextField
+                      label="Gmail address"
+                      value={draft.application_email || ""}
+                      onChange={(v) => setDraft({ ...draft, application_email: v })}
+                    />
+                    <TextField
+                      label={draft.has_app_password ? "Gmail app password (stored ✓ — leave blank to keep)" : "Gmail app password"}
+                      type="password"
+                      autoComplete="new-password"
+                      value={draft.application_email_app_password || ""}
+                      onChange={(v) => setDraft({ ...draft, application_email_app_password: v })}
+                    />
+                    {!hasPool && (
+                      <p className="text-xs text-muted-foreground">This is your first Gmail. After saving, it&apos;ll appear in a <em>Saved accounts</em> picker for any other profiles you create.</p>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
+        </div>
 
         {/* Per-role Work & Education (mig 020). Each bundle tells a
             different story — AI Eng emphasizes ML wins, DA emphasizes
@@ -315,6 +387,10 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
         <div className="border-t pt-3 mt-2">
           <h3 className="text-sm font-semibold mb-2">Per-role work & education</h3>
           <WorkEducationEditor
+            // key bumps on every parse → editor remounts → its internal
+            // state re-syncs cleanly from `initial`. Anti-loop pattern
+            // mirrored from the web ProfilesTab.
+            key={`woe-${editingId}-${parseSeq}`}
             initial={{
               work_experience: draft.work_experience || [],
               education: draft.education || [],
