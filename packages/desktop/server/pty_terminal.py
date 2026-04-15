@@ -1366,15 +1366,15 @@ class PTYSession:
             pass
 
         existing_path = env.get("PATH", "")
-        existing_parts = existing_path.split(":") if existing_path else []
+        existing_parts = existing_path.split(os.pathsep) if existing_path else []
         for p in path_prepends:
             if p and p not in existing_parts:
                 existing_parts.insert(0, p)
-        env["PATH"] = ":".join(existing_parts)
+        env["PATH"] = os.pathsep.join(existing_parts)
 
         logger.info(
             f"PTY start: claude={claude} cwd={cwd} "
-            f"PATH-head={':'.join(existing_parts[:3])}"
+            f"PATH-head={os.pathsep.join(existing_parts[:3])}"
         )
 
         # Pre-fill the output buffer with a visible "starting..." line so
@@ -1397,16 +1397,66 @@ class PTYSession:
         env["APPLYLOOP_CLAUDE_BIN"] = claude
 
         if sys.platform == "win32":
-            # Windows: ConPTY doesn't have fork semantics. The wrapper is
-            # simpler — just run claude directly. Shell fallback on exit
-            # goes to cmd.exe instead of zsh.
-            escaped_prompt = initial_prompt.replace('"', '\\"')
-            wrapper = (
-                f'"{claude}" --dangerously-skip-permissions "{escaped_prompt}" '
-                f'& echo. & echo [ApplyLoop] Claude exited. Type "claude" to restart. '
-                f'& cmd /k'
+            # Windows parity with the bash wrapper below: check for claude
+            # auth presence, run claude, classify the exit reason from the
+            # latest log, print a colored banner, and drop to a cmd.exe
+            # fallback so the user can retry without the PTY dying.
+            #
+            # ConPTY honors ANSI escapes since Win10 1809, so the same
+            # \x1b[...m codes the bash wrapper uses render identically.
+            # The wrapper is a PowerShell one-liner passed via
+            # `powershell -NoProfile -Command` because cmd.exe has no
+            # log-tailing primitive worth the complexity.
+            #
+            # PowerShell single-quoted strings don't interpolate, BUT the
+            # outer Python string is embedded in a powershell `-Command`
+            # argument that PowerShell re-parses top-down. A `$` or
+            # backtick reaching the parser from inside `initial_prompt`
+            # (company names, profile fields) will trigger variable
+            # expansion or escape interpretation. Escape order matters:
+            # backtick FIRST (so a literal backtick becomes two), then
+            # `$` (so `$x` becomes `` `$x ``), then single-quote doubling.
+            def _ps_escape(s: str) -> str:
+                return (s.replace("`", "``")
+                         .replace("$", "`$")
+                         .replace("'", "''"))
+            ps_prompt = _ps_escape(initial_prompt)
+            ps_claude = _ps_escape(claude)
+            ps_wrapper = (
+                "$ErrorActionPreference='Continue'; "
+                "$ESC=[char]27; $CYAN=\"$ESC[36m\"; $GREEN=\"$ESC[32m\"; "
+                "$YELLOW=\"$ESC[33m\"; $RESET=\"$ESC[0m\"; "
+                "Write-Host \"$CYAN[ApplyLoop]$RESET cwd=$CYAN$(Get-Location)$RESET\"; "
+                "$claudeDir=Join-Path $env:USERPROFILE '.claude'; "
+                "if ((Test-Path $claudeDir) -and (Get-ChildItem $claudeDir -ErrorAction SilentlyContinue)) { "
+                "  Write-Host \"$GREEN[ApplyLoop]$RESET Claude Code is authenticated - starting session...\"; "
+                f"  & '{ps_claude}' --dangerously-skip-permissions '{ps_prompt}'; "
+                "  $exit=$LASTEXITCODE; "
+                "  $logDir=Join-Path $claudeDir 'logs'; $lastLines=''; "
+                "  if (Test-Path $logDir) { "
+                "    $latest=Get-ChildItem -Path $logDir -Filter '*.log' -ErrorAction SilentlyContinue | "
+                "      Sort-Object LastWriteTime -Descending | Select-Object -First 1; "
+                "    if ($latest) { $lastLines=(Get-Content $latest.FullName -Tail 40 -ErrorAction SilentlyContinue) -join \"`n\" } "
+                "  }; "
+                "  if     ($lastLines -match '(?i)rate.?limit|429|too many requests') { $reason='API rate limit hit'; $hint='Wait a few minutes.' } "
+                "  elseif ($lastLines -match '(?i)daily.{0,20}limit|quota.{0,20}exceeded') { $reason='Daily quota used up'; $hint='Resets at midnight Pacific.' } "
+                "  elseif ($lastLines -match '(?i)invalid.{0,20}token|unauthorized|401') { $reason='Auth expired'; $hint='Run: claude login' } "
+                "  elseif ($lastLines -match '(?i)connection.{0,20}refused|network|timeout') { $reason='Network error'; $hint='Check internet connection.' } "
+                "  elseif ($exit -eq 0) { $reason='Session ended normally'; $hint=\"Type 'claude' to restart.\" } "
+                "  else   { $reason=\"Session ended (exit $exit)\"; $hint=\"Type 'claude' to restart.\" }; "
+                "  Write-Host \"`n$YELLOW[ApplyLoop]$RESET $reason$RESET\"; "
+                "  Write-Host \"$YELLOW[ApplyLoop]$RESET $hint\"; "
+                "} else { "
+                "  Write-Host \"$YELLOW[ApplyLoop]$RESET Claude not authenticated. Run: ${CYAN}claude login${RESET}`n\"; "
+                "}; "
+                "cmd /k"
             )
-            spawn_cmd = ["cmd", "/c", wrapper]
+            spawn_cmd = [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-Command", ps_wrapper,
+            ]
         else:
             # Unix: bash wrapper with claude + zsh fallback (unchanged from
             # the pre-abstraction code — same shell script, just spawned

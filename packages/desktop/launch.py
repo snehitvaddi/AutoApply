@@ -76,9 +76,19 @@ def _install_headless_logging() -> Path | None:
         return None
 
 
+def _jiggler_pidfile() -> Path:
+    """jiggler.sh writes to /tmp/jiggler.pid; jiggler.ps1 writes to
+    $env:TEMP\\jiggler.pid. Resolve the right one per platform so the
+    shutdown backstop actually finds it."""
+    if sys.platform == "win32":
+        tmp = os.environ.get("TEMP") or os.environ.get("TMP") or str(Path.home() / "AppData" / "Local" / "Temp")
+        return Path(tmp) / "jiggler.pid"
+    return Path("/tmp/jiggler.pid")
+
+
 _CHILD_PID_FILES = [
     Path.home() / ".autoapply" / "workspace" / "worker.pid",
-    Path("/tmp/jiggler.pid"),
+    _jiggler_pidfile(),
 ]
 
 
@@ -87,16 +97,24 @@ def _kill_child_pidfiles() -> None:
     children that double-forked or detached and thus don't appear under
     our process group anymore. Idempotent — silently skips missing files
     and already-dead PIDs."""
+    # signal.SIGKILL doesn't exist on Windows. os.kill(pid, SIGTERM) on
+    # Windows calls TerminateProcess which is already unconditional — so
+    # the "hard kill" second pass only matters on POSIX. Use getattr to
+    # stay portable.
+    _sigterm = getattr(signal, "SIGTERM", 15)
+    _sigkill = getattr(signal, "SIGKILL", None)
     for pf in _CHILD_PID_FILES:
         try:
             pid = int(pf.read_text().strip().split()[0])
         except (FileNotFoundError, ValueError, IndexError, OSError):
             continue
         try:
-            os.kill(pid, signal.SIGTERM)
+            os.kill(pid, _sigterm)
         except (ProcessLookupError, PermissionError, OSError):
             pass
     time.sleep(0.5)
+    if _sigkill is None:
+        return
     for pf in _CHILD_PID_FILES:
         try:
             pid = int(pf.read_text().strip().split()[0])
@@ -104,7 +122,7 @@ def _kill_child_pidfiles() -> None:
             continue
         try:
             os.kill(pid, 0)
-            os.kill(pid, signal.SIGKILL)
+            os.kill(pid, _sigkill)
         except (ProcessLookupError, PermissionError, OSError):
             pass
 

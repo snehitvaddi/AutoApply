@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 APP_URL = os.environ.get("NEXT_PUBLIC_APP_URL", "https://applyloop.vercel.app")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
-RESUME_DIR = os.environ.get("RESUME_DIR", "/tmp/autoapply/resumes")
+RESUME_DIR = os.environ.get("RESUME_DIR") or os.path.expanduser("~/.autoapply/workspace/resumes")
 LOCAL_DB_PATH = os.environ.get("APPLYLOOP_DB", os.path.expanduser("~/.autoapply/workspace/applications.db"))
 
 _http_client: httpx.Client | None = None
@@ -240,7 +240,9 @@ def _log_to_local_db(job: dict, result: dict):
             resolved_ats, job.get("source", "") or raw_ats, job.get("location", ""),
             job.get("posted_at"), now, now,
             result.get("status", "submitted"), result.get("error"),
-            result.get("screenshot_url"),
+            # ApplyResult.screenshot is the source of truth; fall back to
+            # screenshot_url for legacy callers that still use the old key.
+            result.get("screenshot") or result.get("screenshot_url"),
             f"{company.lower().replace(' ', '-')}|{job_id}",
         ))
         conn.commit()

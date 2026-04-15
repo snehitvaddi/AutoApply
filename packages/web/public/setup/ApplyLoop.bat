@@ -1,73 +1,60 @@
 @echo off
-:: ApplyLoop — One-click launcher for Windows
-:: Double-click to start. Runs Claude Code with full permissions.
-:: Requests admin access automatically.
+:: ApplyLoop — Windows launcher (parity with macOS .app/Contents/MacOS/launcher)
+:: Runs packages/desktop/launch.py in the bundled venv, which starts FastAPI +
+:: pywebview + the PTY backend (pywinpty) which spawns claude. Mirrors Mac path
+:: exactly so the UI/API/PTY behavior is identical across platforms.
 
-:: Check for admin rights — auto-elevate if not admin
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Requesting administrator access...
-    powershell -Command "Start-Process '%~f0' -Verb RunAs"
-    exit /b
-)
+setlocal EnableDelayedExpansion
 
-echo.
-echo   ╔══════════════════════════════════════════╗
-echo   ║     ApplyLoop — Starting...              ║
-echo   ╚══════════════════════════════════════════╝
-echo.
+set "INSTALL_DIR=%USERPROFILE%\ApplyLoop"
+set "LOG_DIR=%USERPROFILE%\.applyloop"
+set "LOG_FILE=%LOG_DIR%\desktop.log"
+set "VENV_PY=%INSTALL_DIR%\venv\Scripts\python.exe"
+set "LAUNCH_PY=%INSTALL_DIR%\packages\desktop\launch.py"
 
-set INSTALL_DIR=%USERPROFILE%\ApplyLoop
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>&1
+if not exist "%LOG_DIR%\workspace" mkdir "%LOG_DIR%\workspace" >nul 2>&1
 
-:: Check if setup is done
+:: Bail early with an actionable message if setup never completed.
 if not exist "%INSTALL_DIR%\AGENTS.md" (
-    echo   Setup not complete. Run the setup script first:
-    echo   applyloop.vercel.app/setup-complete
+    echo.
+    echo   ApplyLoop is not installed yet.
+    echo   Run the setup script first:
+    echo     https://applyloop.vercel.app/setup
     echo.
     pause
     exit /b 1
 )
 
-:: Pull latest updates from repo
-echo   Checking for updates...
-if exist "%INSTALL_DIR%\repo\.git" (
-    cd /d "%INSTALL_DIR%\repo"
-    git pull origin main >nul 2>&1
-    robocopy "%INSTALL_DIR%\repo" "%INSTALL_DIR%" /E /XD .git /NFL /NDL /NJH /NJS >nul 2>&1
-    echo   Updates applied.
-) else if exist "%INSTALL_DIR%\.git" (
-    cd /d "%INSTALL_DIR%"
-    git pull origin main >nul 2>&1
-    echo   Updates applied.
-) else (
-    echo   No git repo found — skipping update check.
+:: Auto-update: pull latest from repo before launch. Non-fatal if git missing
+:: or offline — we fall through to the bundled copy.
+if exist "%INSTALL_DIR%\.git" (
+    pushd "%INSTALL_DIR%" >nul
+    git pull --ff-only origin main >>"%LOG_FILE%" 2>&1
+    popd >nul
 )
 
-:: Fix Windows upload path mismatch (Bug #1)
-echo   Syncing upload directories...
-if not exist "%TEMP%\openclaw\uploads" mkdir "%TEMP%\openclaw\uploads" >nul 2>&1
-if not exist "C:\tmp\openclaw" mkdir "C:\tmp\openclaw" >nul 2>&1
-if not exist "C:\tmp\openclaw\uploads" (
-    mklink /J "C:\tmp\openclaw\uploads" "%TEMP%\openclaw\uploads" >nul 2>&1
+echo [%date% %time%] launcher starting>>"%LOG_FILE%"
+echo [%date% %time%] VENV_PY=%VENV_PY%>>"%LOG_FILE%"
+echo [%date% %time%] LAUNCH_PY=%LAUNCH_PY%>>"%LOG_FILE%"
+
+:: Prefer the bundled venv (always has fastapi/uvicorn/pywinpty pre-installed
+:: by setup-windows.ps1). Fall back to system python only if the venv is
+:: missing — we skip pip-install-on-launch because double-click UX can't
+:: survive a compile failure.
+if exist "%VENV_PY%" (
+    echo [launcher] using bundled venv>>"%LOG_FILE%"
+    "%VENV_PY%" "%LAUNCH_PY%" >>"%LOG_FILE%" 2>&1
+    exit /b %errorlevel%
 )
 
-:: Ensure OpenClaw gateway is running (Bug #2 — use fresh start, not restart)
-echo   Ensuring OpenClaw gateway is running...
-tasklist /FI "IMAGENAME eq node.exe" 2>nul | find "node.exe" >nul 2>&1
+echo [launcher] venv missing — falling back to system python>>"%LOG_FILE%"
+where python >nul 2>&1
 if %errorlevel% neq 0 (
-    echo   Starting OpenClaw gateway...
-    start /B openclaw.cmd gateway start >nul 2>&1
-    timeout /t 3 /nobreak >nul
+    echo   Python not found. Reinstall ApplyLoop from:
+    echo     https://applyloop.vercel.app/setup
+    pause
+    exit /b 1
 )
-
-echo.
-echo   Starting ApplyLoop with Claude Code...
-echo   (This window will stay open while ApplyLoop runs)
-echo.
-
-cd /d "%INSTALL_DIR%"
-claude.cmd --dangerously-skip-permissions "Read AGENTS.md. You are ApplyLoop. IMPORTANT: On Windows, if openclaw browser fill doesn't work on React forms (Ashby), use CDP direct connection on port 18800 with Input.insertText instead. If openclaw browser upload fails with path error, copy resume to %%TEMP%%\openclaw\uploads\ first. Start the jiggler, then begin the scout→filter→apply loop."
-
-echo.
-echo   ApplyLoop stopped.
-pause
+python "%LAUNCH_PY%" >>"%LOG_FILE%" 2>&1
+exit /b %errorlevel%

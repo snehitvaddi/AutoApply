@@ -77,16 +77,25 @@ if ($Mode -ne "--quiet") {
 # ── Lock (prevent concurrent updates) ──────────────────────────────────────
 
 if (Test-Path $LockFile) {
-    $lockPid = Get-Content $LockFile -ErrorAction SilentlyContinue
-    $proc = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
-    if ($proc) {
-        Log-Warn "Update already running (PID $lockPid). Skipping."
-        exit 0
-    } else {
-        Remove-Item $LockFile -Force
+    # Read PID with explicit ASCII + int cast. PowerShell 5.1's default
+    # Out-File encoding is UTF-16-LE with BOM, and Get-Content without
+    # encoding is permissive enough to auto-detect it — but a partial
+    # write or corrupt file would leave [int] cast throwing, which would
+    # bypass the stale-lock cleanup and block every future update.
+    $lockIsStale = $true
+    try {
+        $lockRaw = (Get-Content $LockFile -Encoding ASCII -ErrorAction Stop) -join ''
+        $lockPid = [int]($lockRaw.Trim())
+        if (Get-Process -Id $lockPid -ErrorAction SilentlyContinue) {
+            Log-Warn "Update already running (PID $lockPid). Skipping."
+            exit 0
+        }
+    } catch {
+        # Corrupt lock file — fall through to cleanup + fresh claim.
     }
+    if ($lockIsStale) { Remove-Item $LockFile -Force -ErrorAction SilentlyContinue }
 }
-$PID | Out-File -FilePath $LockFile -Force
+$PID | Out-File -FilePath $LockFile -Encoding ASCII -Force
 try {
 
 # ── Start ───────────────────────────────────────────────────────────────────
@@ -371,7 +380,7 @@ Write-Log "==================================================="
 Write-Log "Log saved to: $LogFile"
 
 # Save last-update timestamp
-[long]((Get-Date) - (Get-Date "1970-01-01")).TotalSeconds | Out-File -FilePath $LastUpdateFile -Force
+[long]((Get-Date) - (Get-Date "1970-01-01")).TotalSeconds | Out-File -FilePath $LastUpdateFile -Encoding ASCII -Force
 
 # Show completion banner
 if ($Mode -ne "--quiet") {

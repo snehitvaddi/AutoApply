@@ -340,7 +340,8 @@ async def set_token(body: dict):
         return {"ok": False, "error": "Token is required"}
     TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
     TOKEN_FILE.write_text(token)
-    TOKEN_FILE.chmod(0o600)
+    if sys.platform != "win32":
+        TOKEN_FILE.chmod(0o600)
     return {"ok": True}
 
 
@@ -786,7 +787,8 @@ async def setup_activate(body: dict):
         TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
         TOKEN_FILE.write_text(worker_token)
         try:
-            TOKEN_FILE.chmod(0o600)
+            if sys.platform != "win32":
+                TOKEN_FILE.chmod(0o600)
         except Exception:
             pass
         # Clear any prior reauth marker + reset the in-memory auth state so

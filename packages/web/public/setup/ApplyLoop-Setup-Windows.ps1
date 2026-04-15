@@ -7,6 +7,17 @@
 
 $ErrorActionPreference = "Stop"
 
+# Relax execution policy for this process only, so `iwr … | iex` installs
+# work from a fresh Windows box where the default policy is Restricted.
+# Scope=Process means we never touch the user's persistent setting.
+try {
+    if ((Get-ExecutionPolicy -Scope Process) -ne 'Bypass') {
+        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+    }
+} catch {
+    Write-Host "WARN: could not set execution policy: $_" -ForegroundColor Yellow
+}
+
 # Parse flags
 $AdvancedMode = $args -contains "--advanced"
 
@@ -686,6 +697,34 @@ New-Item -ItemType Directory -Path (Join-Path $WorkspaceDir "resumes") -Force | 
 New-Item -ItemType Directory -Path (Join-Path $WorkspaceDir "screenshots") -Force | Out-Null
 Write-OK "Workspace directories created at $WorkspaceDir"
 
+# 7e. Best-effort Windows Defender exclusions. The worker + scout loop
+# write to ~/.autoapply/workspace (SQLite WAL, screenshots, resume cache)
+# and ~/ApplyLoop (git pulls, node_modules). Defender scans every write
+# and can cut apply throughput in half. Add-MpPreference needs admin —
+# wrap in try/catch so non-admin installs still succeed with a warning.
+try {
+    # Check Defender actually exists + is active before calling
+    # Add-MpPreference. On Windows Server / Windows with Defender
+    # replaced by third-party AV / Defender disabled by group policy,
+    # Get-MpComputerStatus throws or returns null — we silently skip.
+    $defenderStatus = $null
+    try { $defenderStatus = Get-MpComputerStatus -ErrorAction Stop } catch { }
+    if ($defenderStatus -and $defenderStatus.AMServiceEnabled) {
+        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        if ($isAdmin) {
+            Add-MpPreference -ExclusionPath $WorkspaceDir -ErrorAction SilentlyContinue
+            Add-MpPreference -ExclusionPath $InstallDir -ErrorAction SilentlyContinue
+            Write-OK "Defender exclusions added for workspace + install dir (faster apply loop)"
+        } else {
+            Write-Info "Skipping Defender exclusions (not running as admin — worker will still work, just slower)"
+        }
+    } else {
+        Write-Info "Windows Defender not active — skipping exclusion step"
+    }
+} catch {
+    Write-Info "Could not configure Defender exclusions: $_"
+}
+
 $ErrorActionPreference = "Stop"
 
 # ── Step 8: LLM Provider + AI CLI Installation ─────────────────────────────
@@ -1003,8 +1042,8 @@ ENCRYPTION_KEY=$EncryptionKey
 WORKER_ID=$WorkerId
 POLL_INTERVAL=10
 APPLY_COOLDOWN=30
-RESUME_DIR=$env:TEMP\applyloop\resumes
-SCREENSHOT_DIR=$env:TEMP\applyloop\screenshots
+RESUME_DIR=$env:USERPROFILE\.autoapply\workspace\resumes
+SCREENSHOT_DIR=$env:USERPROFILE\.autoapply\workspace\screenshots
 
 # Telegram (auto-configured from admin)
 TELEGRAM_BOT_TOKEN=$TelegramToken
@@ -1568,7 +1607,11 @@ if ($LlmCliCmd -eq "claude") {
         Write-Warn "Could not download launcher — create manually"
     }
 
-    # Create desktop shortcut with admin elevation + icon
+    # Create desktop + Start Menu shortcut. Do NOT set the admin-elevation
+    # bit: ApplyLoop installs under %USERPROFILE% and writes to ~/.autoapply,
+    # both of which are user-owned. Forcing UAC on every launch is wrong —
+    # the worker must run as the current user so per-user creds in .env
+    # and the user's Chrome profile for openclaw browser are accessible.
     try {
         $ShortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "ApplyLoop.lnk"
         $WshShell = New-Object -ComObject WScript.Shell
@@ -1579,16 +1622,11 @@ if ($LlmCliCmd -eq "claude") {
         $Shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,144"
         $Shortcut.Save()
 
-        # Set "Run as administrator" flag in shortcut binary
-        $bytes = [System.IO.File]::ReadAllBytes($ShortcutPath)
-        $bytes[0x15] = $bytes[0x15] -bor 0x20
-        [System.IO.File]::WriteAllBytes($ShortcutPath, $bytes)
-
         # Also add to Start Menu
         $StartMenuPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\ApplyLoop.lnk"
         Copy-Item $ShortcutPath $StartMenuPath -Force 2>$null
 
-        Write-OK "ApplyLoop shortcut on Desktop + Start Menu (runs as admin, with icon)"
+        Write-OK "ApplyLoop shortcut on Desktop + Start Menu (user scope, no UAC prompt)"
     } catch {
         Write-Warn "Could not create shortcut — use the .bat file directly"
     }
