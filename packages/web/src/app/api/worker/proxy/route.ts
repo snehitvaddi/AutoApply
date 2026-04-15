@@ -583,7 +583,7 @@ export async function POST(request: NextRequest) {
                 ats: job.ats,
                 discovered_at: new Date().toISOString(),
               },
-              { onConflict: "apply_url" }
+              { onConflict: "external_id,ats" }
             )
             .select("id")
             .single();
