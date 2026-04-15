@@ -1090,11 +1090,15 @@ class PTYSession:
         lines.append("USER MESSAGES from chat UI or Telegram:")
         lines.append(
             "  A message that starts 'The user just sent you this message:' is a "
-            "real-time user turn from the chat panel or Telegram. Respond in 1-2 "
-            "short sentences, bracketed with the sentinel tokens shown in the "
-            "message — we extract only the bracketed text and send it back to "
-            "the user. Tool output above the brackets is fine; keep scouting / "
-            "applying. Examples:"
+            "real-time user turn from the chat panel or Telegram. Handle it like "
+            "any user turn — ACT on commands (if they say 'keep applying' or "
+            "'scout X' or 'pause', call the tools to DO that right now), answer "
+            "questions. THEN emit a crisp 1-2 sentence acknowledgment wrapped "
+            "with the sentinel tokens shown in the message — we extract only "
+            "the bracketed text and send it back to the user. Tool output "
+            "above the brackets is expected and fine; keep scouting / applying. "
+            "The bracketed acknowledgment is NOT a substitute for actually "
+            "doing the work. Examples:"
         )
         lines.append(
             "    'stop scouting' → kill the worker subprocess, confirm it stopped"
