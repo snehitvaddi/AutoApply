@@ -593,6 +593,20 @@ export async function POST(request: NextRequest) {
             continue;
           }
 
+          // Queue dedup — skip if this user already has an ACTIVE queue row
+          // for this discovered_jobs.id. "Active" = pending or locked; done /
+          // failed / cancelled don't count (re-queue is intentional for retry).
+          const qExisting = await supabase
+            .from("application_queue")
+            .select("id", { count: "exact" })
+            .eq("user_id", userId)
+            .eq("job_id", jobId)
+            .in("status", ["pending", "locked", "in_progress"]);
+          if ((qExisting.count || 0) > 0) {
+            drops.push({ job: jobTag, reason: "dedup: already queued" });
+            continue;
+          }
+
           const taggedProfileId =
             job.application_profile_id && ownedBundleIds.has(job.application_profile_id)
               ? job.application_profile_id

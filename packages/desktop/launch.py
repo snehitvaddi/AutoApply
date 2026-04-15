@@ -76,6 +76,39 @@ def _install_headless_logging() -> Path | None:
         return None
 
 
+_CHILD_PID_FILES = [
+    Path.home() / ".autoapply" / "workspace" / "worker.pid",
+    Path("/tmp/jiggler.pid"),
+]
+
+
+def _kill_child_pidfiles() -> None:
+    """PID-file based kill. Belt-and-suspenders backstop to pkill -P for
+    children that double-forked or detached and thus don't appear under
+    our process group anymore. Idempotent — silently skips missing files
+    and already-dead PIDs."""
+    for pf in _CHILD_PID_FILES:
+        try:
+            pid = int(pf.read_text().strip().split()[0])
+        except (FileNotFoundError, ValueError, IndexError, OSError):
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    time.sleep(0.5)
+    for pf in _CHILD_PID_FILES:
+        try:
+            pid = int(pf.read_text().strip().split()[0])
+        except (FileNotFoundError, ValueError, IndexError, OSError):
+            continue
+        try:
+            os.kill(pid, 0)
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
 def _install_shutdown_handlers() -> None:
     """Write $WORKSPACE/shutdown.ok on SIGTERM/SIGINT so CI can wait on the
     marker to confirm a clean stop. Without this the daemon server thread
@@ -95,21 +128,32 @@ def _install_shutdown_handlers() -> None:
         # claude / jiggler orphans running in the background.
         try:
             import subprocess
-            subprocess.run(
-                ["pkill", "-TERM", "-P", str(os.getpid())],
-                capture_output=True, timeout=3,
-            )
-            for pattern in (
-                "worker.py", "jiggler.sh", "caffeinate -dis",
-                # Legacy pre-v1.0 scripts (OpenClaw-era forever loops).
-                # These keep hitting LinkedIn in the background if not
-                # killed — kill any that survived a reinstall.
-                "nonstop-24h", "forever.sh", "openclaw/agents/job-bot",
-            ):
+            if sys.platform == "win32":
+                # taskkill /T kills the whole process tree rooted at our
+                # PID — covers everything spawned via subprocess. Windows
+                # has no easy cmdline-pattern kill, so we rely on the tree
+                # walk plus a final jiggler.ps1 taskkill by image name.
                 subprocess.run(
-                    ["pkill", "-TERM", "-f", pattern],
-                    capture_output=True, timeout=2,
+                    ["taskkill", "/F", "/T", "/PID", str(os.getpid())],
+                    capture_output=True, timeout=3,
                 )
+            else:
+                subprocess.run(
+                    ["pkill", "-TERM", "-P", str(os.getpid())],
+                    capture_output=True, timeout=3,
+                )
+                for pattern in (
+                    "worker.py", "jiggler.sh", "caffeinate -dis",
+                    # Legacy pre-v1.0 scripts (OpenClaw-era forever loops).
+                    # These keep hitting LinkedIn in the background if not
+                    # killed — kill any that survived a reinstall.
+                    "nonstop-24h", "forever.sh", "openclaw/agents/job-bot",
+                ):
+                    subprocess.run(
+                        ["pkill", "-TERM", "-f", pattern],
+                        capture_output=True, timeout=2,
+                    )
+            _kill_child_pidfiles()
         except Exception:
             pass
         os._exit(0)
@@ -122,6 +166,13 @@ def _install_shutdown_handlers() -> None:
             signal.signal(sig, _handler)
         except (ValueError, OSError, AttributeError):
             pass
+
+    # atexit catches clean sys.exit() paths that don't fire signals —
+    # unhandled exceptions, explicit raise SystemExit, the normal Python
+    # shutdown path. The signal handler above calls os._exit() which
+    # bypasses atexit, so there's no double-fire.
+    import atexit as _atexit
+    _atexit.register(_kill_child_pidfiles)
 
 
 def check_deps():
@@ -172,7 +223,7 @@ def wait_for_server(timeout: int = 15) -> bool:
     import urllib.request
     for _ in range(timeout * 4):
         try:
-            urllib.request.urlopen(f"http://localhost:{PORT}/api/health", timeout=1)
+            urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/health", timeout=1)
             return True
         except Exception:
             time.sleep(0.25)
@@ -299,23 +350,31 @@ def main():
         def on_closed():
             try:
                 import subprocess
-                import signal as _sig
                 my_pid = os.getpid()
-                # Kill all direct + transitive children of this process.
-                # Uses `pkill -P` recursively — fast and doesn't need a
-                # maintained list of PIDs.
-                subprocess.run(
-                    ["pkill", "-TERM", "-P", str(my_pid)],
-                    capture_output=True, timeout=3,
-                )
-                # Also kill anything orphaned with our label (worker.py
-                # spawned via subprocess, jiggler.sh, etc.). Safe because
-                # we're quitting anyway.
-                for pattern in ("worker.py", "jiggler.sh", "caffeinate -dis"):
+                if sys.platform == "win32":
+                    # taskkill /T walks the full process tree — covers
+                    # worker.py + pywinpty + spawned claude + jiggler.
                     subprocess.run(
-                        ["pkill", "-TERM", "-f", pattern],
-                        capture_output=True, timeout=2,
+                        ["taskkill", "/F", "/T", "/PID", str(my_pid)],
+                        capture_output=True, timeout=3,
                     )
+                else:
+                    # Kill all direct + transitive children of this process.
+                    # Uses `pkill -P` recursively — fast and doesn't need a
+                    # maintained list of PIDs.
+                    subprocess.run(
+                        ["pkill", "-TERM", "-P", str(my_pid)],
+                        capture_output=True, timeout=3,
+                    )
+                    # Also kill anything orphaned with our label (worker.py
+                    # spawned via subprocess, jiggler.sh, etc.). Safe because
+                    # we're quitting anyway.
+                    for pattern in ("worker.py", "jiggler.sh", "caffeinate -dis"):
+                        subprocess.run(
+                            ["pkill", "-TERM", "-f", pattern],
+                            capture_output=True, timeout=2,
+                        )
+                _kill_child_pidfiles()
             except Exception as e:
                 print(f"[ApplyLoop] child cleanup on close failed: {e}")
             os._exit(0)

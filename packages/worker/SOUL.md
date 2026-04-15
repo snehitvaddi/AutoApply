@@ -76,6 +76,8 @@ SCOUT → FILTER → READ JD → FILL → VERIFY → SUBMIT → SCREENSHOT → T
 
 Board slugs and API URLs → see `packages/worker/config.py`
 
+**Empty queue is NEVER a terminal state.** If `in_queue == 0`, YOU scout now — don't wait for worker.py's 30-min timer. Success metric = applications submitted, not "worker.py alive". You already know how to scout (title-based sources, ATS APIs, Google dorks); pick one and go.
+
 ### STEP 2: FILTER
 - Role matches user's target_titles from profile.json
 - Posted within 24h (verify after fetch)
