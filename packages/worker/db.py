@@ -259,11 +259,34 @@ def enqueue_to_local_db(jobs: list[dict]) -> int:
     """
     if not jobs:
         return 0
+    # Freshness guard. scout/ashby.py::_is_fresh_24h only filters the
+    # scout source's output; manual injections (via /api/worker/proxy
+    # enqueue_jobs → enqueue_discovered_jobs → enqueue_to_local_db)
+    # bypass it. Without this, ghost postings 6+ months old get
+    # enqueued and waste apply attempts. Jobs with NO posted_at still
+    # pass (many sources don't surface it); only reject when we have
+    # a concrete old date.
+    from datetime import timedelta as _timedelta
+    stale_cutoff = datetime.now(timezone.utc) - _timedelta(hours=24)
     try:
         conn = _get_local_conn()
         now = datetime.now(timezone.utc).isoformat()
         inserted = 0
+        skipped_stale = 0
         for job in jobs:
+            posted_at_raw = job.get("posted_at")
+            if posted_at_raw:
+                try:
+                    posted_dt = datetime.fromisoformat(
+                        str(posted_at_raw).replace("Z", "+00:00")
+                    )
+                    if posted_dt.tzinfo is None:
+                        posted_dt = posted_dt.replace(tzinfo=timezone.utc)
+                    if posted_dt < stale_cutoff:
+                        skipped_stale += 1
+                        continue
+                except (ValueError, TypeError):
+                    pass  # unparseable date = trust the caller, enqueue
             company = job.get("company", "")
             job_id = job.get("external_id") or job.get("job_id") or ""
             dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else f"{company.lower().replace(' ', '-')}|{(job.get('title', '')).lower().replace(' ', '-')}"
@@ -283,6 +306,8 @@ def enqueue_to_local_db(jobs: list[dict]) -> int:
                 pass  # duplicate, skip
         conn.commit()
         conn.close()
+        if skipped_stale:
+            logger.info(f"enqueue_to_local_db: dropped {skipped_stale} stale (>24h) row(s)")
         return inserted
     except Exception as e:
         logger.warning(f"Local DB enqueue failed (non-fatal): {e}")

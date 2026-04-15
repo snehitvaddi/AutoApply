@@ -173,6 +173,35 @@ class AshbyApplier(BaseApplier):
                 time.sleep(1)
                 click_ref(submit_ref)
                 time.sleep(3)
+                # Refresh snapshot after retry so confirmation check below
+                # sees the post-retry DOM, not the pre-retry validation-error DOM.
+                raw_post = snapshot()
+                post_text = (raw_post or "").lower()
+
+            # Positive-confirmation check. "No validation error" ≠ "submit
+            # succeeded" — silent failures (bot detection, backend 500,
+            # network drop, modal closed, reCAPTCHA overlay) all leave the
+            # page in a non-error state. Require an explicit success signal
+            # from Ashby's "Thank you for applying" confirmation screen.
+            _CONFIRM_SIGNALS = (
+                "thank you for applying",
+                "thank you for your application",
+                "application received",
+                "application submitted",
+                "we've received",
+                "we have received",
+                "successfully submitted",
+                "you've applied",
+                "your application has been submitted",
+            )
+            if not any(sig in post_text for sig in _CONFIRM_SIGNALS):
+                img = take_screenshot()
+                return ApplyResult(
+                    success=False,
+                    screenshot=img,
+                    error="no confirmation page detected after submit — likely silent failure",
+                    retriable=False,
+                )
 
             img = take_screenshot()
             return ApplyResult(success=True, screenshot=img)
