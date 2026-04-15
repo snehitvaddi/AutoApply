@@ -22,8 +22,13 @@ SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 WORKER_ID = os.environ.get("WORKER_ID", f"worker-{os.getpid()}")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
 APPLY_COOLDOWN = int(os.environ.get("APPLY_COOLDOWN", "30"))
-RESUME_DIR = os.environ.get("RESUME_DIR", "/tmp/autoapply/resumes")
-SCREENSHOT_DIR = os.environ.get("SCREENSHOT_DIR", "/tmp/autoapply/screenshots")
+# Default to the per-user workspace on any platform. /tmp doesn't exist
+# on Windows, and even on macOS /tmp is wiped on reboot — losing a
+# freshly-downloaded resume mid-run. The workspace dir matches what the
+# desktop launcher creates at startup.
+_WORKSPACE = os.path.expanduser("~/.autoapply/workspace")
+RESUME_DIR = os.environ.get("RESUME_DIR") or os.path.join(_WORKSPACE, "resumes")
+SCREENSHOT_DIR = os.environ.get("SCREENSHOT_DIR") or os.path.join(_WORKSPACE, "screenshots")
 
 ATS_COOLDOWNS = {
     "greenhouse": 30,
@@ -72,6 +77,12 @@ MAX_COMPANY_APPS_PER_7_DAYS = 3
 # Queue entries older than this are pruned at the start of each apply loop
 # iteration (24h freshness rule — listings expire fast, don't apply to stale ones).
 QUEUE_STALE_HOURS = 24
+# Rows stuck in `applying` for this long are assumed orphaned (applier
+# crashed mid-run — reCAPTCHA, timeout, LinkedIn redirect loop — without
+# cleanly calling update_queue_status). Watchdog resets them to `queued`
+# so claim_next_job picks them up again. A real apply rarely exceeds
+# 5 min, so 15 min is provably orphaned.
+APPLY_STALE_MINUTES = 15
 JOB_TIMEOUT_SECONDS = 120  # Max time per application before skip
 
 # Backward-compat aliases — any external callers still importing the old

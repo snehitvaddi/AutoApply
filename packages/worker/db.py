@@ -159,9 +159,23 @@ def log_application(user_id: str, job: dict, result: dict):
 
 
 def _get_local_conn() -> sqlite3.Connection:
-    """Open (and auto-create) the local SQLite database."""
+    """Open (and auto-create) the local SQLite database.
+
+    WAL + 30s busy timeout is required because the scout and apply
+    threads each open their own connection and write concurrently
+    (enqueue_to_local_db from scout, update_local_status + _log_to_local_db
+    from apply). Default timeout=0 + rollback journal made the second
+    writer fail immediately with `database is locked`, leaving rows
+    stuck in `applying` state with no one to reset them.
+    """
     os.makedirs(os.path.dirname(LOCAL_DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(LOCAL_DB_PATH)
+    conn = sqlite3.connect(LOCAL_DB_PATH, timeout=30.0)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.Error:
+        pass
     _ensure_local_schema(conn)
     return conn
 

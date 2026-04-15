@@ -14,7 +14,7 @@ from config import (
     WORKER_ID, POLL_INTERVAL, APPLY_COOLDOWN, ATS_COOLDOWNS,
     MAX_SYSTEM_APPS_PER_HOUR, BLOCKED_DOMAINS, COMPANY_PAUSES,
     BLOCKED_STAFFING, SCOUT_INTERVAL_MINUTES,
-    MAX_COMPANY_APPS_PER_7_DAYS, QUEUE_STALE_HOURS,
+    MAX_COMPANY_APPS_PER_7_DAYS, QUEUE_STALE_HOURS, APPLY_STALE_MINUTES,
 )
 from tenant import (
     TenantConfig, TenantConfigIncompleteError,
@@ -594,16 +594,35 @@ def _prune_stale_queue_locally() -> None:
     )
     if not os.path.exists(db_path):
         return
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=QUEUE_STALE_HOURS)).isoformat()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=QUEUE_STALE_HOURS)).isoformat()
+    stale_apply_cutoff = (now - timedelta(minutes=APPLY_STALE_MINUTES)).isoformat()
+    now_iso = now.isoformat()
     try:
         conn = sqlite3.connect(db_path, timeout=5)
         try:
+            # Reset rows that crashed mid-apply before deleting expired
+            # queued rows — otherwise a stale applying row older than
+            # QUEUE_STALE_HOURS would get deleted instead of recovered.
+            reset_cur = conn.execute(
+                "UPDATE applications SET status='queued', "
+                "notes=COALESCE(notes,'') || ' [reset:stale applying]', "
+                "updated_at=? "
+                "WHERE status='applying' AND updated_at < ?",
+                (now_iso, stale_apply_cutoff),
+            )
+            reset = reset_cur.rowcount
             cur = conn.execute(
                 "DELETE FROM applications WHERE status='queued' AND scouted_at < ?",
                 (cutoff,),
             )
             deleted = cur.rowcount
             conn.commit()
+            if reset:
+                logger.warning(
+                    f"Reset {reset} stale 'applying' row(s) older than "
+                    f"{APPLY_STALE_MINUTES}m — crashed applier or lock race recovered"
+                )
             if deleted:
                 logger.info(f"Pruned {deleted} stale queue row(s) older than {QUEUE_STALE_HOURS}h")
         finally:
@@ -903,14 +922,19 @@ def main():
         # so the desktop wizard, lifespan PTY guard, and worker all
         # enforce the same "setup done" rules.
 
-        # Profile: first_name + last_name + email must exist
+        # Profile: first_name + last_name + email must exist.
+        # load_user_profile returns {user, profile, resumes} — appliers
+        # (greenhouse.py:753, workday.py:91) already read from the nested
+        # `profile` key, so preflight must match. Reading top-level used
+        # to silently flag every claim as awaiting_profile and back off.
         try:
-            preflight_profile = load_user_profile(user_id) or {}
+            raw_profile_bundle = load_user_profile(user_id) or {}
         except WorkerAuthError:
             raise
         except Exception as e:
             logger.debug(f"Profile preflight load failed: {e}")
-            preflight_profile = {}
+            raw_profile_bundle = {}
+        preflight_profile = raw_profile_bundle.get("profile") or {}
         missing_profile_fields = [
             f for f in ("first_name", "last_name", "email")
             if not (preflight_profile.get(f) or "").strip()
