@@ -601,8 +601,6 @@ export async function POST(request: NextRequest) {
             user_id: userId,
             job_id: jobId,
             status: "pending",
-            company: job.company,
-            apply_url: job.apply_url,
             application_profile_id: taggedProfileId,
           });
           if (q.error) {
