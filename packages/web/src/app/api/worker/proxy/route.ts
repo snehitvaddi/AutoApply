@@ -541,26 +541,36 @@ export async function POST(request: NextRequest) {
 
       case "enqueue_jobs": {
         const jobs = params.jobs || [];
-        // Load this user's bundle IDs once so we can validate every
-        // incoming application_profile_id belongs to them. FK alone only
-        // proves the id exists somewhere; we need to prove it belongs here.
         const { data: myBundles } = await supabase
           .from("user_application_profiles")
           .select("id")
           .eq("user_id", userId);
         const ownedBundleIds = new Set((myBundles || []).map((b) => b.id));
         let enqueued = 0;
+        const drops: Array<{ job: { title?: string; company?: string }; reason: string }> = [];
         for (const job of jobs) {
-          // Dedup
+          const jobTag = { title: job.title, company: job.company };
+
+          // Validate NOT NULL fields up front so the failure mode is a
+          // readable reason, not a swallowed Postgres 23502.
+          const required = ["title", "company", "apply_url", "ats"] as const;
+          const missing = required.filter((k) => !job[k]);
+          if (missing.length) {
+            drops.push({ job: jobTag, reason: `missing_fields: ${missing.join(",")}` });
+            continue;
+          }
+
           const existing = await supabase
             .from("applications")
             .select("id", { count: "exact" })
             .eq("user_id", userId)
             .eq("company", job.company)
             .eq("title", job.title);
-          if ((existing.count || 0) > 0) continue;
+          if ((existing.count || 0) > 0) {
+            drops.push({ job: jobTag, reason: "dedup: already in applications" });
+            continue;
+          }
 
-          // Upsert discovered job
           const dj = await supabase
             .from("discovered_jobs")
             .upsert(
@@ -578,16 +588,16 @@ export async function POST(request: NextRequest) {
             .select("id")
             .single();
           const jobId = (dj.data as Record<string, unknown> | null)?.id;
-          if (!jobId) continue;
+          if (dj.error || !jobId) {
+            drops.push({ job: jobTag, reason: `upsert_failed: ${dj.error?.message ?? "no id returned"}` });
+            continue;
+          }
 
-          // Queue — carry profile_id forward if scout tagged the job, but
-          // drop IDs that aren't this user's. Prevents a compromised worker
-          // from tagging rows with another tenant's bundle id.
           const taggedProfileId =
             job.application_profile_id && ownedBundleIds.has(job.application_profile_id)
               ? job.application_profile_id
               : null;
-          await supabase.from("application_queue").insert({
+          const q = await supabase.from("application_queue").insert({
             user_id: userId,
             job_id: jobId,
             status: "pending",
@@ -595,9 +605,13 @@ export async function POST(request: NextRequest) {
             apply_url: job.apply_url,
             application_profile_id: taggedProfileId,
           });
+          if (q.error) {
+            drops.push({ job: jobTag, reason: `queue_insert_failed: ${q.error.message}` });
+            continue;
+          }
           enqueued++;
         }
-        return apiSuccess({ enqueued });
+        return apiSuccess({ enqueued, dropped: drops.length, drops });
       }
 
       case "get_answer_key": {

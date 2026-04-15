@@ -56,7 +56,7 @@ _REAUTH_MARKER = os.path.expanduser(os.environ.get(
 def _write_reauth_marker(reason: str) -> None:
     try:
         os.makedirs(os.path.dirname(_REAUTH_MARKER), exist_ok=True)
-        with open(_REAUTH_MARKER, "w") as f:
+        with open(_REAUTH_MARKER, "w", encoding="utf-8") as f:
             f.write(reason)
     except Exception as e:
         logger.debug(f"Failed to write reauth marker: {e}")
@@ -434,7 +434,11 @@ def download_resume(user_id: str, job_title: str | None = None) -> str:
     if not url:
         raise ValueError(f"No resume found for user {user_id}")
 
-    local_path = os.path.join(RESUME_DIR, f"{user_id}_{file_name}")
+    # Sanitize to the alnum+._- whitelist used by download_resume_by_url.
+    # Windows forbids : ? * | < > " in filenames (Mac only bans /), so the
+    # cloud-provided file_name can't be trusted verbatim cross-platform.
+    safe = "".join(c for c in file_name if c.isalnum() or c in "._-") or "resume.pdf"
+    local_path = os.path.join(RESUME_DIR, f"{user_id}_{safe}")
     if not os.path.exists(local_path):
         client = _get_client()
         resp = client.get(url)
@@ -460,9 +464,23 @@ def enqueue_discovered_jobs(user_id: str, jobs: list[dict]) -> int:
     """Insert discovered jobs via API proxy + local SQLite for desktop Kanban."""
     if not jobs:
         return 0
-    # Write to remote API (server-side dedup + rate limit)
     result = _api_call("enqueue_jobs", jobs=jobs)
-    # Also write to local SQLite so the desktop UI sees queued jobs immediately
+    # Surface server-side rejection reasons. Silent `enqueued: 0` was the
+    # root cause of overnight self-recovery blackout — when the server
+    # rejects, Claude needs the reason in the log to fix its payload.
+    drops = result.get("drops") or []
+    if drops:
+        import logging as _lg
+        _log = _lg.getLogger(__name__)
+        by_reason: dict[str, int] = {}
+        for d in drops:
+            r = str(d.get("reason", "unknown"))
+            by_reason[r] = by_reason.get(r, 0) + 1
+        _log.warning(
+            "enqueue_jobs dropped %d/%d: %s",
+            len(drops), len(jobs),
+            ", ".join(f"{k}×{v}" for k, v in by_reason.items()),
+        )
     enqueue_to_local_db(jobs)
     return result.get("enqueued", 0)
 

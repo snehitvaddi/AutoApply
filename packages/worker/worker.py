@@ -90,8 +90,15 @@ def shutdown(signum, frame):
     running = False
 
 
-signal.signal(signal.SIGTERM, shutdown)
-signal.signal(signal.SIGINT, shutdown)
+# SIGTERM isn't defined on Windows (only SIGINT/SIGBREAK are reliable).
+# Guard the registration so the worker boots cross-platform.
+for _sig_name in ("SIGTERM", "SIGINT"):
+    _sig = getattr(signal, _sig_name, None)
+    if _sig is not None:
+        try:
+            signal.signal(_sig, shutdown)
+        except (ValueError, OSError):
+            pass
 
 
 def is_blocked_url(apply_url: str) -> bool:
@@ -372,6 +379,62 @@ def _write_worker_pid() -> None:
         logger.debug(f"Failed to write worker.pid: {e}")
 
 
+def _kill_stale_worker() -> None:
+    """Kill any previous worker.py that's still running before we spawn.
+
+    Prevents the overnight failure pattern observed in production: the
+    desktop app relaunches (user quit + reopened, crash recovery, etc.)
+    and a fresh worker.py spawns while an older one is still alive.
+    Multiple workers race `claim_next_job` on the same application_queue
+    rows — claims silently fail, heartbeats stomp on each other, and
+    apply progress stalls while the bot "looks" running.
+
+    Read the prior PID from worker.pid (if present), probe it with
+    os.kill(pid, 0), SIGTERM it, wait up to 5s for graceful exit, then
+    SIGKILL. Idempotent: no-op when the file is missing, unreadable, or
+    points at a dead PID.
+    """
+    pid_file = _WORKSPACE_DIR / "worker.pid"
+    try:
+        raw = pid_file.read_text().strip().split()[0]
+        prev_pid = int(raw)
+    except (FileNotFoundError, ValueError, IndexError):
+        return
+    if prev_pid == os.getpid():
+        return
+    try:
+        os.kill(prev_pid, 0)  # probe — raises if dead
+    except ProcessLookupError:
+        return  # stale file, process already gone
+    except PermissionError:
+        # PID belongs to another user (rare; shouldn't happen in the
+        # single-user desktop app model). Don't try to kill it.
+        logger.warning(f"Stale worker.pid={prev_pid} belongs to a different user, leaving alone")
+        return
+
+    logger.warning(
+        f"Stale worker.pid={prev_pid} is still alive — terminating before spawning new worker"
+    )
+    try:
+        os.kill(prev_pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    # Grace period for graceful exit.
+    for _ in range(50):
+        time.sleep(0.1)
+        try:
+            os.kill(prev_pid, 0)
+        except ProcessLookupError:
+            logger.info(f"Stale worker {prev_pid} exited after SIGTERM")
+            return
+    # Still alive after 5s — escalate.
+    logger.warning(f"Stale worker {prev_pid} didn't exit on SIGTERM, sending SIGKILL")
+    try:
+        os.kill(prev_pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def _touch_scout_heartbeat() -> None:
     try:
         _WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
@@ -565,6 +628,7 @@ def main():
 
     logger.info(f"Tenant loaded: {tenant.profile_summary_hint()}")
     _set_current_tenant(tenant)
+    _kill_stale_worker()
     _write_worker_pid()
 
     # Start the tenant reload thread — refreshes _current_tenant every
