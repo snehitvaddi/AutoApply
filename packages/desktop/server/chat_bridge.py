@@ -297,14 +297,21 @@ async def chat_websocket(ws: WebSocket):
                 else:
                     user_text = user_input.lstrip("!").strip()
                     try:
+                        # Pass raw user text. capture_btw_response wraps
+                        # it in the sentinel envelope — same processed
+                        # reply flow Telegram uses, so both channels
+                        # render the same crisp text. No "[via chat]"
+                        # prefix leaking into Claude's context.
                         response = await message_router.submit(
-                            "chat_ui",
-                            f"[via chat] {user_text}",
-                            timeout=60.0,
+                            "chat_ui", user_text, timeout=60.0,
                         )
                     except Exception as e:
                         response = f"⚠️ Message delivery failed: {e}"
-                    if not response or response.startswith("Claude is busy"):
+                    # Fallback only for true errors. The deterministic
+                    # "Claude saw your message…" string is a valid reply
+                    # (sentinel missed in window), NOT a failure, so
+                    # don't swap it for qa_agent and double-answer.
+                    if not response or response.startswith("⚠️"):
                         try:
                             response = await qa_agent.answer(user_text)
                         except Exception:

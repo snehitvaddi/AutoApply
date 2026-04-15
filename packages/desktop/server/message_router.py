@@ -26,26 +26,85 @@ _ANSI_RE = re.compile(
 )
 
 
+# Sentinel tokens that bracket Claude's reply so we can pluck it out of
+# the PTY byte stream cleanly. Claude is instructed (via the envelope
+# built in this module) to wrap a 1-2 sentence reply between these on
+# their own lines. Any tool output / chrome / xterm echo outside the
+# sentinels is ignored. Tokens are intentionally unlikely to appear in
+# ordinary terminal output — triple angles + ALL_CAPS + underscore.
+_REPLY_START = "<<<REPLY_START>>>"
+_REPLY_END = "<<<REPLY_END>>>"
+_REPLY_RE = re.compile(
+    rf"{re.escape(_REPLY_START)}\s*(.+?)\s*{re.escape(_REPLY_END)}",
+    re.DOTALL,
+)
+
+# Prompt chrome / UI decoration that sometimes shows up between sentinels
+# if Claude embeds a code block or command suggestion. Belt-and-suspenders
+# cleanup applied AFTER the sentinel match, not before.
+_CHROME_LINE_RE = re.compile(
+    r"(bypass permissions|ctrl\+|shift\+tab|esc to|╭─|╰─|│)",
+    re.IGNORECASE,
+)
+
+# Cap the reply length for Telegram / chat-UI readability. Claude is told
+# to keep it to 1-2 sentences — 600 chars is generous headroom + an
+# ellipsis suffix.
+_MAX_REPLY_CHARS = 600
+
+
+def _build_reply_envelope(user_text: str) -> str:
+    """Wrap the user's raw text in a plain-English instruction that tells
+    Claude to bracket its reply with sentinel tokens we can extract
+    downstream.
+
+    Claude keeps running whatever it was doing (tool calls, scouting,
+    apply loop) — we explicitly say "tool output above is fine". Only
+    the bracketed text makes it back to Telegram / chat.
+
+    No /btw. No "[via Telegram]" marker. Plain English prose instruction
+    that Claude treats as a normal user turn.
+    """
+    return (
+        f"The user just sent you this message:\n\n"
+        f"{user_text}\n\n"
+        f"Reply in 1–2 short sentences. Output your reply bracketed "
+        f"EXACTLY with these sentinel tokens on their own lines — "
+        f"tool output above the brackets is fine:\n"
+        f"{_REPLY_START}\n"
+        f"your one-or-two-sentence reply here\n"
+        f"{_REPLY_END}"
+    )
+
+
 async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
     """
     Inject `text` into the PTY as a NORMAL user message (no /btw prefix)
-    and capture Claude's reply. Uses the exact same chunked-write + \\r + \\n
-    sequence as PTYSession._submit_to_pty — the nudge path proved this
-    sequence is what actually makes Claude's TUI submit the message.
+    and capture Claude's reply, bracketed by REPLY_START/END sentinels.
 
-    Why no /btw:
-      /btw is a Claude Code side-channel. Claude receives it but doesn't
-      always respond (it's "by the way" context, not a user turn). When
-      the user types in chat UI or Telegram, they expect Claude to REPLY
-      — so the message must land as a real user turn. Same fix as the
-      watchdog nudge.
+    Previously this function used a heuristic echo-filter on the raw PTY
+    byte stream. That returned garbage to Telegram / chat because:
+      - xterm echoes the typed message with cursor-move bytes that
+        collapse spaces into letter runs
+      - Claude's concurrent tool output (openclaw, bash, "Sketching…")
+        interleaves with its prose reply
+      - Prompt chrome (╭─, │, "bypass permissions", etc.) mixes in
+    The echo-filter tried to strip the user's own message by substring
+    match on the first 30 chars — fragile enough that the actual reply
+    was usually dropped and the user saw terminal garbage instead.
+
+    Now: we wrap the user's text in a plain-English envelope that tells
+    Claude to bracket its reply with sentinel tokens. We extract only
+    the bracketed text. If Claude doesn't honor the sentinel format
+    (busy, rate-limited, buffer cut off), we return a deterministic
+    short fallback — NOT raw terminal output.
 
     Why chunked write + separate \\r:
-      Writing the whole message + \\r in one os.write often makes Claude's
-      Ink TUI drop the trailing \\r (it processes the input buffer as a
-      single chunk). Splitting into 16-char chunks with tiny delays, then
-      sending \\r AND \\n as two more separate writes, reliably triggers
-      submit. Verified via live PTY echo test.
+      Writing the whole message + \\r in one os.write often makes
+      Claude's Ink TUI drop the trailing \\r (it processes the input
+      buffer as a single chunk). Splitting into 16-char chunks with tiny
+      delays, then sending \\r AND \\n as two more separate writes,
+      reliably triggers submit. Verified via live PTY echo test.
 
     Flatten to one line because \\n inside the body is cursor movement
     in raw mode, not submit — it corrupts the input buffer.
@@ -55,13 +114,19 @@ async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
     if not session_manager.pty.is_alive:
         return "⚠️ Claude Code session is not running. Start the app and try again."
 
-    # Flatten newlines to spaces — \n corrupts raw-mode input
-    flat = text.replace("\r\n", " ").replace("\n", " ").replace("\r", "")
+    raw_user_text = text.strip()
+    if not raw_user_text:
+        return "Empty message"
+
+    envelope = _build_reply_envelope(raw_user_text)
+
+    # Flatten newlines to spaces — \n corrupts raw-mode input. Sentinel
+    # tokens stay recognizable (no internal whitespace), so flattening
+    # them into a single line is harmless.
+    flat = envelope.replace("\r\n", " ").replace("\n", " ").replace("\r", "")
     while "  " in flat:
         flat = flat.replace("  ", " ")
     flat = flat.strip()
-    if not flat:
-        return "Empty message"
 
     # Subscribe BEFORE writing so we catch all output
     queue = session_manager.pty.subscribe()
@@ -85,58 +150,73 @@ async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
         await asyncio.sleep(0.05)
         session_manager.pty.write(b"\n")
 
+        # Capture loop: bail early the moment we see REPLY_END so we don't
+        # sit idle waiting for the timeout once Claude has finished its
+        # bracketed reply. Still has the blank-count + TimeoutError paths
+        # as safety nets if the sentinel never arrives.
         deadline = time.time() + timeout
         blank_count = 0
-        while time.time() < deadline:
+        saw_end_sentinel = False
+        while time.time() < deadline and not saw_end_sentinel:
             try:
                 data = await asyncio.wait_for(queue.get(), timeout=2.0)
                 chunk_out = data.decode("utf-8", errors="replace")
                 clean = _ANSI_RE.sub("", chunk_out)
                 clean = re.sub(r'[\r\x00-\x08\x0e-\x1f]', '', clean)
-                stripped = clean.strip()
-                if stripped:
-                    response_chunks.append(stripped)
+                response_chunks.append(clean)
+                if _REPLY_END in "".join(response_chunks):
+                    saw_end_sentinel = True
+                    break
+                if clean.strip():
                     blank_count = 0
                 else:
                     blank_count += 1
-                    # Two consecutive blanks after some content = response done
-                    if response_chunks and blank_count >= 2:
+                    # Two consecutive blanks after some non-blank content =
+                    # response stream quieted. Keep our existing fallback
+                    # heuristic for cases where Claude doesn't emit the
+                    # end sentinel within the capture window.
+                    if any(c.strip() for c in response_chunks) and blank_count >= 2:
                         break
             except asyncio.TimeoutError:
-                if response_chunks:
+                if any(c.strip() for c in response_chunks):
                     break  # Got something, idle timeout = done
     finally:
         session_manager.pty.unsubscribe(queue)
 
-    # Post-process: drop claude-cli chrome + any echo of our own message
-    full = "\n".join(response_chunks)
-    lines = full.split("\n")
-    clean_lines: list[str] = []
-    # The first ~3 lines are typically Claude echoing what we typed (xterm
-    # display echo). Skip those so the returned text is Claude's response,
-    # not the user's own message bounced back.
-    echo_line = flat[:60].lower()
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or len(stripped) < 2:
-            continue
-        if stripped.startswith("/btw"):
-            continue  # legacy residue
-        if "bypass permissions" in stripped.lower():
-            continue
-        if "ctrl+" in stripped.lower() or "shift+tab" in stripped.lower():
-            continue
-        if "esc to" in stripped.lower():
-            continue
-        # Drop lines that are substring-echoes of our typed message
-        if echo_line and echo_line[:30] in stripped.lower():
-            continue
-        clean_lines.append(line)
+    # Extract ONLY what's between the sentinels. Anything else (echo,
+    # tool output, prompt chrome) is ignored.
+    full = "".join(response_chunks)
+    match = _REPLY_RE.search(full)
+    if match:
+        reply = match.group(1).strip()
+    else:
+        # Sentinel didn't land in the capture window. Common reasons:
+        # Claude is mid-tool-call and hasn't emitted the end sentinel
+        # yet, rate-limited, or the buffer flushed partially. Return a
+        # deterministic short status — NEVER raw terminal garbage.
+        logger.info("capture_btw_response: no sentinel match in captured output")
+        return (
+            "Claude saw your message and is working on it — check the "
+            "desktop window for the full context."
+        )
 
-    response = "\n".join(clean_lines).strip()
-    if not response:
-        response = "Claude is busy. Your message was sent — check back shortly."
-    return response
+    # Belt-and-suspenders: strip any sentinel residue, drop lines that
+    # look like TUI chrome (╭─ borders, "bypass permissions" hints).
+    reply = re.sub(r"<<<REPLY_(START|END)>>>", "", reply).strip()
+    reply = "\n".join(
+        line for line in reply.splitlines() if not _CHROME_LINE_RE.search(line)
+    ).strip()
+    # Strip markdown code fences — Telegram renders them as literal
+    # backticks which looks wrong.
+    reply = reply.replace("```", "").strip()
+
+    if not reply:
+        return "Claude saw your message. No reply text was returned."
+
+    if len(reply) > _MAX_REPLY_CHARS:
+        reply = reply[:_MAX_REPLY_CHARS].rstrip() + "…"
+
+    return reply
 
 
 class MessageRouter:

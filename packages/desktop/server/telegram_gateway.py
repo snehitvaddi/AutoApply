@@ -376,18 +376,23 @@ class TelegramGateway:
         else:
             user_text = text.lstrip("!").strip()
             try:
-                # Short tag — Claude sees it as "a message from the user via
-                # Telegram". Verbose "USER MESSAGE (from Telegram...)"
-                # prefix was too long and polluted the conversation.
+                # Pass the raw user message. capture_btw_response() in
+                # message_router.py now wraps it in a plain-English
+                # envelope that instructs Claude to bracket a 1-2
+                # sentence reply with REPLY_START/REPLY_END sentinels.
+                # Only the bracketed text comes back here — no raw
+                # terminal echo, no tool-output bleed-in, no
+                # "[via Telegram]" tag polluting Claude's context.
                 response = await message_router.submit(
-                    "telegram",
-                    f"[via Telegram] {user_text}",
-                    timeout=60.0,
+                    "telegram", user_text, timeout=60.0,
                 )
             except Exception as e:
                 response = f"⚠️ Message delivery failed: {e}"
-            if not response or response.startswith("Claude is busy"):
-                # Fallback: if PTY didn't respond (busy applying), try qa_agent
+            # Fallback only for truly empty / error responses. The new
+            # "Claude saw your message…" deterministic string is a valid
+            # reply (not a failure) so DON'T swap it for qa_agent —
+            # that would double-answer a message Claude already saw.
+            if not response or response.startswith("⚠️"):
                 try:
                     response = await qa_agent.answer(user_text)
                 except Exception:
