@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import os
 import random
 import time
@@ -169,6 +170,114 @@ def update_heartbeat(user_id: str, action: str, details: str = ""):
 # Dice) never requires touching worker.py.
 
 
+# ── Title-scout → ATS slug expansion ─────────────────────────────────────
+#
+# When a title-based source returns a hit at "Acme Corp," try to resolve
+# Acme to an Ashby/Greenhouse/Lever slug so the NEXT scout cycle hits
+# Acme's full board directly instead of waiting to stumble on another
+# LinkedIn post. Discovered slugs are persisted to user_job_preferences
+# via the existing update_preferences proxy action and picked up by
+# TenantConfig's 5-minute reload thread.
+#
+# Probe budget per cycle — resolver is network-bound and we never want
+# it to block scout progress. Cap at 8 unique new companies per cycle.
+_ATS_EXPAND_PROBE_CAP = 8
+# Title-based sources we want to enrich. Company-based sources already
+# know their slug, so there's nothing to resolve.
+_TITLE_SOURCES = {"linkedin", "himalayas", "indeed", "linkedin_public"}
+# Hard cap on the persisted slug set so nothing runaway-grows.
+_BOARDS_LIST_CAP = 500
+
+
+def _expand_tenant_boards(tenant: "TenantConfig", jobs: list[dict]) -> None:
+    """For every unique new company seen via a title-based source, probe
+    Ashby/Greenhouse/Lever and append any resolved slugs to the active
+    tenant's board lists. Persisted via update_preferences proxy action.
+
+    Best-effort: any network error, missing helper, or proxy 4xx is
+    swallowed — this is enrichment, not a correctness-critical path.
+    """
+    from scout.ats_resolver import try_resolve_ats_slug
+
+    known_ashby = {s.lower() for s in (getattr(tenant, "ashby_boards", None) or [])}
+    known_gh = {s.lower() for s in (getattr(tenant, "greenhouse_boards", None) or [])}
+    # lever_boards column doesn't exist in user_job_preferences yet —
+    # lever slugs are still resolved but only logged, not persisted.
+
+    seen_companies: set[str] = set()
+    to_probe: list[str] = []
+    for j in jobs:
+        src = (j.get("source") or j.get("ats") or "").lower()
+        if src not in _TITLE_SOURCES:
+            continue
+        company = (j.get("company") or "").strip()
+        if not company or company.lower() in seen_companies:
+            continue
+        seen_companies.add(company.lower())
+        to_probe.append(company)
+        if len(to_probe) >= _ATS_EXPAND_PROBE_CAP:
+            break
+
+    if not to_probe:
+        return
+
+    new_ashby: list[str] = []
+    new_gh: list[str] = []
+    lever_discoveries: list[str] = []
+    for company in to_probe:
+        hit = try_resolve_ats_slug(company)
+        if not hit:
+            continue
+        slug = hit["slug"].lower()
+        platform = hit["platform"]
+        if platform == "ashby" and slug not in known_ashby:
+            known_ashby.add(slug)
+            new_ashby.append(hit["slug"])
+        elif platform == "greenhouse" and slug not in known_gh:
+            known_gh.add(slug)
+            new_gh.append(hit["slug"])
+        elif platform == "lever":
+            # lever_boards isn't persisted (schema gap); log for visibility.
+            lever_discoveries.append(hit["slug"])
+
+    if lever_discoveries:
+        logger.info(f"lever slugs resolved (not persisted): {lever_discoveries}")
+    if not (new_ashby or new_gh):
+        return
+
+    def _merge_and_cap(existing: list[str] | None, additions: list[str]) -> list[str]:
+        merged = list(existing or []) + additions
+        # De-dup preserving order; newest-first cap so long-tail additions
+        # survive and ancient entries get pruned.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for s in reversed(merged):
+            key = s.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(s)
+        deduped.reverse()
+        if len(deduped) > _BOARDS_LIST_CAP:
+            deduped = deduped[-_BOARDS_LIST_CAP:]
+        return deduped
+
+    payload = {}
+    if new_ashby:
+        payload["ashby_boards"] = _merge_and_cap(getattr(tenant, "ashby_boards", None), new_ashby)
+    if new_gh:
+        payload["greenhouse_boards"] = _merge_and_cap(getattr(tenant, "greenhouse_boards", None), new_gh)
+    try:
+        from db import _api_call  # type: ignore
+        _api_call("update_preferences", preferences=payload)
+        logger.info(
+            "tenant boards expanded: +%d ashby, +%d greenhouse",
+            len(new_ashby), len(new_gh),
+        )
+    except Exception as e:
+        logger.debug(f"update_preferences failed during board expansion: {e}")
+
+
 def _enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
     """Insert discovered jobs via API proxy. Local URL cache for fast dedup."""
     global _seen_urls, _seen_urls_date
@@ -256,16 +365,26 @@ def run_scout_cycle(tenant: TenantConfig) -> int:
     summary = ", ".join(f"{v} {k}" for k, v in counts.items() if v > 0)
     logger.info(f"Scout: {summary} = {len(all_jobs)} total (after per-source filter)")
 
-    # Touch the scout heartbeat file so the PTY watchdog can detect that
-    # scout is alive without relying on PTY byte flow.
-    _touch_scout_heartbeat()
-
+    raw_count = len(all_jobs)
     if not all_jobs:
+        _touch_scout_heartbeat(enqueued=0, raw=0)
         update_heartbeat(tenant.user_id, "idle", "No new jobs matched tenant criteria")
         return 0
 
+    # Expand tenant ATS board set with companies discovered via title-based
+    # sources (LinkedIn / Himalayas / Indeed). Each unique new company gets
+    # one shot at slug resolution; successful hits are persisted back to
+    # user_job_preferences via the existing update_preferences proxy action,
+    # and picked up on the next TenantConfig reload (≤5 min). Capped to
+    # avoid blowing scout budget on probes.
+    try:
+        _expand_tenant_boards(tenant, all_jobs)
+    except Exception as e:
+        logger.debug(f"tenant board expansion skipped: {e}")
+
     enqueued = _enqueue_discovered_jobs(tenant.user_id, all_jobs)
-    logger.info(f"Scout complete: {enqueued} new jobs enqueued (from {len(all_jobs)} raw)")
+    _touch_scout_heartbeat(enqueued=enqueued, raw=raw_count)
+    logger.info(f"Scout complete: {enqueued} new jobs enqueued (from {raw_count} raw)")
     update_heartbeat(tenant.user_id, "scouted", f"{enqueued} enqueued from {summary}")
     return enqueued
 
@@ -435,12 +554,31 @@ def _kill_stale_worker() -> None:
         pass
 
 
-def _touch_scout_heartbeat() -> None:
+def _touch_scout_heartbeat(enqueued: int = 0, raw: int = 0) -> None:
+    """Append a JSON-line scout heartbeat. One line per scout cycle so the
+    desktop watchdog can distinguish "scout ran, 0 enqueued" from "scout
+    never ran" — both previously collapsed into the same signal.
+
+    Schema: {"ts": <ms>, "enqueued": N, "raw": M}. Older single-number
+    scout.ts files are still readable because get_scout_age_minutes()
+    (desktop side) parses the LAST line and tolerates both shapes. File
+    is trimmed to the last 50 lines to cap disk growth.
+    """
     try:
         _WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-        (_WORKSPACE_DIR / "scout.ts").write_text(f"{int(time.time() * 1000)}\n")
+        path = _WORKSPACE_DIR / "scout.ts"
+        line = json.dumps({"ts": int(time.time() * 1000), "enqueued": int(enqueued), "raw": int(raw)})
+        existing: list[str] = []
+        try:
+            existing = path.read_text().splitlines()
+        except FileNotFoundError:
+            pass
+        existing.append(line)
+        if len(existing) > 50:
+            existing = existing[-50:]
+        path.write_text("\n".join(existing) + "\n")
     except Exception as e:
-        logger.debug(f"Failed to touch scout.ts: {e}")
+        logger.debug(f"Failed to write scout.ts: {e}")
 
 
 def _prune_stale_queue_locally() -> None:

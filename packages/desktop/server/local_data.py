@@ -425,23 +425,74 @@ def is_worker_alive() -> bool:
         return False
 
 
-def get_scout_age_minutes() -> float | None:
-    """Return minutes since the last scout cycle (from scout.ts mtime).
-    Returns None if scout.ts doesn't exist — meaning scout has never run
-    on this install, or the workspace hasn't been touched since reset.
-    """
+def _read_scout_last_line() -> str | None:
     path = _workspace_dir() / "scout.ts"
     if not path.exists():
         return None
     try:
-        ts_ms = int(path.read_text().strip())
+        lines = [ln for ln in path.read_text().splitlines() if ln.strip()]
+        return lines[-1] if lines else None
+    except Exception:
+        return None
+
+
+def get_scout_age_minutes() -> float | None:
+    """Return minutes since the last scout cycle. Reads scout.ts.
+
+    Tolerates two formats:
+      - legacy: single int (ms since epoch) in the file
+      - current: one JSON line per cycle `{"ts":<ms>,"enqueued":N,"raw":M}`
+
+    In both cases we extract the LAST timestamp. Returns None if the file
+    is missing or unparseable, meaning scout has never run on this install.
+    """
+    last = _read_scout_last_line()
+    if last is None:
+        path = _workspace_dir() / "scout.ts"
+        if path.exists():
+            try:
+                return max(0.0, (time.time() - path.stat().st_mtime) / 60.0)
+            except Exception:
+                return None
+        return None
+    try:
+        if last.startswith("{"):
+            import json as _json
+            ts_ms = int(_json.loads(last).get("ts", 0))
+        else:
+            ts_ms = int(last.strip())
         age_sec = max(0.0, time.time() - ts_ms / 1000.0)
         return age_sec / 60.0
     except Exception:
         try:
-            return max(0.0, (time.time() - path.stat().st_mtime) / 60.0)
+            return max(0.0, (time.time() - (_workspace_dir() / "scout.ts").stat().st_mtime) / 60.0)
         except Exception:
             return None
+
+
+def get_recent_scout_cycles(n: int = 3) -> list[dict]:
+    """Return the last `n` scout cycle entries as dicts with keys
+    `ts`, `enqueued`, `raw`. Only reads JSON-line rows; legacy int-only
+    rows are skipped (they pre-date per-cycle enqueue tracking).
+
+    Used by the PTY nudge to detect "scout ran N cycles with zero enqueues"
+    and escalate differently from "scout ran 2 min ago and is healthy."
+    """
+    path = _workspace_dir() / "scout.ts"
+    if not path.exists():
+        return []
+    try:
+        import json as _json
+        lines = [ln for ln in path.read_text().splitlines() if ln.strip().startswith("{")]
+        out: list[dict] = []
+        for ln in lines[-n:]:
+            try:
+                out.append(_json.loads(ln))
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
 
 
 def _normalize_ats(raw: str | None) -> str:

@@ -1634,8 +1634,24 @@ exec /bin/zsh -l
         elif stats["in_queue"] == 0:
             # Empty-queue ladder — escalate with streak. YOU are the worker;
             # don't wait for worker.py's timer, scout yourself and enqueue.
+            # If the last 3 worker scout cycles all enqueued 0, this is a
+            # scout-health problem (filters too strict OR all sources
+            # returning zero) — escalate with a scout-zero signal.
+            recent = []
+            try:
+                recent = local_data.get_recent_scout_cycles(n=3)
+            except Exception:
+                recent = []
+            scout_all_empty = len(recent) >= 3 and all(r.get("enqueued", 0) == 0 for r in recent)
             tick = self._consecutive_empty_queue_ticks
-            if tick <= 1:
+            if scout_all_empty:
+                action = (
+                    "scout ran 3x with ZERO enqueues — worker scout is stuck "
+                    "(filters too strict OR all sources dry). YOU run title-based "
+                    "scout now: Himalayas + LinkedIn public + Google dorks "
+                    "site:jobs.ashbyhq.com. Enqueue via /api/worker/proxy enqueue_jobs."
+                )
+            elif tick <= 1:
                 action = (
                     "queue empty — YOU scout now. hit Ashby/Greenhouse/Lever direct "
                     "for our target companies, filter against profile, enqueue, apply."
