@@ -11,12 +11,15 @@ type Profile = {
   updated_at?: string;
   target_titles: string[];
   target_keywords: string[];
+  excluded_titles: string[];
   excluded_companies: string[];
   excluded_role_keywords: string[];
   excluded_levels: string[];
   preferred_locations: string[];
   remote_only: boolean;
   min_salary: number | null;
+  ashby_boards: string[] | null;
+  greenhouse_boards: string[] | null;
   resume_id: string | null;
   email_account_id: string | null;
   application_email: string | null;
@@ -102,15 +105,20 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
       name: "",
       target_titles: [],
       target_keywords: [],
+      excluded_titles: [],
       excluded_companies: [],
       excluded_role_keywords: [],
       excluded_levels: [],
       preferred_locations: d?.preferred_locations || ["United States"],
       remote_only: false,
+      min_salary: null,
+      ashby_boards: null,
+      greenhouse_boards: null,
       resume_id: null,
       email_account_id: null,
       application_email: "",
       auto_apply: true,
+      max_daily: null,
       answer_key_json: null,
       cover_letter_template: null,
       // Clone W&E from default bundle when creating a new one so users
@@ -202,11 +210,39 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
         <TextField label="Profile name" value={draft.name || ""} onChange={(v) => setDraft({ ...draft, name: v })} />
         <ChipField label="Target titles" values={draft.target_titles || []} onChange={(v) => setDraft({ ...draft, target_titles: v })} />
         <ChipField label="Target keywords" values={draft.target_keywords || []} onChange={(v) => setDraft({ ...draft, target_keywords: v })} />
+        <ChipField label="Excluded titles" values={draft.excluded_titles || []} onChange={(v) => setDraft({ ...draft, excluded_titles: v })} />
         <ChipField label="Excluded companies" values={draft.excluded_companies || []} onChange={(v) => setDraft({ ...draft, excluded_companies: v })} />
         <ChipField label="Excluded role keywords" values={draft.excluded_role_keywords || []} onChange={(v) => setDraft({ ...draft, excluded_role_keywords: v })} />
         <ChipField label="Excluded levels" values={draft.excluded_levels || []} onChange={(v) => setDraft({ ...draft, excluded_levels: v })} />
         <ChipField label="Preferred locations" values={draft.preferred_locations || []} onChange={(v) => setDraft({ ...draft, preferred_locations: v })} />
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.remote_only} onChange={(e) => setDraft({ ...draft, remote_only: e.target.checked })} /> Remote only</label>
+
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.remote_only} onChange={(e) => setDraft({ ...draft, remote_only: e.target.checked })} /> Remote only</label>
+          <label className="flex items-center gap-2 text-sm">Min salary
+            <input
+              type="number"
+              className="border rounded px-2 py-1 w-28 bg-background"
+              value={draft.min_salary ?? ""}
+              onChange={(e) => setDraft({ ...draft, min_salary: e.target.value ? parseInt(e.target.value) : null })}
+            />
+          </label>
+        </div>
+
+        {/* Per-bundle board overrides. Blank = use global defaults. */}
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-1">Board overrides (optional)</h3>
+          <p className="text-xs text-muted-foreground mb-2">Leave blank to use the global default board lists.</p>
+          <ChipField
+            label="Ashby boards"
+            values={draft.ashby_boards || []}
+            onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })}
+          />
+          <ChipField
+            label="Greenhouse boards"
+            values={draft.greenhouse_boards || []}
+            onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })}
+          />
+        </div>
 
         <div>
           <label className="text-sm font-medium block mb-1">Resume</label>
@@ -301,7 +337,22 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm pt-2 border-t"><input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active</label>
+        <div className="flex items-center gap-4 pt-2 border-t">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            Max daily
+            <input
+              type="number"
+              min={0}
+              placeholder="no cap"
+              className="border rounded px-2 py-1 w-24 bg-background"
+              value={draft.max_daily ?? ""}
+              onChange={(e) => setDraft({ ...draft, max_daily: e.target.value ? parseInt(e.target.value) : null })}
+            />
+          </label>
+        </div>
 
         <div className="flex gap-2 pt-2">
           <button onClick={save} className="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground">Save</button>
@@ -327,6 +378,7 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-medium">{p.name}</span>
               {p.is_default && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">DEFAULT</span>}
+              {!p.auto_apply && <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">paused</span>}
               {resumeMissing && <span className="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded">⚠ missing resume</span>}
               {noEmail && <span className="text-xs bg-warning/10 text-warning px-2 py-0.5 rounded">no apply email</span>}
             </div>

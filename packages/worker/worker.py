@@ -877,6 +877,16 @@ def main():
                 bundle_answer_key=job_profile.answer_key_json,
             )
 
+            # Per-bundle cover letter (mig 019). applier/base.py:134
+            # already reads cover_letter_template from
+            # answer_key["textarea_fields"]["cover_letter_template"] — we
+            # just need to populate that path. Without this injection the
+            # bundle's cover_letter_template column was dead code: loaded,
+            # typed, saved, and silently ignored at apply time.
+            if job_profile.cover_letter_template:
+                answer_key.setdefault("textarea_fields", {})
+                answer_key["textarea_fields"]["cover_letter_template"] = job_profile.cover_letter_template
+
             # Resolve real ATS from aggregator URLs (Indeed/Himalayas/LinkedIn
             # jobs link to real ATS pages — detect which one from the URL)
             raw_ats = job.get('ats', 'greenhouse')

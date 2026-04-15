@@ -879,6 +879,11 @@ export default function SettingsPage() {
   // (deprecated), Telegram + Email (folded into API Keys).
   const tabs: { key: Tab; label: string }[] = [
     { key: "profiles", label: "Profiles" },
+    // Resumes tab is a shared pool — profiles pick by id from this list.
+    // Was temporarily dropped during the IA rework but the render branch
+    // already existed further down (upload + listing UX was never
+    // deleted). Audit flagged the unreachable state as a dead pointer.
+    { key: "resume", label: "Resumes" },
     { key: "personal", label: "Personal Info" },
     { key: "integrations", label: "API Keys" },
     { key: "worker", label: "Worker & LLM" },

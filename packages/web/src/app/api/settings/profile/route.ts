@@ -61,5 +61,34 @@ export async function PUT(request: NextRequest) {
     return apiError("internal_server_error", error.message);
   }
 
+  // Mirror per-bundle fields into the user's default application profile.
+  // Since migrations 019 + 020 moved answer_key / cover_letter /
+  // work_experience / education / skills to user_application_profiles,
+  // the worker reads them from the bundle at apply time. Without this
+  // mirror, any legacy caller hitting /api/settings/profile (the old
+  // Work & Edu tab backend, external CLI consumers) would silently
+  // desync from the bundle and the worker would serve stale data.
+  const MIRRORABLE = [
+    "work_experience", "education", "skills",
+    "answer_key_json", "cover_letter_template",
+  ] as const;
+  const mirror: Record<string, unknown> = {};
+  for (const k of MIRRORABLE) {
+    if (k in updates) mirror[k] = updates[k];
+  }
+  if (Object.keys(mirror).length > 0) {
+    mirror.updated_at = new Date().toISOString();
+    const { error: mirrorErr } = await supabase
+      .from("user_application_profiles")
+      .update(mirror)
+      .eq("user_id", auth.userId)
+      .eq("is_default", true);
+    if (mirrorErr) {
+      // Non-blocking — user_profiles update already succeeded and the
+      // worker's user_profiles fallback still serves the data.
+      console.warn("settings/profile → default bundle mirror failed:", mirrorErr.message);
+    }
+  }
+
   return apiSuccess({ profile: data });
 }

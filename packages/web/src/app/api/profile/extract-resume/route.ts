@@ -186,6 +186,31 @@ export async function POST(request: NextRequest) {
     return apiError("internal_server_error", `Upsert failed: ${upsertErr.message}`);
   }
 
+  // Mirror work_experience / education / skills into the user's default
+  // application profile bundle. Migrations 019 + 020 moved these fields
+  // from user_profiles (shared) to user_application_profiles (per-bundle).
+  // The worker reads from the bundle at apply time. Without this mirror,
+  // an AI Import re-parse would update user_profiles but the default
+  // bundle would keep serving stale W&E to every application. Same
+  // non-blocking pattern as /api/worker/proxy update_profile.
+  const bundleMirror: Record<string, unknown> = {};
+  for (const k of ["work_experience", "education", "skills"] as const) {
+    if (k in patch) bundleMirror[k] = patch[k];
+  }
+  if (Object.keys(bundleMirror).length > 0) {
+    bundleMirror.updated_at = new Date().toISOString();
+    const { error: mirrorErr } = await supabase
+      .from("user_application_profiles")
+      .update(bundleMirror)
+      .eq("user_id", auth.userId)
+      .eq("is_default", true);
+    if (mirrorErr) {
+      // user_profiles upsert already succeeded — log and continue.
+      // Worker still sees the data via the user_profiles fallback.
+      console.warn("extract-resume → default bundle mirror failed:", mirrorErr.message);
+    }
+  }
+
   return apiSuccess({
     populated,
     source_resume: (resumeRow as { file_name?: string }).file_name || storagePath,

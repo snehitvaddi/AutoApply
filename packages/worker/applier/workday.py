@@ -266,46 +266,121 @@ class WorkdayApplier(BaseApplier):
                 click_ref(f["ref"])
                 break
 
-        # Wait for email to arrive, then read via himalaya
-        logger.info("Workday: waiting for reset email via himalaya...")
+        # Wait for the reset email to arrive, then read it.
+        #
+        # Two code paths here:
+        #   1. BUNDLE PATH (multi-profile) — when self.profile_email +
+        #      self.profile_app_password are both set by worker.py from the
+        #      ApplyProfile at apply time, we authenticate to Gmail IMAP
+        #      directly. This is the ONLY path that routes OTPs to the
+        #      correct mailbox when a user has multiple bundles (each with
+        #      its own Gmail). Previously we always shelled out to himalaya
+        #      which reads its own keyring seeded by install.sh for a
+        #      single account — silently dropping OTPs for every bundle
+        #      that wasn't the install-time default.
+        #   2. LEGACY PATH — single-profile users with no per-bundle creds
+        #      keep using himalaya so install.sh-configured users don't
+        #      break during rolling deploy.
+        logger.info("Workday: waiting for reset email...")
         reset_link = None
-        for attempt in range(6):  # 6 x 5s = 30s max
-            time.sleep(5)
-            try:
-                result = _sp.run(
-                    ["himalaya", "envelope", "list", "--account", "gmail",
-                     "--folder", "INBOX", "--page-size", "5", "--output", "json"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if result.returncode != 0:
-                    continue
-                import json as _json
-                envelopes = _json.loads(result.stdout)
-                for env in envelopes:
-                    sender = (env.get("from") or {}).get("addr", "").lower()
-                    if "otp.workday.com" in sender or "workday" in sender:
-                        msg_id = env.get("id")
-                        if not msg_id:
+
+        use_imap = bool(getattr(self, "profile_email", None) and getattr(self, "profile_app_password", None))
+        if use_imap:
+            logger.info(f"Workday: reading reset email via IMAP as {self.profile_email}")
+            import imaplib
+            import email as _email
+            from email.header import decode_header
+
+            def _strip_html(s: str) -> str:
+                # Cheap HTML-to-text for link extraction only.
+                return re.sub(r"<[^>]+>", " ", s or "")
+
+            for attempt in range(6):  # 6 x 5s = 30s max
+                time.sleep(5)
+                try:
+                    with imaplib.IMAP4_SSL("imap.gmail.com", 993) as imap:
+                        imap.login(self.profile_email, self.profile_app_password)
+                        imap.select("INBOX")
+                        # Search recent messages from Workday OTP senders.
+                        typ, data = imap.search(None, '(OR FROM "workday" FROM "otp.workday.com")')
+                        if typ != "OK" or not data or not data[0]:
                             continue
-                        body_result = _sp.run(
-                            ["himalaya", "message", "read", "--account", "gmail", str(msg_id)],
-                            capture_output=True, text=True, timeout=10,
-                        )
-                        body = body_result.stdout or ""
-                        link_match = re.search(
-                            r'https://[^\s"<>]+passwordreset[^\s"<>]+', body
-                        )
-                        if not link_match:
-                            link_match = re.search(
-                                r'https://[^\s"<>]+myworkdayjobs\.com[^\s"<>]*reset[^\s"<>]*', body
+                        ids = data[0].split()[-5:]  # last 5 matching
+                        for msg_id in reversed(ids):
+                            typ, msg_data = imap.fetch(msg_id, "(RFC822)")
+                            if typ != "OK" or not msg_data:
+                                continue
+                            raw_msg = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
+                            msg = _email.message_from_bytes(raw_msg)
+                            # Concatenate text/plain + text/html bodies so
+                            # we can regex either the plain link or its
+                            # HTML-wrapped version.
+                            body_parts: list[str] = []
+                            if msg.is_multipart():
+                                for part in msg.walk():
+                                    ctype = part.get_content_type()
+                                    if ctype in ("text/plain", "text/html"):
+                                        try:
+                                            payload = part.get_payload(decode=True) or b""
+                                            body_parts.append(payload.decode(part.get_content_charset() or "utf-8", errors="ignore"))
+                                        except Exception:
+                                            pass
+                            else:
+                                payload = msg.get_payload(decode=True) or b""
+                                body_parts.append(payload.decode(msg.get_content_charset() or "utf-8", errors="ignore"))
+                            body = _strip_html("\n".join(body_parts))
+                            link_match = re.search(r'https://[^\s"<>]+passwordreset[^\s"<>]+', body)
+                            if not link_match:
+                                link_match = re.search(
+                                    r'https://[^\s"<>]+myworkdayjobs\.com[^\s"<>]*reset[^\s"<>]*', body
+                                )
+                            if link_match:
+                                reset_link = link_match.group(0)
+                                break
+                    if reset_link:
+                        break
+                except Exception as e:
+                    logger.debug(f"IMAP read attempt {attempt}: {e}")
+        else:
+            # Legacy himalaya path — single-profile install.
+            logger.info("Workday: reading reset email via himalaya (no per-bundle creds)")
+            for attempt in range(6):  # 6 x 5s = 30s max
+                time.sleep(5)
+                try:
+                    result = _sp.run(
+                        ["himalaya", "envelope", "list", "--account", "gmail",
+                         "--folder", "INBOX", "--page-size", "5", "--output", "json"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if result.returncode != 0:
+                        continue
+                    import json as _json
+                    envelopes = _json.loads(result.stdout)
+                    for env in envelopes:
+                        sender = (env.get("from") or {}).get("addr", "").lower()
+                        if "otp.workday.com" in sender or "workday" in sender:
+                            msg_id = env.get("id")
+                            if not msg_id:
+                                continue
+                            body_result = _sp.run(
+                                ["himalaya", "message", "read", "--account", "gmail", str(msg_id)],
+                                capture_output=True, text=True, timeout=10,
                             )
-                        if link_match:
-                            reset_link = link_match.group(0)
-                            break
-                if reset_link:
-                    break
-            except Exception as e:
-                logger.debug(f"himalaya read attempt {attempt}: {e}")
+                            body = body_result.stdout or ""
+                            link_match = re.search(
+                                r'https://[^\s"<>]+passwordreset[^\s"<>]+', body
+                            )
+                            if not link_match:
+                                link_match = re.search(
+                                    r'https://[^\s"<>]+myworkdayjobs\.com[^\s"<>]*reset[^\s"<>]*', body
+                                )
+                            if link_match:
+                                reset_link = link_match.group(0)
+                                break
+                    if reset_link:
+                        break
+                except Exception as e:
+                    logger.debug(f"himalaya read attempt {attempt}: {e}")
 
         if not reset_link:
             logger.warning("Workday: could not find reset email within 30s")

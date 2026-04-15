@@ -11,12 +11,16 @@ type Profile = {
   updated_at?: string;
   target_titles: string[];
   target_keywords: string[];
+  excluded_titles: string[];
   excluded_companies: string[];
   excluded_role_keywords: string[];
   excluded_levels: string[];
   preferred_locations: string[];
   remote_only: boolean;
   min_salary: number | null;
+  // Board overrides — null / empty means "use the global default list".
+  ashby_boards: string[] | null;
+  greenhouse_boards: string[] | null;
   resume_id: string | null;
   email_account_id: string | null;
   application_email: string | null;
@@ -91,12 +95,15 @@ export function ProfilesTab({
       name: "",
       target_titles: [],
       target_keywords: [],
+      excluded_titles: [],
       excluded_companies: [],
       excluded_role_keywords: [],
       excluded_levels: [],
       preferred_locations: defaultProfile?.preferred_locations || ["United States"],
       remote_only: false,
       min_salary: null,
+      ashby_boards: null,
+      greenhouse_boards: null,
       resume_id: null,
       email_account_id: null,
       application_email: "",
@@ -278,6 +285,7 @@ export function ProfilesTab({
 
           <ChipInput label="Target titles" values={draft.target_titles || []} onChange={(v) => setDraft({ ...draft, target_titles: v })} placeholder="AI Engineer, ML Engineer" />
           <ChipInput label="Target keywords" values={draft.target_keywords || []} onChange={(v) => setDraft({ ...draft, target_keywords: v })} placeholder="pytorch, llm" />
+          <ChipInput label="Excluded titles" values={draft.excluded_titles || []} onChange={(v) => setDraft({ ...draft, excluded_titles: v })} placeholder="Sales, Recruiter" />
           <ChipInput label="Excluded companies" values={draft.excluded_companies || []} onChange={(v) => setDraft({ ...draft, excluded_companies: v })} />
           <ChipInput label="Excluded role keywords" values={draft.excluded_role_keywords || []} onChange={(v) => setDraft({ ...draft, excluded_role_keywords: v })} placeholder="manager, director" />
           <ChipInput label="Excluded levels" values={draft.excluded_levels || []} onChange={(v) => setDraft({ ...draft, excluded_levels: v })} placeholder="staff, principal" />
@@ -288,6 +296,28 @@ export function ProfilesTab({
             <label className="flex items-center gap-2 text-sm">Min salary
               <input type="number" className="border rounded px-2 py-1 w-28" value={draft.min_salary ?? ""} onChange={(e) => setDraft({ ...draft, min_salary: e.target.value ? parseInt(e.target.value) : null })} />
             </label>
+          </div>
+
+          {/* Per-bundle Ashby / Greenhouse board overrides. Blank chips
+              mean "use the global default list" (hundreds of curated
+              boards). Users only populate these when they want to scope
+              a bundle tightly — e.g. a DA bundle that only scouts
+              analytics-heavy companies. */}
+          <div className="border-t pt-3 mt-2">
+            <h3 className="text-sm font-semibold mb-1">Board overrides (optional)</h3>
+            <p className="text-xs text-gray-500 mb-2">Leave blank to use the global default board lists. Only populate if you want this bundle to scout a specific subset of companies.</p>
+            <ChipInput
+              label="Ashby boards"
+              values={draft.ashby_boards || []}
+              onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })}
+              placeholder="openai, anthropic, linear"
+            />
+            <ChipInput
+              label="Greenhouse boards"
+              values={draft.greenhouse_boards || []}
+              onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })}
+              placeholder="stripe, airbnb, datadog"
+            />
           </div>
 
           <div>
@@ -332,7 +362,7 @@ export function ProfilesTab({
               emphasizes SQL pipelines. Controlled editor — save via the
               profile's Save button. */}
           <div className="border-t pt-3 mt-2">
-            <h3 className="text-sm font-semibold mb-2">Work & education</h3>
+            <h3 className="text-sm font-semibold mb-2">Per-role work & education</h3>
             <WorkEducationEditor
               initial={{
                 work_experience: draft.work_experience || [],
@@ -393,7 +423,25 @@ export function ProfilesTab({
             </div>
           </div>
 
-          <label className="flex items-center gap-2 text-sm pt-2 border-t"><input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active (uncheck to pause this bundle)</label>
+          {/* Ops — runtime knobs. max_daily=0 or null means no per-bundle
+              cap (user-wide daily_apply_limit still applies). Use the
+              Active checkbox to pause a bundle, not max_daily. */}
+          <div className="flex items-center gap-4 pt-2 border-t">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active (uncheck to pause this bundle)
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              Max daily
+              <input
+                type="number"
+                min={0}
+                placeholder="no cap"
+                className="border rounded px-2 py-1 w-24"
+                value={draft.max_daily ?? ""}
+                onChange={(e) => setDraft({ ...draft, max_daily: e.target.value ? parseInt(e.target.value) : null })}
+              />
+            </label>
+          </div>
 
           <div className="flex gap-2 pt-2">
             <button onClick={save} className="px-4 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">Save profile</button>

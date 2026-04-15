@@ -64,6 +64,18 @@ export function WorkEducationEditor({
       { company: "", title: "", location: "", start_date: "", end_date: "Present", current: true, achievements: [] },
     ]);
   const removeWork = (i: number) => setWorkRows((prev) => prev.filter((_, idx) => idx !== i));
+  // Reorder helpers to match the desktop editor — user can bubble a
+  // role up/down so their most-relevant experience lands first on forms
+  // that crop the work_experience list.
+  const moveWork = (i: number, dir: -1 | 1) => {
+    setWorkRows((prev) => {
+      const target = i + dir;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[target]] = [next[target], next[i]];
+      return next;
+    });
+  };
 
   const updateEdu = (i: number, patch: Partial<EducationRow>) =>
     setEduRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -73,6 +85,15 @@ export function WorkEducationEditor({
       { school: "", degree: "", field: "", start_date: "", end_date: "", gpa: "" },
     ]);
   const removeEdu = (i: number) => setEduRows((prev) => prev.filter((_, idx) => idx !== i));
+  const moveEdu = (i: number, dir: -1 | 1) => {
+    setEduRows((prev) => {
+      const target = i + dir;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[target]] = [next[target], next[i]];
+      return next;
+    });
+  };
 
   const addSkill = () => {
     const parts = skillBuf.split(",").map((s) => s.trim()).filter(Boolean);
@@ -142,9 +163,13 @@ export function WorkEducationEditor({
                 ))}
               </div>
 
-              <button type="button" onClick={() => removeWork(i)} className="text-xs text-red-600 hover:underline">
-                Remove role
-              </button>
+              <div className="flex items-center gap-2 text-xs">
+                <button type="button" onClick={() => moveWork(i, -1)} disabled={i === 0} className="px-2 py-0.5 rounded border hover:bg-white disabled:opacity-30">↑</button>
+                <button type="button" onClick={() => moveWork(i, 1)} disabled={i === workRows.length - 1} className="px-2 py-0.5 rounded border hover:bg-white disabled:opacity-30">↓</button>
+                <button type="button" onClick={() => removeWork(i)} className="text-red-600 hover:underline ml-auto">
+                  Remove role
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -172,9 +197,13 @@ export function WorkEducationEditor({
                 <Field label="Start" value={row.start_date || ""} onChange={(v) => updateEdu(i, { start_date: v })} />
                 <Field label="End" value={row.end_date || ""} onChange={(v) => updateEdu(i, { end_date: v })} />
               </div>
-              <button type="button" onClick={() => removeEdu(i)} className="text-xs text-red-600 hover:underline">
-                Remove school
-              </button>
+              <div className="flex items-center gap-2 text-xs">
+                <button type="button" onClick={() => moveEdu(i, -1)} disabled={i === 0} className="px-2 py-0.5 rounded border hover:bg-white disabled:opacity-30">↑</button>
+                <button type="button" onClick={() => moveEdu(i, 1)} disabled={i === eduRows.length - 1} className="px-2 py-0.5 rounded border hover:bg-white disabled:opacity-30">↓</button>
+                <button type="button" onClick={() => removeEdu(i)} className="text-red-600 hover:underline ml-auto">
+                  Remove school
+                </button>
+              </div>
             </div>
           ))}
         </div>
