@@ -65,41 +65,23 @@ def _build_reply_envelope(user_text: str) -> str:
     No /btw. No "[via Telegram]" marker. Plain English prose instruction
     that Claude treats as a normal user turn.
     """
-    # Two rules for Claude, both critical:
-    #
-    # 1. DO THE WORK. If the user's message is a command ("keep applying",
-    #    "scout ashby", "pause for 10 min"), Claude must ACT on it — call
-    #    openclaw / filesystem / scout tools like a normal user turn. The
-    #    acknowledgment is a side product, not the whole response. Earlier
-    #    version of this envelope said "Reply in 1-2 sentences" and
-    #    omitted the "act on commands" instruction — result: Claude sent
-    #    pretty acknowledgments and stopped working. Surfaced via visible
-    #    regression in terminal screenshots (user reported).
-    #
-    # 2. BRACKET THE ACKNOWLEDGMENT. We need a crisp 1-2 sentence
-    #    confirmation wrapped in sentinels so Telegram/chat renders it
-    #    cleanly. Tool output above the sentinels is expected and fine
-    #    — we ignore everything outside the bracketed pair.
-    #
-    # We also never type a complete <<<REPLY_START>>>...<<<REPLY_END>>>
-    # pair inline here. Previous bug: xterm echoed the envelope back, the
-    # regex matched that echo as if it were Claude's reply, and Telegram
-    # received the template placeholder "your one-or-two-sentence reply
-    # here". Fix: the tokens are described on labeled lines so xterm echo
-    # can never form a regex-matchable pair.
+    # Use a NON-PLACEHOLDER example so the envelope's echo (which xterm
+    # emits as the user types) never gets mistaken for Claude's reply
+    # by the downstream regex. Previous bug: we typed "your one-or-two-
+    # sentence reply here" inside the sentinels, xterm echoed it, the
+    # regex matched the echo first, and Telegram received the literal
+    # placeholder text. Fix: describe the reply format without typing a
+    # complete sentinel pair, so only Claude's actual output will contain
+    # the START/END bracketed reply.
     return (
         f"The user just sent you this message:\n\n"
         f"{user_text}\n\n"
-        f"TWO things to do:\n"
-        f"1) ACT on the message — if it's a command (keep applying, "
-        f"scout X, pause, etc.) call the tools to DO it right now, same "
-        f"as any user turn. Don't just acknowledge.\n"
-        f"2) Then emit a crisp 1-2 sentence acknowledgment wrapped with "
-        f"these tokens on their own lines — tool output above is fine, "
-        f"but emit the tokens only around the acknowledgment, not "
+        f"Reply in 1–2 short sentences. Bracket ONLY your reply text "
+        f"on its own lines with these exact tokens — tool output above "
+        f"is fine, but emit the tokens only around your reply, not "
         f"anywhere else:\n"
         f"  opening token:  {_REPLY_START}\n"
-        f"  your 1-2 sentence acknowledgment on the next line\n"
+        f"  your 1-2 sentence reply on the next line\n"
         f"  closing token:  {_REPLY_END}"
     )
 
