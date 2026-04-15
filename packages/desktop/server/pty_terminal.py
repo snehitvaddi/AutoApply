@@ -1089,12 +1089,10 @@ class PTYSession:
         lines.append("")
         lines.append("USER MESSAGES from chat UI or Telegram:")
         lines.append(
-            "  A message that starts 'The user just sent you this message:' is a "
-            "real-time user turn from the chat panel or Telegram. Respond in 1-2 "
-            "short sentences, bracketed with the sentinel tokens shown in the "
-            "message — we extract only the bracketed text and send it back to "
-            "the user. Tool output above the brackets is fine; keep scouting / "
-            "applying. Examples:"
+            "  Messages tagged '[via chat]' or '[via Telegram]' are from the user "
+            "in real time. Respond to them as you would any user turn — answer "
+            "questions, act on commands. Reply goes back to the user via the same "
+            "channel they sent from. Examples:"
         )
         lines.append(
             "    'stop scouting' → kill the worker subprocess, confirm it stopped"
@@ -1367,15 +1365,15 @@ class PTYSession:
             pass
 
         existing_path = env.get("PATH", "")
-        existing_parts = existing_path.split(os.pathsep) if existing_path else []
+        existing_parts = existing_path.split(":") if existing_path else []
         for p in path_prepends:
             if p and p not in existing_parts:
                 existing_parts.insert(0, p)
-        env["PATH"] = os.pathsep.join(existing_parts)
+        env["PATH"] = ":".join(existing_parts)
 
         logger.info(
             f"PTY start: claude={claude} cwd={cwd} "
-            f"PATH-head={os.pathsep.join(existing_parts[:3])}"
+            f"PATH-head={':'.join(existing_parts[:3])}"
         )
 
         # Pre-fill the output buffer with a visible "starting..." line so
