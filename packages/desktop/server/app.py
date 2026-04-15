@@ -964,6 +964,42 @@ async def upload_resume(
     }
 
 
+@app.post("/api/profile/extract-resume")
+async def extract_resume_proxy(resume_id: str = "", profile_id: str = ""):
+    """Proxy the cloud /api/profile/extract-resume route so the desktop
+    profile editor can auto-trigger AI parsing right after a resume
+    upload (per-profile, not just default). Forwards the worker token
+    and any query params verbatim."""
+    import httpx as _httpx
+    token = load_token()
+    if not token:
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=401, detail="No API token configured")
+    base = stats.APP_URL
+    qp = []
+    if resume_id:
+        qp.append(f"resume_id={resume_id}")
+    if profile_id:
+        qp.append(f"profile_id={profile_id}")
+    qs = ("?" + "&".join(qp)) if qp else ""
+    url = f"{base}/api/profile/extract-resume{qs}"
+    try:
+        async with _httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(url, headers={"X-Worker-Token": token})
+        if resp.status_code >= 400:
+            from fastapi import HTTPException as _HTTPException
+            try:
+                body = resp.json()
+                detail = body.get("message") or body.get("error") or body
+            except Exception:
+                detail = resp.text[:500]
+            raise _HTTPException(status_code=resp.status_code, detail=str(detail))
+        return resp.json()
+    except _httpx.TimeoutException:
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=504, detail="AI parser timed out (>120s)")
+
+
 @app.get("/api/activity")
 async def get_activity(since: str = "", limit: int = 20):
     try:

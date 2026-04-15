@@ -75,11 +75,19 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
       };
       const [p, r, e] = await Promise.all([
         safe(call("/api/profiles"), { data: { profiles: [] } }),
-        safe(call("/api/resumes"), { data: { resumes: [] } }),
+        // /api/resumes proxies to the cloud /api/settings/resumes which
+        // returns apiList(rows) → { object: "list", data: [...] }. The
+        // FastAPI wraps it as { ok, data: <that> }, so the array sits
+        // at .data.data. Read both shapes defensively.
+        safe(call("/api/resumes"), { data: { data: [] } }),
         safe(call("/api/email-accounts"), { data: { email_accounts: [] } }),
       ]);
       setProfiles(p?.data?.profiles || []);
-      setResumes(r?.data?.resumes || []);
+      // Handle both apiList shape (.data.data) and the legacy
+      // { resumes: [] } shape.
+      const rd = r?.data;
+      const resumeList = Array.isArray(rd?.data) ? rd.data : (Array.isArray(rd) ? rd : (rd?.resumes || []));
+      setResumes(resumeList);
       setEmailAccounts(e?.data?.email_accounts || []);
     } finally { setLoading(false); }
   }, []);
@@ -257,7 +265,18 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
             <option value="">(none)</option>
             {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
           </select>
-          <DesktopInlineResumeUpload onUploaded={(rid) => { setDraft({ ...draft, resume_id: rid }); load(); }} />
+          <DesktopInlineResumeUpload
+            profileId={editingId !== "__new__" ? editingId : null}
+            onUploaded={(rid) => { setDraft((d) => ({ ...d, resume_id: rid })); load(); }}
+            onParsed={(parsed) => {
+              setDraft((d) => ({
+                ...d,
+                work_experience: (parsed.work_experience as never) || d.work_experience,
+                education: (parsed.education as never) || d.education,
+                skills: (parsed.skills as never) || d.skills,
+              }));
+            }}
+          />
         </div>
 
         {editingId === "__new__" && profiles.some((p) => p.is_default) && (
@@ -445,38 +464,111 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
 }
 
 /**
- * Inline resume upload for the desktop ProfilesTab. Same shape as the
- * web component — POSTs a PDF to /api/resumes (FastAPI proxies to the
- * cloud /api/settings/resumes), calls onUploaded(id) so the profile
- * card auto-binds to the just-uploaded file. Replaces the standalone
- * Resumes tab.
+ * Inline resume upload for the desktop ProfilesTab. Three steps:
+ *   1. POST /api/resumes (FastAPI proxies to cloud /api/settings/resumes)
+ *   2. POST /api/profile/extract-resume?resume_id=&profile_id= (FastAPI
+ *      proxies to the cloud parser) — fills the profile's W&E from the PDF
+ *   3. Call onParsed(refreshed) so the in-form WorkEducationEditor
+ *      pre-fills with what the AI extracted.
+ *
+ * profileId optional — when null (new-profile draft), step 2 is skipped.
  */
-function DesktopInlineResumeUpload({ onUploaded }: { onUploaded: (resumeId: string) => void }) {
+function DesktopInlineResumeUpload({
+  profileId,
+  onUploaded,
+  onParsed,
+}: {
+  profileId: string | null;
+  onUploaded: (resumeId: string) => void;
+  onParsed?: (parsed: { work_experience?: unknown[]; education?: unknown[]; skills?: unknown[] }) => void;
+}) {
   const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "uploading" | "parsing">("idle");
   const [error, setError] = useState<string>("");
+  const [success, setSuccess] = useState<string>("");
 
   const upload = async () => {
     if (!file) return;
-    setUploading(true);
     setError("");
+    setSuccess("");
+
+    setPhase("uploading");
+    let newResumeId: string | null = null;
     try {
+      // Desktop has /api/resumes/upload (existing route) which expects
+      // multipart "file" + form "is_default" boolean. The cloud proxy
+      // returns { ok, data: { resume: { id, ... } } }.
       const fd = new FormData();
-      fd.append("resume", file);
+      fd.append("file", file);
       fd.append("is_default", "false");
-      const res = await fetch("/api/resumes", { method: "POST", body: fd });
+      const res = await fetch("/api/resumes/upload", { method: "POST", body: fd });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.ok) {
-        setError(json?.detail || json?.error || `HTTP ${res.status}`);
+        setError(json?.detail || json?.error || `Upload HTTP ${res.status}`);
+        setPhase("idle");
         return;
       }
-      const newId = json?.data?.resume?.id;
-      if (newId) onUploaded(newId);
+      newResumeId = json?.data?.resume?.id || null;
+      if (!newResumeId) {
+        console.warn("DesktopInlineResumeUpload: POST /resumes returned no id", json);
+        setError("Upload succeeded but the server returned no resume id");
+        setPhase("idle");
+        return;
+      }
+      onUploaded(newResumeId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Network error during upload");
+      setPhase("idle");
+      return;
+    }
+
+    if (!profileId) {
+      setSuccess(`Uploaded ${file.name}. Save the profile, then re-open to AI-parse.`);
       setFile(null);
+      setPhase("idle");
+      return;
+    }
+
+    setPhase("parsing");
+    try {
+      const url = `/api/profile/extract-resume?resume_id=${encodeURIComponent(newResumeId)}&profile_id=${encodeURIComponent(profileId)}`;
+      const res = await fetch(url, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || (json?.ok === false)) {
+        setError(json?.detail || json?.error || json?.message || `Parse HTTP ${res.status}`);
+        setPhase("idle");
+        return;
+      }
+      // Re-fetch the profile so the freshly-written W&E flow back into draft.
+      const refresh = await fetch("/api/profiles").then((r) => r.json()).catch(() => null);
+      const updatedProfile = refresh?.data?.profiles?.find((p: { id: string }) => p.id === profileId);
+      if (updatedProfile && onParsed) {
+        onParsed({
+          work_experience: updatedProfile.work_experience || [],
+          education: updatedProfile.education || [],
+          skills: updatedProfile.skills || [],
+        });
+      }
+      const wCount = (updatedProfile?.work_experience as unknown[] | undefined)?.length ?? 0;
+      const eCount = (updatedProfile?.education as unknown[] | undefined)?.length ?? 0;
+      const sCount = (updatedProfile?.skills as unknown[] | undefined)?.length ?? 0;
+      setSuccess(
+        wCount + eCount + sCount === 0
+          ? "Resume uploaded. AI parser found nothing new to add."
+          : `Imported ${wCount} job${wCount === 1 ? "" : "s"}, ${eCount} education entr${eCount === 1 ? "y" : "ies"}, ${sCount} skills.`
+      );
+      setFile(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Parse failed");
     } finally {
-      setUploading(false);
+      setPhase("idle");
     }
   };
+
+  const buttonLabel =
+    phase === "uploading" ? "Uploading…" :
+    phase === "parsing" ? "Parsing with AI…" :
+    "Upload PDF";
 
   return (
     <div className="flex flex-col gap-2">
@@ -486,16 +578,21 @@ function DesktopInlineResumeUpload({ onUploaded }: { onUploaded: (resumeId: stri
           accept=".pdf,application/pdf"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
           className="text-xs flex-1"
+          disabled={phase !== "idle"}
         />
         <button
           type="button"
           onClick={upload}
-          disabled={!file || uploading}
+          disabled={!file || phase !== "idle"}
           className="text-xs px-3 py-1 rounded border bg-background hover:bg-muted disabled:opacity-50"
         >
-          {uploading ? "Uploading…" : "Upload PDF"}
+          {buttonLabel}
         </button>
       </div>
+      {phase === "parsing" && (
+        <p className="text-xs text-muted-foreground">⏳ Reading your resume with AI to fill Work Experience, Education, and Skills below…</p>
+      )}
+      {success && <p className="text-xs text-green-600">✓ {success}</p>}
       {error && <p className="text-xs text-destructive">⚠ {error}</p>}
     </div>
   );

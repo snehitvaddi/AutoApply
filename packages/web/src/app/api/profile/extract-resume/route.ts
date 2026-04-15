@@ -40,22 +40,47 @@ export async function POST(request: NextRequest) {
     return apiError("internal_server_error", "OPENAI_API_KEY_SHARED not configured");
   }
 
-  // 1) Find the user's default resume (or fall back to the latest).
-  const { data: resumes, error: resumesErr } = await supabase
-    .from("user_resumes")
-    .select("storage_path, file_name, is_default, created_at")
-    .eq("user_id", auth.userId)
-    .order("created_at", { ascending: false });
+  // Optional query params that target the parse at a specific resume
+  // and/or write the result to a specific profile bundle. Both default
+  // to legacy behavior (parse default resume, write to default bundle)
+  // when omitted, so the AI Import tab and any external callers keep
+  // working unchanged.
+  //
+  //   resume_id  → parse THIS resume from user_resumes (skip the
+  //                "default resume" lookup). Used by the in-profile
+  //                inline upload flow so the just-uploaded PDF gets
+  //                parsed immediately.
+  //   profile_id → write the parsed work_experience / education /
+  //                skills onto THIS bundle's user_application_profiles
+  //                row instead of the user_profiles default mirror.
+  const url = new URL(request.url);
+  const reqResumeId = url.searchParams.get("resume_id");
+  const reqProfileId = url.searchParams.get("profile_id");
 
-  if (resumesErr) {
-    return apiError("internal_server_error", resumesErr.message);
+  // 1) Resolve which resume to parse.
+  let resumeRow: { storage_path: string; file_name?: string } | null = null;
+  if (reqResumeId) {
+    const { data: r } = await supabase
+      .from("user_resumes")
+      .select("storage_path, file_name")
+      .eq("id", reqResumeId)
+      .eq("user_id", auth.userId)
+      .maybeSingle();
+    if (!r) return apiError("not_found", "resume_id does not belong to this user");
+    resumeRow = r as { storage_path: string; file_name?: string };
+  } else {
+    const { data: resumes, error: resumesErr } = await supabase
+      .from("user_resumes")
+      .select("storage_path, file_name, is_default, created_at")
+      .eq("user_id", auth.userId)
+      .order("created_at", { ascending: false });
+    if (resumesErr) return apiError("internal_server_error", resumesErr.message);
+    if (!resumes || resumes.length === 0) {
+      return apiError("validation_error", "No resume uploaded. Upload a PDF first.");
+    }
+    resumeRow = (resumes.find((r) => (r as { is_default?: boolean }).is_default) || resumes[0]) as { storage_path: string; file_name?: string };
   }
-  if (!resumes || resumes.length === 0) {
-    return apiError("validation_error", "No resume uploaded. Upload a PDF first.");
-  }
-  const resumeRow =
-    resumes.find((r) => (r as { is_default?: boolean }).is_default) || resumes[0];
-  const storagePath = (resumeRow as { storage_path: string }).storage_path;
+  const storagePath = resumeRow.storage_path;
 
   // 2) Download the PDF bytes from Storage. Service-role key bypasses RLS.
   const { data: fileBlob, error: dlErr } = await supabase.storage
@@ -145,10 +170,16 @@ export async function POST(request: NextRequest) {
     return apiError("internal_server_error", "Parser returned no usable fields");
   }
 
-  // 5) Merge with existing user_profiles row: only fill empty columns.
-  // We don't blindly overwrite what's already there (the user may have
-  // manually edited via the dashboard) — only populate fields the DB
-  // currently has as null / "" / [] / {}.
+  // 5) Merge with existing user_profiles row.
+  //
+  // Default behavior (legacy AI Import path, no profile_id/resume_id):
+  //   only fill empty columns — don't overwrite manual edits.
+  //
+  // Targeted behavior (resume_id or profile_id set, i.e. profile editor
+  // inline upload): the user just dropped a fresh resume INTO a specific
+  // profile and wants the parsed fields to take effect. Overwrite even
+  // populated fields — they're targeting this profile for an update.
+  const targeted = Boolean(reqResumeId || reqProfileId);
   const { data: existing } = await supabase
     .from("user_profiles")
     .select("*")
@@ -157,6 +188,10 @@ export async function POST(request: NextRequest) {
 
   const patch: Record<string, unknown> = { user_id: auth.userId };
   for (const [k, v] of Object.entries(sanitized)) {
+    if (targeted) {
+      patch[k] = v;
+      continue;
+    }
     const existingVal = existing ? (existing as Record<string, unknown>)[k] : undefined;
     const existingEmpty =
       existingVal === null ||
@@ -178,12 +213,19 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const { error: upsertErr } = await supabase
-    .from("user_profiles")
-    .upsert(patch, { onConflict: "user_id" });
+  // Targeted per-profile parse: SKIP the shared user_profiles upsert.
+  // The shared row is identity-level fallback; per-profile parses must
+  // not stomp it because the user might have other bundles relying on
+  // the unchanged shared values. The bundle mirror below is the only
+  // write we want for the targeted path.
+  if (!targeted) {
+    const { error: upsertErr } = await supabase
+      .from("user_profiles")
+      .upsert(patch, { onConflict: "user_id" });
 
-  if (upsertErr) {
-    return apiError("internal_server_error", `Upsert failed: ${upsertErr.message}`);
+    if (upsertErr) {
+      return apiError("internal_server_error", `Upsert failed: ${upsertErr.message}`);
+    }
   }
 
   // Mirror work_experience / education / skills into the user's default
@@ -199,15 +241,22 @@ export async function POST(request: NextRequest) {
   }
   if (Object.keys(bundleMirror).length > 0) {
     bundleMirror.updated_at = new Date().toISOString();
-    const { error: mirrorErr } = await supabase
+    // When the caller targets a specific bundle, write THERE. Otherwise
+    // mirror to the user's default bundle (legacy AI Import path).
+    let mirrorQuery = supabase
       .from("user_application_profiles")
       .update(bundleMirror)
-      .eq("user_id", auth.userId)
-      .eq("is_default", true);
+      .eq("user_id", auth.userId);
+    if (reqProfileId) {
+      mirrorQuery = mirrorQuery.eq("id", reqProfileId);
+    } else {
+      mirrorQuery = mirrorQuery.eq("is_default", true);
+    }
+    const { error: mirrorErr } = await mirrorQuery;
     if (mirrorErr) {
       // user_profiles upsert already succeeded — log and continue.
       // Worker still sees the data via the user_profiles fallback.
-      console.warn("extract-resume → default bundle mirror failed:", mirrorErr.message);
+      console.warn("extract-resume → bundle mirror failed:", mirrorErr.message);
     }
   }
 

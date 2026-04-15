@@ -60,11 +60,17 @@ export function ProfilesTab({
     try {
       const [pRes, rRes, eRes] = await Promise.all([
         fetch("/api/settings/profiles").then((r) => r.json()),
-        fetch("/api/settings/resumes").then((r) => r.json()).catch(() => ({ data: { resumes: [] } })),
+        // /api/settings/resumes GET returns apiList(rows) which is
+        // { object: "list", data: [...resumes] } — the array sits at
+        // .data, NOT .data.resumes. Reading the wrong path was why
+        // every uploaded PDF appeared to vanish from the dropdown
+        // even though the row was created in the DB.
+        fetch("/api/settings/resumes").then((r) => r.json()),
         fetch("/api/settings/email-accounts").then((r) => r.json()),
       ]);
       setProfiles(pRes?.data?.profiles || []);
-      setResumes(rRes?.data?.resumes || []);
+      const resumeList = Array.isArray(rRes?.data) ? rRes.data : (rRes?.data?.resumes || []);
+      setResumes(resumeList);
       setEmailAccounts(eRes?.data?.email_accounts || []);
     } finally {
       setLoading(false);
@@ -345,9 +351,28 @@ export function ProfilesTab({
 
         <div className="border-t pt-3 mt-2">
           <h3 className="text-sm font-semibold mb-1">Board overrides (optional)</h3>
-          <p className="text-xs text-gray-500 mb-2">Leave blank to use the global default board lists.</p>
-          <ChipInput label="Ashby boards" values={draft.ashby_boards || []} onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })} placeholder="openai, anthropic" />
-          <ChipInput label="Greenhouse boards" values={draft.greenhouse_boards || []} onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })} placeholder="stripe, airbnb" />
+          <p className="text-xs text-gray-500 mb-2">
+            Most users leave this blank. Only fill in if you want this profile to scout a specific subset of companies instead of the global default list.
+          </p>
+          <details className="mb-3 text-xs text-gray-600">
+            <summary className="cursor-pointer text-gray-700 hover:text-gray-900">What&apos;s a board?</summary>
+            <div className="mt-2 pl-3 border-l-2 border-gray-200 space-y-1">
+              <p>
+                <strong>Ashby</strong> and <strong>Greenhouse</strong> are job-board platforms. Companies host their job postings under a slug like <code className="bg-gray-100 px-1 rounded">jobs.ashbyhq.com/<span className="text-brand-700">openai</span></code> or <code className="bg-gray-100 px-1 rounded">boards.greenhouse.io/<span className="text-brand-700">stripe</span></code>.
+              </p>
+              <p>
+                Leaving these fields blank means ApplyLoop scouts a curated list of ~hundreds of company slugs we maintain.
+              </p>
+              <p>
+                Override only when you want to scope this profile tightly — e.g. <em>"my Data Analyst bundle should only watch Stripe + Datadog + Airbnb"</em>.
+              </p>
+              <p>
+                <strong>Format:</strong> just the company slug, not the full URL. <code className="bg-gray-100 px-1 rounded">stripe</code>, not <code className="bg-gray-100 px-1 rounded">boards.greenhouse.io/stripe</code>.
+              </p>
+            </div>
+          </details>
+          <ChipInput label="Ashby boards" values={draft.ashby_boards || []} onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })} placeholder="openai, anthropic, linear" />
+          <ChipInput label="Greenhouse boards" values={draft.greenhouse_boards || []} onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })} placeholder="stripe, airbnb, datadog" />
         </div>
 
         {/* Resume picker — moved INSIDE the profile (not a separate
@@ -361,40 +386,117 @@ export function ProfilesTab({
             <option value="">(none)</option>
             {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
           </select>
-          <InlineResumeUpload onUploaded={(rid) => { setDraft({ ...draft, resume_id: rid }); load(); }} />
+          <InlineResumeUpload
+            // Existing-profile edit gets a real id; new-profile draft
+            // is null and skips the parse step until first save.
+            profileId={editingId !== "__new__" ? editingId : null}
+            onUploaded={(rid) => {
+              setDraft((d) => ({ ...d, resume_id: rid }));
+              load();
+            }}
+            onParsed={(parsed) => {
+              // Merge parsed W&E into the draft so the editor pre-fills.
+              // Use functional setState so we don't read a stale draft.
+              setDraft((d) => ({
+                ...d,
+                work_experience: (parsed.work_experience as never) || d.work_experience,
+                education: (parsed.education as never) || d.education,
+                skills: (parsed.skills as never) || d.skills,
+              }));
+            }}
+          />
         </div>
 
         {/* Gmail credentials — entirely per-profile now. The shared
             API Keys tab no longer carries gmail_email / gmail_app_password
-            because each profile has its own mailbox. */}
+            because each profile has its own mailbox. Two clear modes
+            via radio (instead of the confusing pool dropdown + opaque
+            "use inline email below" placeholder). */}
         <div className="border-t pt-3 mt-2">
           <h3 className="text-sm font-semibold mb-1">Apply-from Gmail</h3>
-          <p className="text-xs text-gray-500 mb-2">Each profile uses its own Gmail address + app password. Pick from previously-saved accounts or enter inline.</p>
-          {editingId === "__new__" && profiles.some((p) => p.is_default) && (
-            <label className="flex items-center gap-2 text-sm mb-2">
-              <input type="checkbox" checked={!!draft.same_email_as_default} onChange={(e) => setDraft({ ...draft, same_email_as_default: e.target.checked })} />
-              Use same Gmail as Default profile
-            </label>
-          )}
-          {!draft.same_email_as_default && (
-            <>
-              <label className="text-sm font-medium block mb-1">Account from pool</label>
-              <select className="border rounded px-2 py-1 w-full mb-2" value={draft.email_account_id || ""} onChange={(e) => setDraft({ ...draft, email_account_id: e.target.value || null })}>
-                <option value="">(use inline email below)</option>
-                {emailAccounts.map((e) => <option key={e.id} value={e.id}>{e.email}{e.has_app_password ? " ✓" : ""}</option>)}
-              </select>
-              {!draft.email_account_id && (
-                <LabelInput label="Apply-from email (inline)" value={draft.application_email || ""} onChange={(v) => setDraft({ ...draft, application_email: v })} placeholder="you@gmail.com" />
-              )}
-              <LabelInput
-                label={draft.has_app_password ? "Gmail app password (stored ✓ — leave blank to keep, or paste a new one to replace)" : "Gmail app password"}
-                value={draft.application_email_app_password || ""}
-                onChange={(v) => setDraft({ ...draft, application_email_app_password: v })}
-                type="password"
-                autoComplete="new-password"
-              />
-            </>
-          )}
+          <p className="text-xs text-gray-500 mb-3">
+            This profile sends applications from this Gmail account. Each profile uses its own mailbox so OTP codes route correctly.{" "}
+            <span className="text-gray-400">Need an app password? Enable 2FA on your Google account, then generate one at <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="underline">myaccount.google.com/apppasswords</a>.</span>
+          </p>
+
+          {(() => {
+            const hasPool = emailAccounts.length > 0;
+            // Mode resolution: a profile bound to a pool entry is "saved";
+            // anything else (inline email or empty) is "new".
+            const mode = draft.email_account_id ? "saved" : "new";
+            return (
+              <div className="space-y-3">
+                {hasPool && (
+                  <div className="flex gap-4 text-sm">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name={`gmail-mode-${editingId || "new"}`}
+                        checked={mode === "saved"}
+                        onChange={() => setDraft({
+                          ...draft,
+                          email_account_id: emailAccounts[0].id,
+                          // Clear inline fields so the saved account is the source of truth.
+                          application_email: "",
+                          application_email_app_password: "",
+                        })}
+                      />
+                      Use a saved Gmail account
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name={`gmail-mode-${editingId || "new"}`}
+                        checked={mode === "new"}
+                        onChange={() => setDraft({ ...draft, email_account_id: null })}
+                      />
+                      Enter a new Gmail account
+                    </label>
+                  </div>
+                )}
+
+                {mode === "saved" && hasPool && (
+                  <div>
+                    <label className="text-sm font-medium block mb-1">Saved account</label>
+                    <select
+                      className="border rounded px-2 py-1 w-full"
+                      value={draft.email_account_id || ""}
+                      onChange={(e) => setDraft({ ...draft, email_account_id: e.target.value || null })}
+                    >
+                      {emailAccounts.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.email}{e.has_app_password ? "  (password saved ✓)" : "  (no password)"}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Rotating the password? Switch to <strong>Enter a new account</strong> with the same email — it&apos;ll update the saved entry.</p>
+                  </div>
+                )}
+
+                {mode === "new" && (
+                  <>
+                    <LabelInput
+                      label="Gmail address"
+                      value={draft.application_email || ""}
+                      onChange={(v) => setDraft({ ...draft, application_email: v })}
+                      placeholder="you@gmail.com"
+                    />
+                    <LabelInput
+                      label={draft.has_app_password ? "Gmail app password (stored ✓ — leave blank to keep, paste a new one to replace)" : "Gmail app password"}
+                      value={draft.application_email_app_password || ""}
+                      onChange={(v) => setDraft({ ...draft, application_email_app_password: v })}
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder="abcd efgh ijkl mnop"
+                    />
+                    {!hasPool && (
+                      <p className="text-xs text-gray-500">This is your first Gmail. After saving, it&apos;ll appear in a <em>Saved accounts</em> picker for any other profiles you create.</p>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         <div className="border-t pt-3 mt-2">
@@ -450,37 +552,125 @@ function LabelInput({ label, value, onChange, placeholder, type = "text", autoCo
 }
 
 /**
- * Inline resume upload — replaces the standalone Resumes tab. Accepts a
- * PDF, POSTs to /api/settings/resumes (the same endpoint the old tab
- * used), and on success calls onUploaded(resumeId) so the profile can
- * auto-bind to the just-uploaded file. Pool is unchanged underneath.
+ * Inline resume upload — three-step UX:
+ *   1. POST /api/settings/resumes (file → user_resumes row in DB)
+ *   2. POST /api/profile/extract-resume?resume_id=&profile_id= (parse
+ *      PDF via OpenAI gpt-4o, get back work_experience / education /
+ *      skills, write them onto THIS profile bundle)
+ *   3. Surface success + parsed counts so the user can see what landed
+ *
+ * Calls onUploaded(resumeId) after step 1 so the parent dropdown re-
+ * binds immediately. Calls onParsed(parsed) after step 2 so the
+ * WorkEducationEditor pre-fills with the parsed entries.
+ *
+ * profileId is optional — when null (e.g. new-profile draft has no id
+ * yet), step 2 is skipped and the user can save the profile then run
+ * AI Import manually. Most editing happens on existing profiles where
+ * profileId is set.
  */
-function InlineResumeUpload({ onUploaded }: { onUploaded: (resumeId: string) => void }) {
+function InlineResumeUpload({
+  profileId,
+  onUploaded,
+  onParsed,
+}: {
+  profileId: string | null;
+  onUploaded: (resumeId: string) => void;
+  onParsed?: (parsed: { work_experience?: unknown[]; education?: unknown[]; skills?: unknown[] }) => void;
+}) {
   const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "uploading" | "parsing">("idle");
   const [error, setError] = useState<string>("");
+  const [success, setSuccess] = useState<string>("");
 
   const upload = async () => {
     if (!file) return;
-    setUploading(true);
     setError("");
+    setSuccess("");
+
+    // Step 1: upload PDF to storage + create user_resumes row.
+    setPhase("uploading");
+    let newResumeId: string | null = null;
     try {
       const fd = new FormData();
       fd.append("resume", file);
-      fd.append("is_default", "false");  // pool entry; bundle binds to it
+      fd.append("is_default", "false");
       const res = await fetch("/api/settings/resumes", { method: "POST", body: fd });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(json?.message || `HTTP ${res.status}`);
+        setError(json?.message || `Upload HTTP ${res.status}`);
+        setPhase("idle");
         return;
       }
-      const newId = json?.data?.resume?.id;
-      if (newId) onUploaded(newId);
+      newResumeId = json?.data?.resume?.id || null;
+      if (!newResumeId) {
+        // Visible failure — diagnose shape mismatches in console too.
+        console.warn("InlineResumeUpload: POST /resumes returned no id", json);
+        setError("Upload succeeded but the server returned no resume id");
+        setPhase("idle");
+        return;
+      }
+      onUploaded(newResumeId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Network error during upload");
+      setPhase("idle");
+      return;
+    }
+
+    // Step 2: parse with OpenAI scoped to THIS resume + profile.
+    // Skip if we don't have a profile id yet (new-profile draft).
+    if (!profileId) {
+      setSuccess(`Uploaded ${file.name}. Save the profile, then re-open to AI-parse.`);
       setFile(null);
+      setPhase("idle");
+      return;
+    }
+
+    setPhase("parsing");
+    try {
+      const url = `/api/profile/extract-resume?resume_id=${encodeURIComponent(newResumeId)}&profile_id=${encodeURIComponent(profileId)}`;
+      const res = await fetch(url, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json?.message || `Parse HTTP ${res.status}`);
+        setPhase("idle");
+        return;
+      }
+      // The route returns the same shape as before; the parsed fields
+      // are NOT in the response body (it stores them and reports
+      // populated[] only). To pre-fill the editor we re-fetch the
+      // profile so the freshly-written W&E flow back into draft state.
+      // Cheaper than re-parsing client-side and stays consistent with
+      // what the worker will read at apply time.
+      const refresh = await fetch(`/api/settings/profiles`).then((r) => r.json()).catch(() => null);
+      const updatedProfile = refresh?.data?.profiles?.find((p: { id: string }) => p.id === profileId);
+      if (updatedProfile && onParsed) {
+        onParsed({
+          work_experience: updatedProfile.work_experience || [],
+          education: updatedProfile.education || [],
+          skills: updatedProfile.skills || [],
+        });
+      }
+      const populated: string[] = Array.isArray(json?.data?.populated) ? json.data.populated : [];
+      const wCount = (updatedProfile?.work_experience as unknown[] | undefined)?.length ?? 0;
+      const eCount = (updatedProfile?.education as unknown[] | undefined)?.length ?? 0;
+      const sCount = (updatedProfile?.skills as unknown[] | undefined)?.length ?? 0;
+      setSuccess(
+        populated.length === 0
+          ? "Resume uploaded. AI parser found nothing new to add."
+          : `Imported ${wCount} job${wCount === 1 ? "" : "s"}, ${eCount} education entr${eCount === 1 ? "y" : "ies"}, ${sCount} skills.`
+      );
+      setFile(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Parse failed");
     } finally {
-      setUploading(false);
+      setPhase("idle");
     }
   };
+
+  const buttonLabel =
+    phase === "uploading" ? "Uploading…" :
+    phase === "parsing" ? "Parsing with AI…" :
+    "Upload PDF";
 
   return (
     <div className="flex flex-col gap-2">
@@ -490,16 +680,21 @@ function InlineResumeUpload({ onUploaded }: { onUploaded: (resumeId: string) => 
           accept=".pdf,application/pdf"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
           className="text-xs flex-1"
+          disabled={phase !== "idle"}
         />
         <button
           type="button"
           onClick={upload}
-          disabled={!file || uploading}
+          disabled={!file || phase !== "idle"}
           className="text-xs px-3 py-1 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
         >
-          {uploading ? "Uploading…" : "Upload PDF"}
+          {buttonLabel}
         </button>
       </div>
+      {phase === "parsing" && (
+        <p className="text-xs text-gray-600">⏳ Reading your resume with AI to fill Work Experience, Education, and Skills below…</p>
+      )}
+      {success && <p className="text-xs text-green-700">✓ {success}</p>}
       {error && <p className="text-xs text-red-600">⚠ {error}</p>}
     </div>
   );
