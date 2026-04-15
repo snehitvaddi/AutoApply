@@ -65,15 +65,24 @@ def _build_reply_envelope(user_text: str) -> str:
     No /btw. No "[via Telegram]" marker. Plain English prose instruction
     that Claude treats as a normal user turn.
     """
+    # Use a NON-PLACEHOLDER example so the envelope's echo (which xterm
+    # emits as the user types) never gets mistaken for Claude's reply
+    # by the downstream regex. Previous bug: we typed "your one-or-two-
+    # sentence reply here" inside the sentinels, xterm echoed it, the
+    # regex matched the echo first, and Telegram received the literal
+    # placeholder text. Fix: describe the reply format without typing a
+    # complete sentinel pair, so only Claude's actual output will contain
+    # the START/END bracketed reply.
     return (
         f"The user just sent you this message:\n\n"
         f"{user_text}\n\n"
-        f"Reply in 1–2 short sentences. Output your reply bracketed "
-        f"EXACTLY with these sentinel tokens on their own lines — "
-        f"tool output above the brackets is fine:\n"
-        f"{_REPLY_START}\n"
-        f"your one-or-two-sentence reply here\n"
-        f"{_REPLY_END}"
+        f"Reply in 1–2 short sentences. Bracket ONLY your reply text "
+        f"on its own lines with these exact tokens — tool output above "
+        f"is fine, but emit the tokens only around your reply, not "
+        f"anywhere else:\n"
+        f"  opening token:  {_REPLY_START}\n"
+        f"  your 1-2 sentence reply on the next line\n"
+        f"  closing token:  {_REPLY_END}"
     )
 
 
@@ -185,10 +194,17 @@ async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
 
     # Extract ONLY what's between the sentinels. Anything else (echo,
     # tool output, prompt chrome) is ignored.
+    #
+    # Take the LAST sentinel pair in the buffer, not the first. The
+    # envelope no longer types a complete pair inline (we moved to a
+    # labeled-token format), but belt-and-suspenders: if xterm echoes
+    # the envelope back in an order that happens to form a pair, or if
+    # Claude emits multiple brackets, the LAST one is Claude's final
+    # reply — earlier matches are noise.
     full = "".join(response_chunks)
-    match = _REPLY_RE.search(full)
-    if match:
-        reply = match.group(1).strip()
+    matches = list(_REPLY_RE.finditer(full))
+    if matches:
+        reply = matches[-1].group(1).strip()
     else:
         # Sentinel didn't land in the capture window. Common reasons:
         # Claude is mid-tool-call and hasn't emitted the end sentinel
@@ -209,6 +225,29 @@ async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
     # Strip markdown code fences — Telegram renders them as literal
     # backticks which looks wrong.
     reply = reply.replace("```", "").strip()
+
+    # Guard against the envelope's own instructional text leaking
+    # through as if it were Claude's reply. If the extracted text
+    # matches known template-y fragments, treat it as an extraction
+    # miss and return the deterministic fallback instead of confusing
+    # the user with placeholder language.
+    _TEMPLATE_LEAK_RE = re.compile(
+        r"(your\s+(one[-\s]?or[-\s]?two|1[-\s]?2)[-\s]?sentence"
+        r"|your 1-2 sentence reply"
+        r"|opening token|closing token"
+        r"|bracket only your reply"
+        r"|the user just sent you this message)",
+        re.IGNORECASE,
+    )
+    if _TEMPLATE_LEAK_RE.search(reply):
+        logger.info(
+            "capture_btw_response: extracted text looks like template "
+            "leak, returning fallback instead: %r", reply[:100]
+        )
+        return (
+            "Claude saw your message and is working on it — check the "
+            "desktop window for the full context."
+        )
 
     if not reply:
         return "Claude saw your message. No reply text was returned."
