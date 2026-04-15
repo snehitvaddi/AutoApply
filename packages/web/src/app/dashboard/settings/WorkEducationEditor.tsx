@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Controlled Work & Education editor for the web ProfilesTab. Mirrors
 // packages/desktop/ui/app/settings/WorkEducationEditor.tsx's controlled-
@@ -45,14 +45,32 @@ export function WorkEducationEditor({
   const [eduRows, setEduRows] = useState<EducationRow[]>([]);
   const [skills, setSkills] = useState<string[]>([]);
   const [skillBuf, setSkillBuf] = useState("");
+  // Track whether the post-mount onChange should fire. The editor used
+  // to push state to the parent on every state tick, including the
+  // initial sync from `initial`. Combined with the parent re-rendering
+  // on each setDraft, this caused an infinite loop where the parent
+  // kept pushing the same data back into `initial` (a new array literal
+  // each render), the first effect re-synced internal state, the
+  // second effect fired onChange with that state, the parent set state
+  // again, etc. — visible on screen as a "glitching" / flashing form.
+  //
+  // Fix: a ref flag that suppresses the next onChange whenever we just
+  // synced from `initial`. Real user edits flow through onChange;
+  // initial-sync writes don't.
+  const skipNextChange = useRef(false);
 
   useEffect(() => {
+    skipNextChange.current = true;
     setWorkRows(initial.work_experience || []);
     setEduRows(initial.education || []);
     setSkills(initial.skills || []);
   }, [initial.work_experience, initial.education, initial.skills]);
 
   useEffect(() => {
+    if (skipNextChange.current) {
+      skipNextChange.current = false;
+      return;
+    }
     onChange({ work_experience: workRows, education: eduRows, skills });
   }, [onChange, workRows, eduRows, skills]);
 

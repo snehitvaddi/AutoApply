@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Trash2, Plus, ArrowUp, ArrowDown } from "lucide-react";
 
 // Desktop Work & Education tab: row-based editors for work_experience[] +
@@ -63,17 +63,28 @@ export function WorkEducationEditor({
   const [skillBuf, setSkillBuf] = useState("");
   const [saving, setSaving] = useState(false);
   const controlled = typeof onChange === "function";
+  // Same anti-loop ref as the web editor — suppresses the next onChange
+  // call whenever we just synced internal state from `initial`. Without
+  // this, the controlled-mode sync triggers parent setDraft, which
+  // re-renders with a new `initial` literal, which re-syncs, which
+  // fires onChange, etc. — visible as the form "glitching" / flashing.
+  const skipNextChange = useRef(false);
 
   useEffect(() => {
+    skipNextChange.current = true;
     setWorkRows(initial.work_experience || []);
     setEduRows(initial.education || []);
     setSkills(initial.skills || []);
   }, [initial.work_experience, initial.education, initial.skills]);
 
   // In controlled mode, push changes upstream whenever any of the three
-  // state buckets moves.
+  // state buckets moves — but skip the first push after an initial sync.
   useEffect(() => {
     if (!controlled) return;
+    if (skipNextChange.current) {
+      skipNextChange.current = false;
+      return;
+    }
     onChange?.({ work_experience: workRows, education: eduRows, skills });
   }, [controlled, onChange, workRows, eduRows, skills]);
 

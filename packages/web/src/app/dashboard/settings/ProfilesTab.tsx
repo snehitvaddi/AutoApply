@@ -54,6 +54,12 @@ export function ProfilesTab({
   // without losing their work — we validate + parse on save.
   const [answerKeyText, setAnswerKeyText] = useState<string>("");
   const [answerKeyError, setAnswerKeyError] = useState<string>("");
+  // Bump on every successful resume parse so the WorkEducationEditor
+  // remounts via React key and pulls the parsed values out of `initial`
+  // cleanly. Without this, the editor's first useEffect reads its local
+  // state (empty) and races against the onParsed setDraft, overwriting
+  // the parsed entries with [] before they ever reach the screen.
+  const [parseSeq, setParseSeq] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -403,6 +409,12 @@ export function ProfilesTab({
                 education: (parsed.education as never) || d.education,
                 skills: (parsed.skills as never) || d.skills,
               }));
+              // Force the WorkEducationEditor to remount so its internal
+              // state re-syncs from `initial` (now carrying the parsed
+              // values). Without this, the editor's stale-local-state
+              // useEffect immediately overwrites the parsed data with []
+              // via its onChange callback. parseSeq drives the React key.
+              setParseSeq((n) => n + 1);
             }}
           />
         </div>
@@ -502,6 +514,11 @@ export function ProfilesTab({
         <div className="border-t pt-3 mt-2">
           <h3 className="text-sm font-semibold mb-2">Per-role work & education</h3>
           <WorkEducationEditor
+            // key bumps on every parse → editor remounts → its internal
+            // state re-syncs cleanly from `initial`. Without this the
+            // editor's first useEffect would race against the post-parse
+            // setDraft and overwrite the freshly-parsed entries with [].
+            key={`woe-${editingId}-${parseSeq}`}
             initial={{ work_experience: draft.work_experience || [], education: draft.education || [], skills: draft.skills || [] }}
             onChange={(next) => setDraft((d) => ({ ...d, work_experience: next.work_experience, education: next.education, skills: next.skills }))}
           />
