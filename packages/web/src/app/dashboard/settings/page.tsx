@@ -66,7 +66,9 @@ interface EducationRow {
 // sync loop, so changes here propagate to the running ApplyLoop app
 // within 5 minutes (or at next restart, whichever comes first).
 interface IntegrationFieldDef {
-  key: "telegram_bot_token" | "telegram_chat_id" | "gmail_email" | "gmail_app_password" | "agentmail_api_key" | "finetune_resume_api_key";
+  // gmail_email + gmail_app_password intentionally not in this union —
+  // they're per-profile now (see ProfilesTab "Apply-from Gmail" section).
+  key: "telegram_bot_token" | "telegram_chat_id" | "agentmail_api_key" | "finetune_resume_api_key";
   label: string;
   sample: string;
   help: string;
@@ -87,20 +89,12 @@ const INTEGRATION_FIELD_DEFS: IntegrationFieldDef[] = [
     help: "Start a chat with your bot, send any message, visit https://api.telegram.org/bot<token>/getUpdates, look for 'chat':{'id': NUMBER.",
     secret: false,
   },
-  {
-    key: "gmail_email",
-    label: "Gmail Address",
-    sample: "your.name@gmail.com",
-    help: "The Gmail address ApplyLoop will read job-reply emails from.",
-    secret: false,
-  },
-  {
-    key: "gmail_app_password",
-    label: "Gmail App Password",
-    sample: "abcd efgh ijkl mnop",
-    help: "16-char Google App Password (NOT your regular Gmail password). Generate at https://myaccount.google.com/apppasswords after enabling 2FA.",
-    secret: true,
-  },
+  // Gmail email + app password REMOVED from the shared API Keys tab.
+  // These are per-profile now — each application bundle has its own
+  // mailbox (an AI Eng bundle sends from ai.apps@gmail.com, a DA bundle
+  // from da.apps@gmail.com). Edit them inside the profile card on the
+  // Profiles tab. The legacy integrations_encrypted blob still stores
+  // them for backward compat with single-profile users until mig 022.
   {
     key: "agentmail_api_key",
     label: "AgentMail API Key",
@@ -877,13 +871,13 @@ export default function SettingsPage() {
   // the standalone tab is gone. Gmail credentials are per-bundle too,
   // so they're under Profiles not API Keys. Removed: Job Preferences
   // (deprecated), Telegram + Email (folded into API Keys).
+  // Resumes tab removed — uploads now live INSIDE each profile card via
+  // InlineResumeUpload (still POSTs to /api/settings/resumes, pool is
+  // unchanged in the DB). API Keys tab carries only Telegram + AgentMail
+  // + Finetune; Gmail email + app password are per-profile (each bundle
+  // sends from its own mailbox so it can't be shared).
   const tabs: { key: Tab; label: string }[] = [
     { key: "profiles", label: "Profiles" },
-    // Resumes tab is a shared pool — profiles pick by id from this list.
-    // Was temporarily dropped during the IA rework but the render branch
-    // already existed further down (upload + listing UX was never
-    // deleted). Audit flagged the unreachable state as a dead pointer.
-    { key: "resume", label: "Resumes" },
     { key: "personal", label: "Personal Info" },
     { key: "integrations", label: "API Keys" },
     { key: "worker", label: "Worker & LLM" },

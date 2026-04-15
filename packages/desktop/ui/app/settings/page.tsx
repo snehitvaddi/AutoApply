@@ -27,15 +27,14 @@ import {
 type Tab = "ai" | "personal" | "work" | "preferences" | "profiles" | "resume" | "integrations"
   | "telegram" | "email" | "worker" | "billing" | "auth"
 
-// IA mirrors the web sidebar. Profiles is the primary tab. Work &
-// Education has been dropped — it now lives INSIDE each profile card
-// (per-role narrative, mig 020). Resumes tab kept as the pool manager
-// (profiles pick a PDF by id from this list). Preferences / Telegram /
-// Email removed from the sidebar (dead render branches remain below,
-// tree-shaken in prod).
+// IA mirrors the web sidebar. Profiles is the primary tab. Resumes
+// dropped — uploads now live INSIDE each profile card. Work & Education
+// is per-bundle (mig 020). API Keys carries only Telegram + AgentMail +
+// Finetune; Gmail moved to the per-profile editor. Preferences / Telegram /
+// Email tab branches remain in the JSX below for now (tree-shaken in
+// prod since they're unreachable via the sidebar).
 const tabs: { id: Tab; label: string; icon: typeof User }[] = [
   { id: "profiles", label: "Profiles", icon: Target },
-  { id: "resume", label: "Resumes", icon: FileText },
   { id: "personal", label: "Personal", icon: User },
   { id: "integrations", label: "API Keys", icon: Key },
   { id: "worker", label: "Worker & LLM", icon: Cpu },
@@ -48,7 +47,8 @@ const tabs: { id: Tab; label: string; icon: typeof User }[] = [
 // INTEGRATION_FIELDS list. If you add a field here, also add it to the server-side
 // VALIDATORS in packages/web/src/app/api/settings/integrations/route.ts.
 interface DesktopIntegrationFieldDef {
-  key: "telegram_bot_token" | "telegram_chat_id" | "gmail_email" | "gmail_app_password" | "agentmail_api_key" | "finetune_resume_api_key"
+  // Gmail moved to per-profile editor; the union no longer includes it.
+  key: "telegram_bot_token" | "telegram_chat_id" | "agentmail_api_key" | "finetune_resume_api_key"
   label: string
   sample: string
   help: string
@@ -69,20 +69,8 @@ const DESKTOP_INTEGRATION_FIELDS: DesktopIntegrationFieldDef[] = [
     help: "Send your bot any message, visit api.telegram.org/bot<token>/getUpdates, copy the chat.id number.",
     secret: false,
   },
-  {
-    key: "gmail_email",
-    label: "Gmail Address",
-    sample: "your.name@gmail.com",
-    help: "The Gmail address ApplyLoop reads job-reply emails from.",
-    secret: false,
-  },
-  {
-    key: "gmail_app_password",
-    label: "Gmail App Password",
-    sample: "abcd efgh ijkl mnop",
-    help: "16-char Google App Password (NOT your regular Gmail password). https://myaccount.google.com/apppasswords",
-    secret: true,
-  },
+  // Gmail moved to per-profile editor — each bundle has its own
+  // mailbox + app password. See ProfilesTab "Apply-from Gmail".
   {
     key: "agentmail_api_key",
     label: "AgentMail API Key",

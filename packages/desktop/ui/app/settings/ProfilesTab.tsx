@@ -204,8 +204,10 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading profiles...</div>;
 
-  if (editingId !== null) {
-    return (
+  // The editor body — used inline by both an expanded existing-profile
+  // card AND the new-profile draft. Keeping the form here as a closure
+  // means the rendering JSX stays a single source of truth.
+  const editorBody = (
       <div className="space-y-3">
         <TextField label="Profile name" value={draft.name || ""} onChange={(v) => setDraft({ ...draft, name: v })} />
         <ChipField label="Target titles" values={draft.target_titles || []} onChange={(v) => setDraft({ ...draft, target_titles: v })} />
@@ -244,12 +246,18 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
           />
         </div>
 
-        <div>
-          <label className="text-sm font-medium block mb-1">Resume</label>
-          <select className="border rounded px-2 py-1 w-full bg-background" value={draft.resume_id || ""} onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}>
+        {/* Resume — inline upload + pool dropdown. Replaces the
+            removed top-level Resumes tab. Pool is unchanged in the DB
+            (user_resumes table); this just moves the UX into the
+            profile so each bundle binds its PDF in one place. */}
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-1">Resume</h3>
+          <p className="text-xs text-muted-foreground mb-2">PDF used when applying via this profile.</p>
+          <select className="border rounded px-2 py-1 w-full bg-background mb-2" value={draft.resume_id || ""} onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}>
             <option value="">(none)</option>
             {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
           </select>
+          <DesktopInlineResumeUpload onUploaded={(rid) => { setDraft({ ...draft, resume_id: rid }); load(); }} />
         </div>
 
         {editingId === "__new__" && profiles.some((p) => p.is_default) && (
@@ -359,50 +367,136 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
           <button onClick={() => { setEditingId(null); setDraft({}); }} className="px-4 py-2 text-sm rounded-lg border">Cancel</button>
         </div>
       </div>
-    );
-  }
+  );
+
+  const startEdit = (p: Profile) => {
+    setEditingId(p.id);
+    setDraft({ ...p });
+    setAnswerKeyText(p.answer_key_json ? JSON.stringify(p.answer_key_json, null, 2) : "");
+    setAnswerKeyError("");
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDraft({});
+    setAnswerKeyText("");
+    setAnswerKeyError("");
+  };
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Each bundle binds its own resume, apply-from email, and target titles. The worker routes each job to the matching bundle.</p>
+        <p className="text-sm text-muted-foreground">Each bundle binds its own resume, apply-from email, and target titles. Click a card to expand and edit.</p>
         <button onClick={startCreate} className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground">+ Add</button>
       </div>
+
+      {/* New-profile draft renders as a top-of-list expanded card. */}
+      {editingId === "__new__" && (
+        <div className="border-2 border-primary/40 rounded-lg overflow-hidden">
+          <div className="p-3 bg-primary/5 text-sm font-medium text-foreground">+ New profile</div>
+          <div className="px-4 pb-4 pt-2 border-t bg-muted/30">{editorBody}</div>
+        </div>
+      )}
+
       {profiles.map((p) => {
+        const isExpanded = editingId === p.id;
         const resumeFile = p.resume_id ? resumes.find((r) => r.id === p.resume_id)?.file_name : undefined;
         const resumeMissing = !!p.resume_id && !resumeFile;
         const noEmail = !p.application_email && !p.email_account_id;
         return (
-        <div key={p.id} className="border rounded-lg p-3 flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-medium">{p.name}</span>
-              {p.is_default && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">DEFAULT</span>}
-              {!p.auto_apply && <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">paused</span>}
-              {resumeMissing && <span className="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded">⚠ missing resume</span>}
-              {noEmail && <span className="text-xs bg-warning/10 text-warning px-2 py-0.5 rounded">no apply email</span>}
+        <div key={p.id} className="border rounded-lg overflow-hidden">
+          {/* Card header — click to expand. Action buttons stop
+              propagation so default/delete don't toggle the card. */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => (isExpanded ? cancelEdit() : startEdit(p))}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); isExpanded ? cancelEdit() : startEdit(p); } }}
+            className="p-3 flex items-start justify-between cursor-pointer hover:bg-muted/40 select-none"
+          >
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-muted-foreground text-xs">{isExpanded ? "▼" : "▶"}</span>
+                <span className="font-medium">{p.name}</span>
+                {p.is_default && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">DEFAULT</span>}
+                {!p.auto_apply && <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">paused</span>}
+                {resumeMissing && <span className="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded">⚠ missing resume</span>}
+                {noEmail && <span className="text-xs bg-warning/10 text-warning px-2 py-0.5 rounded">no apply email</span>}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1 ml-4">
+                {p.application_email || "no email"} · {(p.target_titles || []).slice(0, 3).join(", ") || "no titles"} · resume: {resumeFile || (resumeMissing ? "⚠ deleted" : "none")}
+              </div>
             </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              {p.application_email || "no email"} · {(p.target_titles || []).slice(0, 3).join(", ") || "no titles"} · resume: {resumeFile || (resumeMissing ? "⚠ deleted" : "none")}
+            <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+              {!p.is_default && <button onClick={() => setDefault(p.id)} className="text-xs text-primary hover:underline">Default</button>}
+              {!p.is_default && <button onClick={() => del(p.id)} className="text-xs text-destructive hover:underline">Delete</button>}
             </div>
           </div>
-          <div className="flex gap-2">
-            {!p.is_default && <button onClick={() => setDefault(p.id)} className="text-xs text-primary hover:underline">Default</button>}
-            <button
-              onClick={() => {
-                setEditingId(p.id);
-                setDraft({ ...p });
-                setAnswerKeyText(p.answer_key_json ? JSON.stringify(p.answer_key_json, null, 2) : "");
-                setAnswerKeyError("");
-              }}
-              className="text-xs hover:underline"
-            >Edit</button>
-            {!p.is_default && <button onClick={() => del(p.id)} className="text-xs text-destructive hover:underline">Delete</button>}
-          </div>
+          {isExpanded && (
+            <div className="px-4 pb-4 pt-2 border-t bg-muted/30">
+              {editorBody}
+            </div>
+          )}
         </div>
         );
       })}
       {profiles.length === 0 && <div className="text-sm text-muted-foreground">No profiles yet.</div>}
+    </div>
+  );
+}
+
+/**
+ * Inline resume upload for the desktop ProfilesTab. Same shape as the
+ * web component — POSTs a PDF to /api/resumes (FastAPI proxies to the
+ * cloud /api/settings/resumes), calls onUploaded(id) so the profile
+ * card auto-binds to the just-uploaded file. Replaces the standalone
+ * Resumes tab.
+ */
+function DesktopInlineResumeUpload({ onUploaded }: { onUploaded: (resumeId: string) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string>("");
+
+  const upload = async () => {
+    if (!file) return;
+    setUploading(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("resume", file);
+      fd.append("is_default", "false");
+      const res = await fetch("/api/resumes", { method: "POST", body: fd });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        setError(json?.detail || json?.error || `HTTP ${res.status}`);
+        return;
+      }
+      const newId = json?.data?.resume?.id;
+      if (newId) onUploaded(newId);
+      setFile(null);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <input
+          type="file"
+          accept=".pdf,application/pdf"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          className="text-xs flex-1"
+        />
+        <button
+          type="button"
+          onClick={upload}
+          disabled={!file || uploading}
+          className="text-xs px-3 py-1 rounded border bg-background hover:bg-muted disabled:opacity-50"
+        >
+          {uploading ? "Uploading…" : "Upload PDF"}
+        </button>
+      </div>
+      {error && <p className="text-xs text-destructive">⚠ {error}</p>}
     </div>
   );
 }

@@ -248,102 +248,141 @@ export function ProfilesTab({
         )}
       </div>
 
-      {!editing && (
-        <div className="space-y-2">
-          {profiles.map((p) => {
-            const resumeFile = p.resume_id ? resumes.find((r) => r.id === p.resume_id)?.file_name : undefined;
-            const resumeMissing = !!p.resume_id && !resumeFile;
-            return (
-            <div key={p.id} className="border rounded-lg p-3 flex items-start justify-between">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium">{p.name}</span>
-                  {p.is_default && <span className="text-xs bg-brand-50 text-brand-700 px-2 py-0.5 rounded">DEFAULT</span>}
-                  {!p.auto_apply && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">paused</span>}
-                  {resumeMissing && <span className="text-xs bg-red-50 text-red-700 px-2 py-0.5 rounded">⚠ missing resume</span>}
-                  {!p.application_email && !p.email_account_id && <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded">no apply email</span>}
+      {/* Every profile renders as an accordion card. Clicking the
+          header toggles expansion; the inline editor lives INSIDE the
+          card so the user never leaves the Profiles tab. No separate
+          "Edit" mode switch — the previous design was flagged because
+          it broke the macro-diagram promise of nested sub-sections. */}
+      <div className="space-y-2">
+        {profiles.map((p) => {
+          const isExpanded = editingId === p.id;
+          const resumeFile = p.resume_id ? resumes.find((r) => r.id === p.resume_id)?.file_name : undefined;
+          const resumeMissing = !!p.resume_id && !resumeFile;
+          return (
+            <div key={p.id} className="border rounded-lg overflow-hidden">
+              {/* Card header — click to expand. Action buttons stop
+                  propagation so set-default / delete don't toggle the
+                  card open. */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => (isExpanded ? cancelEdit() : startEdit(p))}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); isExpanded ? cancelEdit() : startEdit(p); } }}
+                className="p-3 flex items-start justify-between cursor-pointer hover:bg-gray-50 select-none"
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-gray-400 text-xs">{isExpanded ? "▼" : "▶"}</span>
+                    <span className="font-medium">{p.name}</span>
+                    {p.is_default && <span className="text-xs bg-brand-50 text-brand-700 px-2 py-0.5 rounded">DEFAULT</span>}
+                    {!p.auto_apply && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">paused</span>}
+                    {resumeMissing && <span className="text-xs bg-red-50 text-red-700 px-2 py-0.5 rounded">⚠ missing resume</span>}
+                    {!p.application_email && !p.email_account_id && <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded">no apply email</span>}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1 ml-4">
+                    {p.application_email || "no email"} · {(p.target_titles || []).slice(0, 3).join(", ") || "no titles"} · resume: {resumeFile || (resumeMissing ? "⚠ deleted" : "none")}
+                  </div>
                 </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {p.application_email || "no email"} · {(p.target_titles || []).slice(0, 3).join(", ") || "no titles"} · resume: {resumeFile || (resumeMissing ? "⚠ deleted" : "none")}
+                <div className="flex gap-2 ml-2" onClick={(e) => e.stopPropagation()}>
+                  {!p.is_default && <button onClick={() => setDefault(p.id)} className="text-xs text-brand-600 hover:underline">Set default</button>}
+                  {!p.is_default && <button onClick={() => del(p.id)} className="text-xs text-red-600 hover:underline">Delete</button>}
                 </div>
               </div>
-              <div className="flex gap-2 ml-2">
-                {!p.is_default && <button onClick={() => setDefault(p.id)} className="text-xs text-brand-600 hover:underline">Set default</button>}
-                <button onClick={() => startEdit(p)} className="text-xs text-gray-700 hover:underline">Edit</button>
-                {!p.is_default && <button onClick={() => del(p.id)} className="text-xs text-red-600 hover:underline">Delete</button>}
-              </div>
+
+              {isExpanded && (
+                <div className="px-4 pb-4 pt-2 border-t bg-gray-50/50 space-y-3">
+                  {renderEditorBody()}
+                </div>
+              )}
             </div>
           );
-          })}
-          {profiles.length === 0 && <div className="text-sm text-gray-500">No profiles yet. Add one to get started.</div>}
+        })}
+
+        {/* Empty state — no profiles yet (rare post-backfill, but
+            possible for a brand-new user before mig 014 runs). */}
+        {profiles.length === 0 && !editingId && (
+          <div className="text-sm text-gray-500 p-3 border rounded-lg">No profiles yet. Click "+ Add profile" to create one.</div>
+        )}
+
+        {/* New-profile draft renders as a top-of-list expanded card
+            with the same editor body. We pull the entire editor JSX
+            into a local helper so add + edit share one source. */}
+        {editingId === "__new__" && (
+          <div className="border-2 border-brand-300 rounded-lg overflow-hidden">
+            <div className="p-3 bg-brand-50">
+              <span className="text-sm font-medium text-brand-900">+ New profile</span>
+            </div>
+            <div className="px-4 pb-4 pt-2 border-t bg-gray-50/50 space-y-3">
+              {renderEditorBody()}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
+  // Editor body used by both the expanded card on an existing profile
+  // and the new-profile draft. Pulling it into a closure avoids
+  // duplicating ~150 lines of form JSX across two render branches.
+  function renderEditorBody() {
+    return (
+      <>
+        <LabelInput label="Profile name" value={draft.name || ""} onChange={(v) => setDraft({ ...draft, name: v })} placeholder="AI Engineer" />
+        <ChipInput label="Target titles" values={draft.target_titles || []} onChange={(v) => setDraft({ ...draft, target_titles: v })} placeholder="AI Engineer, ML Engineer" />
+        <ChipInput label="Target keywords" values={draft.target_keywords || []} onChange={(v) => setDraft({ ...draft, target_keywords: v })} placeholder="pytorch, llm" />
+        <ChipInput label="Excluded titles" values={draft.excluded_titles || []} onChange={(v) => setDraft({ ...draft, excluded_titles: v })} placeholder="Sales, Recruiter" />
+        <ChipInput label="Excluded companies" values={draft.excluded_companies || []} onChange={(v) => setDraft({ ...draft, excluded_companies: v })} />
+        <ChipInput label="Excluded role keywords" values={draft.excluded_role_keywords || []} onChange={(v) => setDraft({ ...draft, excluded_role_keywords: v })} placeholder="manager, director" />
+        <ChipInput label="Excluded levels" values={draft.excluded_levels || []} onChange={(v) => setDraft({ ...draft, excluded_levels: v })} placeholder="staff, principal" />
+        <ChipInput label="Preferred locations" values={draft.preferred_locations || []} onChange={(v) => setDraft({ ...draft, preferred_locations: v })} />
+
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.remote_only} onChange={(e) => setDraft({ ...draft, remote_only: e.target.checked })} /> Remote only</label>
+          <label className="flex items-center gap-2 text-sm">Min salary
+            <input type="number" className="border rounded px-2 py-1 w-28" value={draft.min_salary ?? ""} onChange={(e) => setDraft({ ...draft, min_salary: e.target.value ? parseInt(e.target.value) : null })} />
+          </label>
         </div>
-      )}
 
-      {editing && (
-        <div className="space-y-3">
-          <LabelInput label="Profile name" value={draft.name || ""} onChange={(v) => setDraft({ ...draft, name: v })} placeholder="AI Engineer" />
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-1">Board overrides (optional)</h3>
+          <p className="text-xs text-gray-500 mb-2">Leave blank to use the global default board lists.</p>
+          <ChipInput label="Ashby boards" values={draft.ashby_boards || []} onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })} placeholder="openai, anthropic" />
+          <ChipInput label="Greenhouse boards" values={draft.greenhouse_boards || []} onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })} placeholder="stripe, airbnb" />
+        </div>
 
-          <ChipInput label="Target titles" values={draft.target_titles || []} onChange={(v) => setDraft({ ...draft, target_titles: v })} placeholder="AI Engineer, ML Engineer" />
-          <ChipInput label="Target keywords" values={draft.target_keywords || []} onChange={(v) => setDraft({ ...draft, target_keywords: v })} placeholder="pytorch, llm" />
-          <ChipInput label="Excluded titles" values={draft.excluded_titles || []} onChange={(v) => setDraft({ ...draft, excluded_titles: v })} placeholder="Sales, Recruiter" />
-          <ChipInput label="Excluded companies" values={draft.excluded_companies || []} onChange={(v) => setDraft({ ...draft, excluded_companies: v })} />
-          <ChipInput label="Excluded role keywords" values={draft.excluded_role_keywords || []} onChange={(v) => setDraft({ ...draft, excluded_role_keywords: v })} placeholder="manager, director" />
-          <ChipInput label="Excluded levels" values={draft.excluded_levels || []} onChange={(v) => setDraft({ ...draft, excluded_levels: v })} placeholder="staff, principal" />
-          <ChipInput label="Preferred locations" values={draft.preferred_locations || []} onChange={(v) => setDraft({ ...draft, preferred_locations: v })} />
+        {/* Resume picker — moved INSIDE the profile (not a separate
+            tab anymore). Pool lives in user_resumes; this dropdown
+            picks one by id. Upload UX is the same /api/settings/resumes
+            POST that the (now-removed) Resumes tab used. */}
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-1">Resume</h3>
+          <p className="text-xs text-gray-500 mb-2">PDF used when applying via this profile. Upload a new one below to add to the pool.</p>
+          <select className="border rounded px-2 py-1 w-full mb-2" value={draft.resume_id || ""} onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}>
+            <option value="">(none)</option>
+            {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
+          </select>
+          <InlineResumeUpload onUploaded={(rid) => { setDraft({ ...draft, resume_id: rid }); load(); }} />
+        </div>
 
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.remote_only} onChange={(e) => setDraft({ ...draft, remote_only: e.target.checked })} /> Remote only</label>
-            <label className="flex items-center gap-2 text-sm">Min salary
-              <input type="number" className="border rounded px-2 py-1 w-28" value={draft.min_salary ?? ""} onChange={(e) => setDraft({ ...draft, min_salary: e.target.value ? parseInt(e.target.value) : null })} />
-            </label>
-          </div>
-
-          {/* Per-bundle Ashby / Greenhouse board overrides. Blank chips
-              mean "use the global default list" (hundreds of curated
-              boards). Users only populate these when they want to scope
-              a bundle tightly — e.g. a DA bundle that only scouts
-              analytics-heavy companies. */}
-          <div className="border-t pt-3 mt-2">
-            <h3 className="text-sm font-semibold mb-1">Board overrides (optional)</h3>
-            <p className="text-xs text-gray-500 mb-2">Leave blank to use the global default board lists. Only populate if you want this bundle to scout a specific subset of companies.</p>
-            <ChipInput
-              label="Ashby boards"
-              values={draft.ashby_boards || []}
-              onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })}
-              placeholder="openai, anthropic, linear"
-            />
-            <ChipInput
-              label="Greenhouse boards"
-              values={draft.greenhouse_boards || []}
-              onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })}
-              placeholder="stripe, airbnb, datadog"
-            />
-          </div>
-
-          <div>
-            <label className="text-sm font-medium block mb-1">Resume</label>
-            <select className="border rounded px-2 py-1 w-full" value={draft.resume_id || ""} onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}>
-              <option value="">(none — upload in Resumes tab)</option>
-              {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
-            </select>
-          </div>
-
+        {/* Gmail credentials — entirely per-profile now. The shared
+            API Keys tab no longer carries gmail_email / gmail_app_password
+            because each profile has its own mailbox. */}
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-1">Apply-from Gmail</h3>
+          <p className="text-xs text-gray-500 mb-2">Each profile uses its own Gmail address + app password. Pick from previously-saved accounts or enter inline.</p>
           {editingId === "__new__" && profiles.some((p) => p.is_default) && (
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-2 text-sm mb-2">
               <input type="checkbox" checked={!!draft.same_email_as_default} onChange={(e) => setDraft({ ...draft, same_email_as_default: e.target.checked })} />
-              Use same apply-from email as Default profile
+              Use same Gmail as Default profile
             </label>
           )}
-
           {!draft.same_email_as_default && (
             <>
-              <div>
-                <label className="text-sm font-medium block mb-1">Apply-from email account</label>
-                <select className="border rounded px-2 py-1 w-full" value={draft.email_account_id || ""} onChange={(e) => setDraft({ ...draft, email_account_id: e.target.value || null })}>
-                  <option value="">(use inline email field)</option>
-                  {emailAccounts.map((e) => <option key={e.id} value={e.id}>{e.email}{e.has_app_password ? " ✓" : ""}</option>)}
-                </select>
-              </div>
+              <label className="text-sm font-medium block mb-1">Account from pool</label>
+              <select className="border rounded px-2 py-1 w-full mb-2" value={draft.email_account_id || ""} onChange={(e) => setDraft({ ...draft, email_account_id: e.target.value || null })}>
+                <option value="">(use inline email below)</option>
+                {emailAccounts.map((e) => <option key={e.id} value={e.id}>{e.email}{e.has_app_password ? " ✓" : ""}</option>)}
+              </select>
               {!draft.email_account_id && (
                 <LabelInput label="Apply-from email (inline)" value={draft.application_email || ""} onChange={(v) => setDraft({ ...draft, application_email: v })} placeholder="you@gmail.com" />
               )}
@@ -356,101 +395,49 @@ export function ProfilesTab({
               />
             </>
           )}
+        </div>
 
-          {/* Per-role work & education (mig 020). Different per bundle
-              so an AI Eng bundle can emphasize ML wins while a DA bundle
-              emphasizes SQL pipelines. Controlled editor — save via the
-              profile's Save button. */}
-          <div className="border-t pt-3 mt-2">
-            <h3 className="text-sm font-semibold mb-2">Per-role work & education</h3>
-            <WorkEducationEditor
-              initial={{
-                work_experience: draft.work_experience || [],
-                education: draft.education || [],
-                skills: draft.skills || [],
-              }}
-              onChange={(next) => setDraft((d) => ({
-                ...d,
-                work_experience: next.work_experience,
-                education: next.education,
-                skills: next.skills,
-              }))}
-            />
-          </div>
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-2">Per-role work & education</h3>
+          <WorkEducationEditor
+            initial={{ work_experience: draft.work_experience || [], education: draft.education || [], skills: draft.skills || [] }}
+            onChange={(next) => setDraft((d) => ({ ...d, work_experience: next.work_experience, education: next.education, skills: next.skills }))}
+          />
+        </div>
 
-          {/* Content — answers + cover letter — per role. A "Why are you
-              interested in AI Engineering?" answer makes no sense on a
-              Data Analyst bundle, so these are bundle-scoped (mig 019). */}
-          <div className="border-t pt-3 mt-2">
-            <h3 className="text-sm font-semibold mb-2">Per-role content</h3>
-
-            <div className="mb-3">
-              <label className="text-sm font-medium block mb-1">
-                Answer key (JSON)
-                <span className="ml-2 text-xs font-normal text-gray-500">
-                  Role-specific answers. Key = question slug, value = your answer.
-                </span>
-              </label>
-              <textarea
-                rows={6}
-                placeholder={'{\n  "why_interested": "Because...",\n  "tell_about_a_project": "I built..."\n}'}
-                className="border rounded px-2 py-1 w-full font-mono text-xs"
-                value={answerKeyText}
-                onChange={(e) => { setAnswerKeyText(e.target.value); setAnswerKeyError(""); }}
-              />
-              {answerKeyError && (
-                <p className="text-xs text-red-600 mt-1">⚠ {answerKeyError}</p>
-              )}
-              {draft.answer_key_json === null && !answerKeyText && !profiles.find((p) => p.id === editingId)?.is_default && (
-                <p className="text-xs text-gray-500 mt-1">
-                  Leave blank to inherit the default profile&apos;s answer key.
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label className="text-sm font-medium block mb-1">Cover letter template</label>
-              <textarea
-                rows={6}
-                placeholder="Dear {hiring_manager},&#10;&#10;I'm excited to apply for {role} at {company}..."
-                className="border rounded px-2 py-1 w-full text-sm"
-                value={draft.cover_letter_template || ""}
-                onChange={(e) => setDraft({ ...draft, cover_letter_template: e.target.value || null })}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Leave blank to inherit the default profile&apos;s template. Placeholders: {"{role}, {company}, {first_name}"} etc.
-              </p>
-            </div>
-          </div>
-
-          {/* Ops — runtime knobs. max_daily=0 or null means no per-bundle
-              cap (user-wide daily_apply_limit still applies). Use the
-              Active checkbox to pause a bundle, not max_daily. */}
-          <div className="flex items-center gap-4 pt-2 border-t">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active (uncheck to pause this bundle)
+        <div className="border-t pt-3 mt-2">
+          <h3 className="text-sm font-semibold mb-2">Per-role content</h3>
+          <div className="mb-3">
+            <label className="text-sm font-medium block mb-1">Answer key (JSON)
+              <span className="ml-2 text-xs font-normal text-gray-500">Role-specific Q&amp;A overrides.</span>
             </label>
-            <label className="flex items-center gap-2 text-sm">
-              Max daily
-              <input
-                type="number"
-                min={0}
-                placeholder="no cap"
-                className="border rounded px-2 py-1 w-24"
-                value={draft.max_daily ?? ""}
-                onChange={(e) => setDraft({ ...draft, max_daily: e.target.value ? parseInt(e.target.value) : null })}
-              />
-            </label>
+            <textarea rows={6} placeholder={'{\n  "why_interested": "Because..."\n}'} className="border rounded px-2 py-1 w-full font-mono text-xs" value={answerKeyText} onChange={(e) => { setAnswerKeyText(e.target.value); setAnswerKeyError(""); }} />
+            {answerKeyError && <p className="text-xs text-red-600 mt-1">⚠ {answerKeyError}</p>}
           </div>
-
-          <div className="flex gap-2 pt-2">
-            <button onClick={save} className="px-4 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">Save profile</button>
-            <button onClick={cancelEdit} className="px-4 py-2 text-sm rounded-lg border">Cancel</button>
+          <div>
+            <label className="text-sm font-medium block mb-1">Cover letter template</label>
+            <textarea rows={6} placeholder="Dear {hiring_manager},..." className="border rounded px-2 py-1 w-full text-sm" value={draft.cover_letter_template || ""} onChange={(e) => setDraft({ ...draft, cover_letter_template: e.target.value || null })} />
+            <p className="text-xs text-gray-500 mt-1">Leave blank to inherit the default profile&apos;s template.</p>
           </div>
         </div>
-      )}
-    </section>
-  );
+
+        <div className="flex items-center gap-4 pt-2 border-t">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active (uncheck to pause this bundle)
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            Max daily
+            <input type="number" min={0} placeholder="no cap" className="border rounded px-2 py-1 w-24" value={draft.max_daily ?? ""} onChange={(e) => setDraft({ ...draft, max_daily: e.target.value ? parseInt(e.target.value) : null })} />
+          </label>
+        </div>
+
+        <div className="flex gap-2 pt-2">
+          <button onClick={save} className="px-4 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">Save profile</button>
+          <button onClick={cancelEdit} className="px-4 py-2 text-sm rounded-lg border">Cancel</button>
+        </div>
+      </>
+    );
+  }
 }
 
 function LabelInput({ label, value, onChange, placeholder, type = "text", autoComplete }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; autoComplete?: string }) {
@@ -458,6 +445,62 @@ function LabelInput({ label, value, onChange, placeholder, type = "text", autoCo
     <div>
       <label className="text-sm font-medium block mb-1">{label}</label>
       <input type={type} autoComplete={autoComplete} className="border rounded px-2 py-1 w-full" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+    </div>
+  );
+}
+
+/**
+ * Inline resume upload — replaces the standalone Resumes tab. Accepts a
+ * PDF, POSTs to /api/settings/resumes (the same endpoint the old tab
+ * used), and on success calls onUploaded(resumeId) so the profile can
+ * auto-bind to the just-uploaded file. Pool is unchanged underneath.
+ */
+function InlineResumeUpload({ onUploaded }: { onUploaded: (resumeId: string) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string>("");
+
+  const upload = async () => {
+    if (!file) return;
+    setUploading(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("resume", file);
+      fd.append("is_default", "false");  // pool entry; bundle binds to it
+      const res = await fetch("/api/settings/resumes", { method: "POST", body: fd });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json?.message || `HTTP ${res.status}`);
+        return;
+      }
+      const newId = json?.data?.resume?.id;
+      if (newId) onUploaded(newId);
+      setFile(null);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <input
+          type="file"
+          accept=".pdf,application/pdf"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          className="text-xs flex-1"
+        />
+        <button
+          type="button"
+          onClick={upload}
+          disabled={!file || uploading}
+          className="text-xs px-3 py-1 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+        >
+          {uploading ? "Uploading…" : "Upload PDF"}
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-600">⚠ {error}</p>}
     </div>
   );
 }
