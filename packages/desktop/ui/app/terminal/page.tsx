@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { AppShell } from "@/components/app-shell"
-import { Play, Square, RotateCcw, Wifi, WifiOff } from "lucide-react"
+import { Play, Square, RotateCcw, Wifi, WifiOff, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { Terminal as XTerm } from "xterm"
 import type { FitAddon as XFitAddon } from "@xterm/addon-fit"
@@ -12,11 +12,17 @@ const WS_URL = typeof window !== "undefined"
   ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws/pty`
   : "ws://localhost:18790/ws/pty"
 
+type PendingAction = "start" | "stop" | "restart" | null
+
 export default function TerminalPage() {
   const [connected, setConnected] = useState(false)
   const [sessionAlive, setSessionAlive] = useState(false)
   const [initError, setInitError] = useState<string | null>(null)
   const [termEl, setTermEl] = useState<HTMLDivElement | null>(null)
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null)
+  const [pendingSince, setPendingSince] = useState<number>(0)
+  const [elapsedMs, setElapsedMs] = useState<number>(0)
+  const [timedOut, setTimedOut] = useState<boolean>(false)
   const wsRef = useRef<WebSocket | null>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<XFitAddon | null>(null)
@@ -177,28 +183,93 @@ export default function TerminalPage() {
     }
   }, [termEl])
 
+  const beginPending = (action: PendingAction) => {
+    setPendingAction(action)
+    setPendingSince(Date.now())
+    setElapsedMs(0)
+    setTimedOut(false)
+  }
+
   const handleStart = async () => {
-    const ws = wsRef.current
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "start" }))
-    } else {
-      await fetch("/api/pty/start", { method: "POST" })
-      connectWs()
+    if (pendingAction) return
+    beginPending("start")
+    try {
+      const ws = wsRef.current
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "start" }))
+      } else {
+        await fetch("/api/pty/start", { method: "POST" })
+        connectWs()
+      }
+    } catch {
+      setPendingAction(null)
     }
   }
 
   const handleStop = () => {
-    const ws = wsRef.current
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "stop" }))
+    if (pendingAction) return
+    beginPending("stop")
+    try {
+      const ws = wsRef.current
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "stop" }))
+      }
+    } catch {
+      setPendingAction(null)
     }
   }
 
   const handleRestart = async () => {
-    await fetch("/api/pty/restart", { method: "POST" })
-    xtermRef.current?.clear()
-    connectWs()
+    if (pendingAction) return
+    beginPending("restart")
+    try {
+      await fetch("/api/pty/restart", { method: "POST" })
+      xtermRef.current?.clear()
+      connectWs()
+    } catch {
+      setPendingAction(null)
+    }
   }
+
+  // Auto-clear pendingAction once reality catches up. sessionAlive is pushed
+  // over the pty websocket (not polled), so this fires within ~1s of the
+  // actual state transition.
+  useEffect(() => {
+    if (!pendingAction) return
+    const age = Date.now() - pendingSince
+    const matches =
+      (pendingAction === "start" && sessionAlive) ||
+      (pendingAction === "stop" && !sessionAlive) ||
+      // restart tears down then brings back up — don't match the pre-restart
+      // sessionAlive=true. Wait 1.5s for the stop phase before trusting it.
+      (pendingAction === "restart" && sessionAlive && age > 1500)
+    if (matches) setPendingAction(null)
+  }, [sessionAlive, pendingAction, pendingSince])
+
+  // Live elapsed timer — ticks every 300ms while an action is in flight.
+  useEffect(() => {
+    if (!pendingAction) return
+    const id = setInterval(() => setElapsedMs(Date.now() - pendingSince), 300)
+    return () => clearInterval(id)
+  }, [pendingAction, pendingSince])
+
+  // Safety clear: if nothing moved after 15s, unfreeze the buttons and
+  // show a muted "still busy — check logs" hint so the user can retry.
+  useEffect(() => {
+    if (!pendingAction) {
+      // Let "timed out" linger for 2s after clear, then erase.
+      if (timedOut) {
+        const id = setTimeout(() => setTimedOut(false), 2000)
+        return () => clearTimeout(id)
+      }
+      return
+    }
+    const id = setTimeout(() => {
+      setPendingAction(null)
+      setTimedOut(true)
+    }, 15000)
+    return () => clearTimeout(id)
+  }, [pendingAction, timedOut])
 
   return (
     <AppShell>
@@ -209,34 +280,60 @@ export default function TerminalPage() {
               onClick={handleStart}
               className={cn(
                 "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-                sessionAlive
+                pendingAction === "start"
+                  ? "bg-success text-success-foreground ring-2 ring-success/40 animate-pulse"
+                  : sessionAlive
                   ? "bg-success/10 text-success"
                   : "bg-success text-success-foreground hover:bg-success/90"
               )}
-              disabled={sessionAlive}
+              disabled={pendingAction !== null || sessionAlive}
             >
-              <Play className="h-4 w-4" />
-              {sessionAlive ? "Running" : "Start Session"}
+              {pendingAction === "start" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              {pendingAction === "start"
+                ? "Starting…"
+                : sessionAlive
+                ? "Running"
+                : "Start Session"}
             </button>
             <button
               onClick={handleStop}
               className={cn(
                 "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
-                sessionAlive
+                pendingAction === "stop"
+                  ? "border-destructive text-destructive ring-2 ring-destructive/40 animate-pulse"
+                  : sessionAlive
                   ? "border-destructive text-destructive hover:bg-destructive/10"
                   : "border-border text-muted-foreground"
               )}
-              disabled={!sessionAlive}
+              disabled={pendingAction !== null || !sessionAlive}
             >
-              <Square className="h-4 w-4" />
-              Stop
+              {pendingAction === "stop" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Square className="h-4 w-4" />
+              )}
+              {pendingAction === "stop" ? "Stopping…" : "Stop"}
             </button>
             <button
               onClick={handleRestart}
-              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
+                pendingAction === "restart"
+                  ? "border-foreground text-foreground ring-2 ring-muted-foreground/40 animate-pulse"
+                  : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+              disabled={pendingAction !== null}
             >
-              <RotateCcw className="h-4 w-4" />
-              Restart
+              {pendingAction === "restart" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RotateCcw className="h-4 w-4" />
+              )}
+              {pendingAction === "restart" ? "Restarting…" : "Restart"}
             </button>
           </div>
           <div className="flex items-center gap-2 text-sm">
@@ -249,11 +346,17 @@ export default function TerminalPage() {
             )}
             {!initError && (
               <span className="text-xs text-muted-foreground">
-                {connected
-                  ? sessionAlive
-                    ? "Session active"
-                    : "Click Start Session"
-                  : "Connecting..."}
+                {pendingAction === "start" && `Starting PTY… ${Math.floor(elapsedMs / 1000)}s`}
+                {pendingAction === "stop" && `Stopping PTY… ${Math.floor(elapsedMs / 1000)}s`}
+                {pendingAction === "restart" && `Restarting PTY… ${Math.floor(elapsedMs / 1000)}s`}
+                {!pendingAction && timedOut && "still busy — check logs"}
+                {!pendingAction && !timedOut && (
+                  connected
+                    ? sessionAlive
+                      ? "Session active"
+                      : "Click Start Session"
+                    : "Connecting..."
+                )}
               </span>
             )}
           </div>
