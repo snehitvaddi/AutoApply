@@ -38,7 +38,12 @@ export async function POST(request: NextRequest) {
         min_salary: min_salary || null,
         remote_only: remote_only ?? false,
         auto_apply: auto_apply ?? false,
-        max_daily: max_daily ?? 50,
+        // null = no cap. Onboarding UI doesn't expose this field, so a
+        // missing value means "user never chose a cap" — not "default
+        // me to 50." A non-null hardcoded fallback ended up seeding
+        // every bundle via migration 014's backfill and quietly throttled
+        // users who never set one.
+        max_daily: max_daily ?? null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id" }
