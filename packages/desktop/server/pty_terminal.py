@@ -1662,8 +1662,8 @@ exec /bin/zsh -l
         )
 
     def _build_mission_nudge(self, drift: list[str]) -> str:
-        """Mission stall — single crisp line with the next required action.
-        No pep talk, no framing, no status dump. Just: what's wrong + what to do."""
+        """Two short lines. A command, not a status report.
+        Line 1: the stick (what you're NOT doing). Line 2: the action."""
         stats = self._read_mission_stats()
 
         # Track empty-queue streak — reset when apply count advances
@@ -1674,60 +1674,25 @@ exec /bin/zsh -l
         if self._last_applied_count is not None and stats["applied_today"] > self._last_applied_count:
             self._consecutive_empty_queue_ticks = 0
 
-        # Priority ladder — first matching branch wins
+        q = stats["in_queue"]
+        t = stats["applied_today"]
+
         if not stats["worker_alive"]:
-            action = "worker dead — restart: cd ~/.applyloop/packages/worker && python3 worker.py"
-        elif stats["scout_age_min"] is not None and stats["scout_age_min"] > 60:
-            action = f"scout overdue {stats['scout_age_min']:.0f}m — restart worker"
-        elif stats["in_queue"] > 0 and stats["applied_today"] == self._last_applied_count:
-            action = f"queue={stats['in_queue']} but apply stuck — claim next job + submit"
-        elif stats["in_queue"] == 0:
-            # Empty-queue ladder — escalate with streak. YOU are the worker;
-            # don't wait for worker.py's timer, scout yourself and enqueue.
-            # If the last 3 worker scout cycles all enqueued 0, this is a
-            # scout-health problem (filters too strict OR all sources
-            # returning zero) — escalate with a scout-zero signal.
-            recent = []
-            try:
-                recent = local_data.get_recent_scout_cycles(n=3)
-            except Exception:
-                recent = []
-            scout_all_empty = len(recent) >= 3 and all(r.get("enqueued", 0) == 0 for r in recent)
+            return f"Worker is dead. applied_today={t}.\nRestart: cd ~/.applyloop/packages/worker && python3 worker.py. NOW."
+        if stats["scout_age_min"] is not None and stats["scout_age_min"] > 60:
+            return f"Scout hasn't run in {stats['scout_age_min']:.0f}m.\nRestart the worker. NOW."
+        if q > 0 and t == self._last_applied_count:
+            return f"Queue={q} and you're not applying. What are you doing?\nClaim next job and submit. NOW."
+        if q == 0:
             tick = self._consecutive_empty_queue_ticks
-            if scout_all_empty:
-                action = (
-                    "scout ran 3x with ZERO enqueues — worker scout is stuck "
-                    "(filters too strict OR all sources dry). YOU run title-based "
-                    "scout now: Himalayas + LinkedIn public + Google dorks across "
-                    "ALL ATS (site:jobs.ashbyhq.com OR site:boards.greenhouse.io OR "
-                    "site:jobs.lever.co OR site:myworkdayjobs.com). "
-                    "Enqueue via /api/worker/proxy enqueue_jobs."
-                )
-            elif tick <= 1:
-                action = (
-                    "queue empty — YOU scout now. hit Ashby/Greenhouse/Lever/Workday "
-                    "direct for our target companies, filter against profile, enqueue, apply."
-                )
-            elif tick == 2:
-                action = (
-                    "queue STILL empty — broaden: title-based search on Himalayas + "
-                    "LinkedIn public (f_TPR=r86400) + Google dorks across all ATS "
-                    "(ashbyhq / greenhouse / lever / myworkdayjobs). Enqueue then apply."
-                )
-            else:
-                action = (
-                    f"queue empty for {tick} ticks — systemic. verify worker.py alive + "
-                    "scouting (check ~/.autoapply/workspace/scout.ts age). Run direct "
-                    "title-based scout yourself; do NOT wait for next cycle."
-                )
-        elif stats["idle_min"] >= 30:
-            action = "idle too long — scout→filter→apply loop. run scout NOW."
-        else:
-            action = "progress stalled — continue scout→filter→apply"
-        return (
-            f"[nudge] {action}. queue={stats['in_queue']} today={stats['applied_today']}. "
-            f"success metric = applications submitted, not worker health. act now."
-        )
+            if tick <= 1:
+                return f"Queue empty. applied_today={t}. You should be scouting.\nHit Ashby/Greenhouse/Lever/Workday direct and enqueue. NOW."
+            if tick == 2:
+                return f"Queue STILL empty for {tick} cycles. Broaden sources.\nHimalayas + LinkedIn public + Google dorks across all ATS. NOW."
+            return f"Queue empty for {tick} cycles. Something's broken.\nCheck scout.ts age, run title-based scout yourself, enqueue. NOW."
+        if stats["idle_min"] >= 30:
+            return f"You've been idle {stats['idle_min']}m. Queue={q}, applied={t}.\nScout, filter, or apply — pick one and do it. NOW."
+        return f"Progress stalled. Queue={q}, applied={t}.\nScout, filter, or apply. NOW."
 
     def _submit_to_pty(self, body: str) -> None:
         """Write a normal message to the terminal and press Enter.
