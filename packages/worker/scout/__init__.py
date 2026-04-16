@@ -13,13 +13,16 @@ role strings like "AI Engineer", "Machine Learning", or "Data Scientist".
 """
 from __future__ import annotations
 
+import logging
+
 from .base import ScoutSource, JobPost
 from .ashby import AshbyScout
 from .greenhouse import GreenhouseScout
 from .lever import LeverScout
 from .indeed import IndeedScout
 from .himalayas import HimalayasScout
-from .linkedin_public import LinkedInPublicScout
+
+_logger = logging.getLogger(__name__)
 
 REGISTERED_SOURCES: list[ScoutSource] = [
     AshbyScout(),
@@ -27,7 +30,21 @@ REGISTERED_SOURCES: list[ScoutSource] = [
     LeverScout(),
     IndeedScout(),
     HimalayasScout(),
-    LinkedInPublicScout(),
 ]
+
+# LinkedInPublicScout is registered conditionally. It depends on scrapling,
+# which in turn eagerly imports optional deps (curl_cffi, browserforge, ...)
+# that aren't always installable on every platform (Windows CI, minimal
+# installs). Lazy-import so the registry survives a missing dep and the
+# worker can still scout the five primary sources.
+try:
+    from .linkedin_public import LinkedInPublicScout
+    REGISTERED_SOURCES.append(LinkedInPublicScout())
+except ImportError as _e:
+    _logger.warning(
+        "LinkedInPublicScout unavailable — scout/__init__.py skipped it. "
+        "Missing optional dep: %s. Install scrapling + its transitives "
+        "(curl_cffi, browserforge) to enable.", _e,
+    )
 
 __all__ = ["ScoutSource", "JobPost", "REGISTERED_SOURCES"]
