@@ -885,6 +885,149 @@ export async function POST(request: NextRequest) {
         return apiSuccess(data || {});
       }
 
+      case "get_next_action": {
+        // Cloud-planner brain. Called by the worker every ~60s.
+        // Rules-first decision ladder; LLM fallback is Phase 3.
+        //
+        // Live state inputs:
+        //   - in_queue      active queue rows (pending/locked/in_progress)
+        //   - applied_today submissions since UTC midnight
+        //   - daily_cap     min of users.daily_apply_limit & default bundle.max_daily
+        //                   (null means no cap on that side)
+        //   - last_scout_*  last 3 scout decisions from worker_plan
+        //
+        // Writes one row to worker_plan with a 10-min expiry.
+
+        const utcMidnightIso = new Date().toISOString().slice(0, 10) + "T00:00:00Z";
+
+        const [queueRes, appliedRes, userRes, bundleRes, recentRes] = await Promise.all([
+          supabase
+            .from("application_queue")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", userId)
+            .in("status", ["pending", "locked", "in_progress"]),
+          supabase
+            .from("applications")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", userId)
+            .eq("status", "submitted")
+            .gte("applied_at", utcMidnightIso),
+          supabase
+            .from("users")
+            .select("daily_apply_limit")
+            .eq("id", userId)
+            .maybeSingle(),
+          supabase
+            .from("user_application_profiles")
+            .select("max_daily")
+            .eq("user_id", userId)
+            .eq("is_default", true)
+            .maybeSingle(),
+          supabase
+            .from("worker_plan")
+            .select("action, outcome, decided_at")
+            .eq("user_id", userId)
+            .order("decided_at", { ascending: false })
+            .limit(5),
+        ]);
+
+        const inQueue = queueRes.count ?? 0;
+        const appliedToday = appliedRes.count ?? 0;
+
+        // Null on either side = no cap on that side. Effective cap is the
+        // tighter one. If both null → unlimited.
+        const userCap = (userRes.data as { daily_apply_limit?: number | null } | null)?.daily_apply_limit ?? null;
+        const bundleCap = (bundleRes.data as { max_daily?: number | null } | null)?.max_daily ?? null;
+        const dailyCap: number | null =
+          userCap !== null && bundleCap !== null
+            ? Math.min(userCap, bundleCap)
+            : (userCap ?? bundleCap);
+
+        const recent = (recentRes.data as Array<{ action: string; outcome: string | null; decided_at: string }> | null) ?? [];
+        const recentScouts = recent.filter((r) => r.action.startsWith("scout_"));
+        const lastScoutAt = recentScouts[0]?.decided_at;
+        const lastScoutAgeMin = lastScoutAt
+          ? (Date.now() - new Date(lastScoutAt).getTime()) / 60000
+          : null;
+        const last3Scouts = recentScouts.slice(0, 3);
+        const allRecentScoutsEmpty =
+          last3Scouts.length >= 3 &&
+          last3Scouts.every((s) => s.outcome === "empty");
+
+        // Decision ladder
+        let plannedAction: string;
+        let reason: string;
+
+        if (dailyCap !== null && appliedToday >= dailyCap) {
+          plannedAction = "idle_until_midnight";
+          reason = `daily cap reached (${appliedToday}/${dailyCap})`;
+        } else if (inQueue > 0) {
+          plannedAction = "apply_next";
+          reason = `queue=${inQueue}, applied=${appliedToday}${dailyCap !== null ? "/" + dailyCap : ""}`;
+        } else if (allRecentScoutsEmpty) {
+          plannedAction = "scout_expand_boards";
+          reason = `3 consecutive empty scouts — try new companies`;
+        } else if (lastScoutAgeMin !== null && lastScoutAgeMin < 5) {
+          plannedAction = "scout_title_based";
+          reason = `queue empty, primary scout just ran — rotate to title-based`;
+        } else {
+          plannedAction = "scout_primary";
+          reason = lastScoutAgeMin === null
+            ? "queue empty, no scout on record — start"
+            : `queue empty, primary scout ${lastScoutAgeMin.toFixed(0)}m old`;
+        }
+
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+        const planInsert = await supabase
+          .from("worker_plan")
+          .insert({
+            user_id: userId,
+            action: plannedAction,
+            params: {},
+            expires_at: expiresAt,
+            reason,
+          })
+          .select("id, action, params, reason, expires_at")
+          .single();
+
+        if (planInsert.error || !planInsert.data) {
+          return apiError("internal_server_error", `plan insert failed: ${planInsert.error?.message ?? "no row returned"}`);
+        }
+
+        return apiSuccess({
+          plan_id: planInsert.data.id,
+          action: planInsert.data.action,
+          params: planInsert.data.params,
+          reason: planInsert.data.reason,
+          expires_at: planInsert.data.expires_at,
+          state: { in_queue: inQueue, applied_today: appliedToday, daily_cap: dailyCap },
+        });
+      }
+
+      case "report_plan_outcome": {
+        // Worker posts back after executing a plan. Outcome values match
+        // the CHECK constraint: success / empty / failed / skipped.
+        const planId = params.plan_id;
+        const outcome = params.outcome;
+        const detail = params.outcome_detail || null;
+        if (!planId || !outcome) {
+          return apiError("validation_error", "plan_id and outcome are required");
+        }
+        const { error } = await supabase
+          .from("worker_plan")
+          .update({
+            outcome,
+            outcome_detail: detail,
+            outcome_at: new Date().toISOString(),
+          })
+          .eq("id", planId)
+          .eq("user_id", userId);
+        if (error) {
+          return apiError("internal_server_error", error.message);
+        }
+        return apiSuccess({ ok: true });
+      }
+
       default:
         return apiError("validation_error", `Unknown action: ${action}`);
     }
