@@ -23,6 +23,15 @@ import {
   AlertTriangle, Sparkles, FileText, Copy, Upload, Download, ArrowLeft,
   Send, Mail, Cpu, CreditCard,
 } from "lucide-react"
+import {
+  Section,
+  FormRow,
+  PageHeader,
+  InlineHint,
+  StatusBadge,
+  fieldClass,
+  buttonClass,
+} from "@/components/settings-ui"
 
 type Tab = "ai" | "personal" | "work" | "preferences" | "profiles" | "resume" | "integrations"
   | "telegram" | "email" | "worker" | "billing" | "auth"
@@ -129,24 +138,25 @@ function Input({
   onChange,
   placeholder,
   type = "text",
+  hint,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   placeholder?: string
   type?: string
+  hint?: string
 }) {
   return (
-    <div>
-      <label className="mb-1.5 block text-sm font-medium text-card-foreground">{label}</label>
+    <FormRow label={label} hint={hint}>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+        className={fieldClass}
       />
-    </div>
+    </FormRow>
   )
 }
 
@@ -156,24 +166,25 @@ function TextArea({
   onChange,
   placeholder,
   rows = 3,
+  hint,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   placeholder?: string
   rows?: number
+  hint?: string
 }) {
   return (
-    <div>
-      <label className="mb-1.5 block text-sm font-medium text-card-foreground">{label}</label>
+    <FormRow label={label} hint={hint}>
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         rows={rows}
-        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+        className={cn(fieldClass, "resize-y min-h-20")}
       />
-    </div>
+    </FormRow>
   )
 }
 
@@ -663,12 +674,14 @@ export default function SettingsPage() {
             </button>
           </div>
         )}
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold text-foreground">Settings</h1>
+        <div className="flex items-center justify-between pb-1">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Settings</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Profiles, credentials, and worker configuration. Changes sync to the cloud automatically.
+            </p>
+          </div>
           <div className="flex items-center gap-3">
-            {/* Manual refresh button: re-pulls profile+integrations from
-                cloud on demand (same code path as the mount-time auto-sync
-                and the 5-min background loop). */}
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {lastSyncedAt && !syncing && (
                 <span>
@@ -685,7 +698,7 @@ export default function SettingsPage() {
                 onClick={syncAndReload}
                 disabled={syncing}
                 title="Pull latest from cloud + push local changes"
-                className="flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+                className={buttonClass.secondary}
               >
                 {syncing ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -707,7 +720,7 @@ export default function SettingsPage() {
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                className={buttonClass.primary}
               >
                 {saving ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -723,15 +736,15 @@ export default function SettingsPage() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 rounded-xl border border-border bg-card p-1 overflow-x-auto">
+        <div className="flex gap-0.5 rounded-md border border-border bg-card p-1 overflow-x-auto shadow-xs">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap",
+                "flex items-center gap-2 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors whitespace-nowrap",
                 activeTab === tab.id
-                  ? "bg-primary/10 text-primary"
+                  ? "bg-[var(--primary-subtle)] text-primary"
                   : "text-muted-foreground hover:bg-secondary hover:text-foreground"
               )}
             >
@@ -742,7 +755,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Tab content */}
-        <div className="rounded-xl border border-border bg-card p-6">
+        <div className="rounded-lg border border-border bg-card p-6 shadow-xs">
           {activeTab === "ai" && (
             <div className="space-y-5">
               <div>

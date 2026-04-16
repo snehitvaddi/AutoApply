@@ -1,7 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, Plus, X, Loader2, Check, AlertTriangle } from "lucide-react";
 import { WorkEducationEditor, type WorkExperienceRow, type EducationRow } from "./WorkEducationEditor";
+import {
+  Section,
+  SectionDivider,
+  FormRow,
+  FieldLabel,
+  InlineHint,
+  StatusBadge,
+  fieldClass,
+  buttonClass,
+} from "@/components/settings-ui";
+import { cn } from "@/lib/utils";
 
 type Profile = {
   id: string;
@@ -220,62 +232,95 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
   // card AND the new-profile draft. Keeping the form here as a closure
   // means the rendering JSX stays a single source of truth.
   const editorBody = (
-      <div className="space-y-3">
-        <TextField label="Profile name" value={draft.name || ""} onChange={(v) => setDraft({ ...draft, name: v })} />
-        <ChipField label="Target titles" values={draft.target_titles || []} onChange={(v) => setDraft({ ...draft, target_titles: v })} />
-        <ChipField label="Target keywords" values={draft.target_keywords || []} onChange={(v) => setDraft({ ...draft, target_keywords: v })} />
-        <ChipField label="Excluded titles" values={draft.excluded_titles || []} onChange={(v) => setDraft({ ...draft, excluded_titles: v })} />
-        <ChipField label="Excluded companies" values={draft.excluded_companies || []} onChange={(v) => setDraft({ ...draft, excluded_companies: v })} />
-        <ChipField label="Excluded role keywords" values={draft.excluded_role_keywords || []} onChange={(v) => setDraft({ ...draft, excluded_role_keywords: v })} />
-        <ChipField label="Excluded levels" values={draft.excluded_levels || []} onChange={(v) => setDraft({ ...draft, excluded_levels: v })} />
-        <ChipField label="Preferred locations" values={draft.preferred_locations || []} onChange={(v) => setDraft({ ...draft, preferred_locations: v })} />
+      <div className="space-y-5">
+        <Section
+          title="Essentials"
+          description="What to apply to. Profile name and at least one target title are required; everything else is optional."
+        >
+          <TextField
+            label="Profile name"
+            required
+            placeholder="e.g. AI Engineer · Remote US"
+            value={draft.name || ""}
+            onChange={(v) => setDraft({ ...draft, name: v })}
+          />
+          <ChipField
+            label="Target titles"
+            hint="Scout matches jobs whose title contains any of these. Required — add at least one."
+            values={draft.target_titles || []}
+            onChange={(v) => setDraft({ ...draft, target_titles: v })}
+          />
+          <ChipField
+            label="Target keywords"
+            hint="Optional: bias scout toward postings mentioning these words in the description."
+            values={draft.target_keywords || []}
+            onChange={(v) => setDraft({ ...draft, target_keywords: v })}
+          />
+          <SectionDivider label="Exclusions" />
+          <ChipField
+            label="Excluded titles"
+            values={draft.excluded_titles || []}
+            onChange={(v) => setDraft({ ...draft, excluded_titles: v })}
+          />
+          <ChipField
+            label="Excluded companies"
+            values={draft.excluded_companies || []}
+            onChange={(v) => setDraft({ ...draft, excluded_companies: v })}
+          />
+          <ChipField
+            label="Excluded role keywords"
+            values={draft.excluded_role_keywords || []}
+            onChange={(v) => setDraft({ ...draft, excluded_role_keywords: v })}
+          />
+          <ChipField
+            label="Excluded levels"
+            hint="e.g. Senior, Staff, Principal — to filter out roles above your stage."
+            values={draft.excluded_levels || []}
+            onChange={(v) => setDraft({ ...draft, excluded_levels: v })}
+          />
+          <SectionDivider label="Location & compensation" />
+          <ChipField
+            label="Preferred locations"
+            values={draft.preferred_locations || []}
+            onChange={(v) => setDraft({ ...draft, preferred_locations: v })}
+          />
+          <div className="flex flex-wrap items-center gap-5">
+            <label className="inline-flex items-center gap-2 text-[13px] text-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-[var(--border-strong)] text-primary focus:ring-primary/40"
+                checked={!!draft.remote_only}
+                onChange={(e) => setDraft({ ...draft, remote_only: e.target.checked })}
+              />
+              Remote only
+            </label>
+            <label className="inline-flex items-center gap-2 text-[13px] text-foreground">
+              <span>Min salary</span>
+              <input
+                type="number"
+                className={cn(fieldClass, "w-32")}
+                placeholder="no floor"
+                value={draft.min_salary ?? ""}
+                onChange={(e) => setDraft({ ...draft, min_salary: e.target.value ? parseInt(e.target.value) : null })}
+              />
+            </label>
+          </div>
+        </Section>
 
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.remote_only} onChange={(e) => setDraft({ ...draft, remote_only: e.target.checked })} /> Remote only</label>
-          <label className="flex items-center gap-2 text-sm">Min salary
-            <input
-              type="number"
-              className="border rounded px-2 py-1 w-28 bg-background"
-              value={draft.min_salary ?? ""}
-              onChange={(e) => setDraft({ ...draft, min_salary: e.target.value ? parseInt(e.target.value) : null })}
-            />
-          </label>
-        </div>
-
-        {/* Per-bundle board overrides — mirrors the web copy 1:1 so
-            the UX matches whether the user opens Settings on the web
-            or in the desktop app. */}
-        <div className="border-t pt-3 mt-2">
-          <h3 className="text-sm font-semibold mb-1">Board overrides (optional)</h3>
-          <p className="text-xs text-muted-foreground mb-2">
-            Most users leave this blank. Only fill in if you want this profile to scout a specific subset of companies instead of the global default list.
-          </p>
-          <details className="mb-3 text-xs text-muted-foreground">
-            <summary className="cursor-pointer text-foreground hover:text-primary">What&apos;s a board?</summary>
-            <div className="mt-2 pl-3 border-l-2 border-border space-y-1">
-              <p>
-                <strong>Ashby</strong> and <strong>Greenhouse</strong> are job-board platforms. Companies host their job postings under a slug like <code className="bg-muted px-1 rounded">jobs.ashbyhq.com/<span className="text-primary">openai</span></code> or <code className="bg-muted px-1 rounded">boards.greenhouse.io/<span className="text-primary">stripe</span></code>.
-              </p>
-              <p>Leaving these fields blank means ApplyLoop scouts a curated list of ~hundreds of company slugs we maintain.</p>
-              <p>Override only when you want to scope this profile tightly — e.g. <em>&quot;my Data Analyst bundle should only watch Stripe + Datadog + Airbnb&quot;</em>.</p>
-              <p><strong>Format:</strong> just the company slug, not the full URL. <code className="bg-muted px-1 rounded">stripe</code>, not <code className="bg-muted px-1 rounded">boards.greenhouse.io/stripe</code>.</p>
-            </div>
-          </details>
-          <ChipField label="Ashby boards" values={draft.ashby_boards || []} onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })} />
-          <ChipField label="Greenhouse boards" values={draft.greenhouse_boards || []} onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })} />
-        </div>
-
-        {/* Resume — inline upload + pool dropdown. Replaces the
-            removed top-level Resumes tab. Pool is unchanged in the DB
-            (user_resumes table); this just moves the UX into the
-            profile so each bundle binds its PDF in one place. */}
-        <div className="border-t pt-3 mt-2">
-          <h3 className="text-sm font-semibold mb-1">Resume</h3>
-          <p className="text-xs text-muted-foreground mb-2">PDF used when applying via this profile.</p>
-          <select className="border rounded px-2 py-1 w-full bg-background mb-2" value={draft.resume_id || ""} onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}>
-            <option value="">(none)</option>
-            {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
-          </select>
+        <Section
+          title="Resume"
+          description="PDF used when applying via this profile. Uploads go into the shared resume pool so other profiles can pick from the same set."
+        >
+          <FormRow label="Active resume">
+            <select
+              className={fieldClass}
+              value={draft.resume_id || ""}
+              onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}
+            >
+              <option value="">(none)</option>
+              {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
+            </select>
+          </FormRow>
           <DesktopInlineResumeUpload
             profileId={editingId !== "__new__" ? editingId : null}
             onUploaded={(rid) => { setDraft((d) => ({ ...d, resume_id: rid })); load(); }}
@@ -286,36 +331,34 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
                 education: (parsed.education as never) || d.education,
                 skills: (parsed.skills as never) || d.skills,
               }));
-              // Force the WorkEducationEditor to remount so its internal
-              // state re-syncs from `initial` cleanly — same anti-loop
-              // pattern as the web tab.
               setParseSeq((n) => n + 1);
             }}
           />
-        </div>
+        </Section>
 
-        {/* Apply-from Gmail — mirrors the web two-mode radio UX so the
-            relationship between "saved account" and "new account" is
-            obvious instead of a confusing pool dropdown + opaque
-            "(use inline email)" placeholder. */}
-        <div className="border-t pt-3 mt-2">
-          <h3 className="text-sm font-semibold mb-1">Apply-from Gmail</h3>
-          <p className="text-xs text-muted-foreground mb-3">
-            This profile sends applications from this Gmail account. Each profile uses its own mailbox so OTP codes route correctly.{" "}
-            <span className="text-muted-foreground/70">Need an app password? Enable 2FA on your Google account, then generate one at <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="underline">myaccount.google.com/apppasswords</a>.</span>
-          </p>
-
+        <Section
+          title="Apply-from Gmail"
+          description="This profile sends applications from this mailbox. OTP codes route back here, so each profile should use its own dedicated Gmail."
+        >
+          <InlineHint variant="info">
+            Need an app password? Enable 2FA on your Google account, then generate one at{" "}
+            <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
+              myaccount.google.com/apppasswords
+            </a>
+            .
+          </InlineHint>
           {(() => {
             const hasPool = emailAccounts.length > 0;
             const mode = draft.email_account_id ? "saved" : "new";
             return (
               <div className="space-y-3">
                 {hasPool && (
-                  <div className="flex gap-4 text-sm">
-                    <label className="flex items-center gap-2">
+                  <div className="flex flex-wrap gap-x-5 gap-y-2">
+                    <label className="inline-flex items-center gap-2 text-[13px] text-foreground cursor-pointer">
                       <input
                         type="radio"
                         name={`gmail-mode-${editingId || "new"}`}
+                        className="h-4 w-4 text-primary focus:ring-primary/40"
                         checked={mode === "saved"}
                         onChange={() => setDraft({
                           ...draft,
@@ -326,10 +369,11 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
                       />
                       Use a saved Gmail account
                     </label>
-                    <label className="flex items-center gap-2">
+                    <label className="inline-flex items-center gap-2 text-[13px] text-foreground cursor-pointer">
                       <input
                         type="radio"
                         name={`gmail-mode-${editingId || "new"}`}
+                        className="h-4 w-4 text-primary focus:ring-primary/40"
                         checked={mode === "new"}
                         onChange={() => setDraft({ ...draft, email_account_id: null })}
                       />
@@ -339,10 +383,12 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
                 )}
 
                 {mode === "saved" && hasPool && (
-                  <div>
-                    <label className="text-sm font-medium block mb-1">Saved account</label>
+                  <FormRow
+                    label="Saved account"
+                    hint="Rotating the password? Switch to 'Enter a new account' with the same email — it'll update the saved entry."
+                  >
                     <select
-                      className="border rounded px-2 py-1 w-full bg-background"
+                      className={fieldClass}
                       value={draft.email_account_id || ""}
                       onChange={(e) => setDraft({ ...draft, email_account_id: e.target.value || null })}
                     >
@@ -352,44 +398,44 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
                         </option>
                       ))}
                     </select>
-                    <p className="text-xs text-muted-foreground mt-1">Rotating the password? Switch to <strong>Enter a new account</strong> with the same email — it&apos;ll update the saved entry.</p>
-                  </div>
+                  </FormRow>
                 )}
 
                 {mode === "new" && (
                   <>
                     <TextField
                       label="Gmail address"
+                      placeholder="you@gmail.com"
                       value={draft.application_email || ""}
                       onChange={(v) => setDraft({ ...draft, application_email: v })}
                     />
                     <TextField
-                      label={draft.has_app_password ? "Gmail app password (stored ✓ — leave blank to keep)" : "Gmail app password"}
+                      label="Gmail app password"
                       type="password"
                       autoComplete="new-password"
+                      placeholder={draft.has_app_password ? "Leave blank to keep the saved password" : "16-character app password"}
+                      status={draft.has_app_password ? <StatusBadge variant="success">Saved</StatusBadge> : undefined}
+                      hint={draft.has_app_password ? "A password is already stored. Leave blank to keep it." : undefined}
                       value={draft.application_email_app_password || ""}
                       onChange={(v) => setDraft({ ...draft, application_email_app_password: v })}
                     />
                     {!hasPool && (
-                      <p className="text-xs text-muted-foreground">This is your first Gmail. After saving, it&apos;ll appear in a <em>Saved accounts</em> picker for any other profiles you create.</p>
+                      <p className="text-xs text-muted-foreground">
+                        This is your first Gmail. After saving, it&apos;ll appear in a <em>Saved accounts</em> picker for any other profiles you create.
+                      </p>
                     )}
                   </>
                 )}
               </div>
             );
           })()}
-        </div>
+        </Section>
 
-        {/* Per-role Work & Education (mig 020). Each bundle tells a
-            different story — AI Eng emphasizes ML wins, DA emphasizes
-            pipelines. Controlled mode: editor fires onChange, profile
-            Save button persists to user_application_profiles. */}
-        <div className="border-t pt-3 mt-2">
-          <h3 className="text-sm font-semibold mb-2">Per-role work & education</h3>
+        <Section
+          title="Work history & education"
+          description="Per-profile story — each bundle can highlight different achievements (AI Eng vs DA etc.). Upload a PDF above to auto-fill via AI."
+        >
           <WorkEducationEditor
-            // key bumps on every parse → editor remounts → its internal
-            // state re-syncs cleanly from `initial`. Anti-loop pattern
-            // mirrored from the web ProfilesTab.
             key={`woe-${editingId}-${parseSeq}`}
             initial={{
               work_experience: draft.work_experience || [],
@@ -403,63 +449,109 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
               skills: next.skills,
             }))}
           />
-        </div>
+        </Section>
 
-        {/* Per-role content — answer key + cover letter. Different per
-            bundle so "Why AI Engineering?" doesn't leak onto a DA app. */}
-        <div className="border-t pt-3 mt-2">
-          <h3 className="text-sm font-semibold mb-2">Per-role content</h3>
-          <div className="mb-3">
-            <label className="text-sm font-medium block mb-1">
-              Answer key (JSON)
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
-                Role-specific answers.
-              </span>
-            </label>
+        <Section
+          title="Cover letter & answer key"
+          description="Role-specific content so 'Why AI Engineering?' doesn't leak onto a Data Analyst app."
+        >
+          <FormRow
+            label="Answer key (JSON)"
+            hint="Role-specific answers the applier reuses on every submission."
+            error={answerKeyError}
+          >
             <textarea
               rows={6}
               placeholder={'{\n  "why_interested": "Because..."\n}'}
-              className="border rounded px-2 py-1 w-full bg-background font-mono text-xs"
+              className={cn(fieldClass, "font-mono text-xs resize-y min-h-28")}
               value={answerKeyText}
               onChange={(e) => { setAnswerKeyText(e.target.value); setAnswerKeyError(""); }}
             />
-            {answerKeyError && <p className="text-xs text-destructive mt-1">⚠ {answerKeyError}</p>}
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1">Cover letter template</label>
+          </FormRow>
+          <FormRow
+            label="Cover letter template"
+            hint="Leave blank to inherit the default profile's template."
+          >
             <textarea
               rows={6}
               placeholder="Dear {hiring_manager},&#10;&#10;I'm excited to apply for {role} at {company}..."
-              className="border rounded px-2 py-1 w-full bg-background text-sm"
+              className={cn(fieldClass, "resize-y min-h-28")}
               value={draft.cover_letter_template || ""}
               onChange={(e) => setDraft({ ...draft, cover_letter_template: e.target.value || null })}
             />
-            <p className="text-xs text-muted-foreground mt-1">
-              Leave blank to inherit the default profile&apos;s template.
-            </p>
+          </FormRow>
+        </Section>
+
+        <Section
+          title="Board overrides (optional)"
+          description="Leave blank to use the global curated list. Only fill in if this profile should scout a specific subset of companies."
+          tone="subtle"
+        >
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer text-foreground hover:text-primary font-medium text-[13px]">
+              What&apos;s a board?
+            </summary>
+            <div className="mt-2 pl-3 border-l-2 border-border space-y-1 leading-relaxed">
+              <p>
+                <strong className="text-foreground">Ashby</strong> and <strong className="text-foreground">Greenhouse</strong> are job-board platforms. Companies host their job postings under a slug like{" "}
+                <code className="bg-muted px-1 rounded font-mono text-[11px]">jobs.ashbyhq.com/<span className="text-primary">openai</span></code> or{" "}
+                <code className="bg-muted px-1 rounded font-mono text-[11px]">boards.greenhouse.io/<span className="text-primary">stripe</span></code>.
+              </p>
+              <p>Leaving these fields blank means ApplyLoop scouts a curated list of ~hundreds of company slugs we maintain.</p>
+              <p><strong className="text-foreground">Format:</strong> just the company slug, not the full URL. <code className="bg-muted px-1 rounded font-mono text-[11px]">stripe</code>, not <code className="bg-muted px-1 rounded font-mono text-[11px]">boards.greenhouse.io/stripe</code>.</p>
+            </div>
+          </details>
+          <ChipField
+            label="Ashby boards"
+            values={draft.ashby_boards || []}
+            onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })}
+          />
+          <ChipField
+            label="Greenhouse boards"
+            values={draft.greenhouse_boards || []}
+            onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })}
+          />
+        </Section>
+
+        <Section
+          title="Profile controls"
+        >
+          <div className="flex flex-wrap items-center gap-5">
+            <label className="inline-flex items-center gap-2 text-[13px] text-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-[var(--border-strong)] text-primary focus:ring-primary/40"
+                checked={draft.auto_apply !== false}
+                onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })}
+              />
+              Active
+              <span className="text-xs text-muted-foreground ml-1">(auto-apply enabled)</span>
+            </label>
+            <label className="inline-flex items-center gap-2 text-[13px] text-foreground">
+              <span>Max daily applications</span>
+              <input
+                type="number"
+                min={0}
+                placeholder="no cap"
+                className={cn(fieldClass, "w-28")}
+                value={draft.max_daily ?? ""}
+                onChange={(e) => setDraft({ ...draft, max_daily: e.target.value ? parseInt(e.target.value) : null })}
+              />
+            </label>
           </div>
-        </div>
+        </Section>
 
-        <div className="flex items-center gap-4 pt-2 border-t">
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={draft.auto_apply !== false} onChange={(e) => setDraft({ ...draft, auto_apply: e.target.checked })} /> Active
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            Max daily
-            <input
-              type="number"
-              min={0}
-              placeholder="no cap"
-              className="border rounded px-2 py-1 w-24 bg-background"
-              value={draft.max_daily ?? ""}
-              onChange={(e) => setDraft({ ...draft, max_daily: e.target.value ? parseInt(e.target.value) : null })}
-            />
-          </label>
-        </div>
-
-        <div className="flex gap-2 pt-2">
-          <button onClick={save} className="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground">Save</button>
-          <button onClick={() => { setEditingId(null); setDraft({}); }} className="px-4 py-2 text-sm rounded-lg border">Cancel</button>
+        <div className="flex items-center gap-2 pt-2">
+          <button type="button" onClick={save} className={buttonClass.primary}>
+            Save profile
+          </button>
+          <button
+            type="button"
+            onClick={() => { setEditingId(null); setDraft({}); }}
+            className={buttonClass.secondary}
+          >
+            Cancel
+          </button>
         </div>
       </div>
   );
@@ -478,17 +570,24 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Each bundle binds its own resume, apply-from email, and target titles. Click a card to expand and edit.</p>
-        <button onClick={startCreate} className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground">+ Add</button>
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
+          Each profile binds its own resume, apply-from email, and target titles. Click a card to expand and edit.
+        </p>
+        <button type="button" onClick={startCreate} className={buttonClass.primary}>
+          <Plus className="h-4 w-4" />
+          New profile
+        </button>
       </div>
 
-      {/* New-profile draft renders as a top-of-list expanded card. */}
       {editingId === "__new__" && (
-        <div className="border-2 border-primary/40 rounded-lg overflow-hidden">
-          <div className="p-3 bg-primary/5 text-sm font-medium text-foreground">+ New profile</div>
-          <div className="px-4 pb-4 pt-2 border-t bg-muted/30">{editorBody}</div>
+        <div className="rounded-lg border-2 border-primary/40 bg-card overflow-hidden shadow-sm">
+          <div className="flex items-center gap-2 px-4 py-3 bg-[var(--primary-subtle)] border-b border-primary/20">
+            <Plus className="h-4 w-4 text-primary" />
+            <span className="text-sm font-semibold text-foreground">New profile</span>
+          </div>
+          <div className="p-4">{editorBody}</div>
         </div>
       )}
 
@@ -498,43 +597,87 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
         const resumeMissing = !!p.resume_id && !resumeFile;
         const noEmail = !p.application_email && !p.email_account_id;
         return (
-        <div key={p.id} className="border rounded-lg overflow-hidden">
-          {/* Card header — click to expand. Action buttons stop
-              propagation so default/delete don't toggle the card. */}
           <div
-            role="button"
-            tabIndex={0}
-            onClick={() => (isExpanded ? cancelEdit() : startEdit(p))}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); isExpanded ? cancelEdit() : startEdit(p); } }}
-            className="p-3 flex items-start justify-between cursor-pointer hover:bg-muted/40 select-none"
+            key={p.id}
+            className={cn(
+              "rounded-lg border bg-card overflow-hidden shadow-xs transition-shadow",
+              isExpanded ? "border-primary/40 shadow-sm" : "border-border hover:shadow-sm",
+            )}
           >
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-muted-foreground text-xs">{isExpanded ? "▼" : "▶"}</span>
-                <span className="font-medium">{p.name}</span>
-                {p.is_default && <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">DEFAULT</span>}
-                {!p.auto_apply && <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">paused</span>}
-                {resumeMissing && <span className="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded">⚠ missing resume</span>}
-                {noEmail && <span className="text-xs bg-warning/10 text-warning px-2 py-0.5 rounded">no apply email</span>}
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => (isExpanded ? cancelEdit() : startEdit(p))}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); isExpanded ? cancelEdit() : startEdit(p); } }}
+              className="flex items-start justify-between gap-3 p-4 cursor-pointer hover:bg-secondary/60 select-none transition-colors"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isExpanded
+                    ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                    : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
+                  <span className="font-semibold text-[15px] text-foreground truncate">{p.name}</span>
+                  {p.is_default && <StatusBadge variant="success">Default</StatusBadge>}
+                  {!p.auto_apply && <StatusBadge>Paused</StatusBadge>}
+                  {resumeMissing && (
+                    <StatusBadge variant="error">
+                      <AlertTriangle className="h-3 w-3" />
+                      Missing resume
+                    </StatusBadge>
+                  )}
+                  {noEmail && (
+                    <StatusBadge variant="warn">
+                      <AlertTriangle className="h-3 w-3" />
+                      No apply email
+                    </StatusBadge>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1.5 ml-6 truncate font-mono">
+                  {p.application_email || "no email"}
+                  <span className="text-border mx-2">·</span>
+                  {(p.target_titles || []).slice(0, 3).join(", ") || "no titles"}
+                  <span className="text-border mx-2">·</span>
+                  resume: {resumeFile || (resumeMissing ? "deleted" : "none")}
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground mt-1 ml-4">
-                {p.application_email || "no email"} · {(p.target_titles || []).slice(0, 3).join(", ") || "no titles"} · resume: {resumeFile || (resumeMissing ? "⚠ deleted" : "none")}
+              <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                {!p.is_default && (
+                  <button
+                    type="button"
+                    onClick={() => setDefault(p.id)}
+                    className={buttonClass.ghost}
+                  >
+                    Make default
+                  </button>
+                )}
+                {!p.is_default && (
+                  <button
+                    type="button"
+                    onClick={() => del(p.id)}
+                    className={buttonClass.destructive}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
-            <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-              {!p.is_default && <button onClick={() => setDefault(p.id)} className="text-xs text-primary hover:underline">Default</button>}
-              {!p.is_default && <button onClick={() => del(p.id)} className="text-xs text-destructive hover:underline">Delete</button>}
-            </div>
+            {isExpanded && (
+              <div className="px-4 pb-4 pt-1 border-t border-border">
+                {editorBody}
+              </div>
+            )}
           </div>
-          {isExpanded && (
-            <div className="px-4 pb-4 pt-2 border-t bg-muted/30">
-              {editorBody}
-            </div>
-          )}
-        </div>
         );
       })}
-      {profiles.length === 0 && <div className="text-sm text-muted-foreground">No profiles yet.</div>}
+      {profiles.length === 0 && editingId !== "__new__" && (
+        <div className="rounded-lg border border-dashed border-border bg-[var(--card-subtle)] p-8 text-center">
+          <p className="text-sm text-muted-foreground mb-3">No profiles yet.</p>
+          <button type="button" onClick={startCreate} className={buttonClass.primary}>
+            <Plus className="h-4 w-4" />
+            Create your first profile
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -653,37 +796,69 @@ function DesktopInlineResumeUpload({
           type="file"
           accept=".pdf,application/pdf"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
-          className="text-xs flex-1"
+          className={cn(
+            fieldClass,
+            "flex-1 text-xs p-1.5 file:mr-2 file:rounded file:border-0 file:bg-secondary file:px-2 file:py-1 file:text-xs file:text-foreground hover:file:bg-muted",
+          )}
           disabled={phase !== "idle"}
         />
         <button
           type="button"
           onClick={upload}
           disabled={!file || phase !== "idle"}
-          className="text-xs px-3 py-1 rounded border bg-background hover:bg-muted disabled:opacity-50"
+          className={buttonClass.secondary}
         >
+          {phase !== "idle" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {buttonLabel}
         </button>
       </div>
       {phase === "parsing" && (
-        <p className="text-xs text-muted-foreground">⏳ Reading your resume with AI to fill Work Experience, Education, and Skills below…</p>
+        <InlineHint variant="info">Reading your resume with AI to fill Work Experience, Education, and Skills below…</InlineHint>
       )}
-      {success && <p className="text-xs text-green-600">✓ {success}</p>}
-      {error && <p className="text-xs text-destructive">⚠ {error}</p>}
+      {success && (
+        <p className="text-xs text-[color:var(--success)] inline-flex items-center gap-1">
+          <Check className="h-3 w-3" />
+          {success}
+        </p>
+      )}
+      {error && (
+        <p className="text-xs text-destructive inline-flex items-center gap-1">
+          <AlertTriangle className="h-3 w-3" />
+          {error}
+        </p>
+      )}
     </div>
   );
 }
 
-function TextField({ label, value, onChange, type = "text", autoComplete }: { label: string; value: string; onChange: (v: string) => void; type?: string; autoComplete?: string }) {
+function TextField({
+  label, value, onChange, type = "text", autoComplete, placeholder, required, hint, status,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  type?: string
+  autoComplete?: string
+  placeholder?: string
+  required?: boolean
+  hint?: string
+  status?: React.ReactNode
+}) {
   return (
-    <div>
-      <label className="text-sm font-medium block mb-1">{label}</label>
-      <input type={type} autoComplete={autoComplete} className="border rounded px-2 py-1 w-full bg-background" value={value} onChange={(e) => onChange(e.target.value)} />
-    </div>
+    <FormRow label={label} required={required} hint={hint} status={status}>
+      <input
+        type={type}
+        autoComplete={autoComplete}
+        placeholder={placeholder}
+        className={fieldClass}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </FormRow>
   );
 }
 
-function ChipField({ label, values, onChange }: { label: string; values: string[]; onChange: (v: string[]) => void }) {
+function ChipField({ label, values, onChange, hint, placeholder = "type + Enter" }: { label: string; values: string[]; onChange: (v: string[]) => void; hint?: string; placeholder?: string }) {
   const [buf, setBuf] = useState("");
   const commit = () => {
     const parts = buf.split(",").map((s) => s.trim()).filter(Boolean);
@@ -691,16 +866,40 @@ function ChipField({ label, values, onChange }: { label: string; values: string[
     setBuf("");
   };
   return (
-    <div>
-      <label className="text-sm font-medium block mb-1">{label}</label>
-      <div className="flex flex-wrap gap-1 mb-1">
-        {(values || []).map((v, i) => (
-          <span key={i} className="text-xs bg-muted rounded px-2 py-0.5 flex items-center gap-1">
-            {v}<button onClick={() => onChange((values || []).filter((_, j) => j !== i))}>×</button>
-          </span>
-        ))}
-      </div>
-      <input className="border rounded px-2 py-1 w-full bg-background" value={buf} onChange={(e) => setBuf(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); commit(); } }} onBlur={commit} placeholder="type + Enter" />
-    </div>
+    <FormRow label={label} hint={hint}>
+      {(values || []).length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {(values || []).map((v, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1 rounded-md bg-secondary border border-border px-2 py-0.5 text-[12px] text-foreground"
+            >
+              {v}
+              <button
+                type="button"
+                aria-label={`Remove ${v}`}
+                onClick={() => onChange((values || []).filter((_, j) => j !== i))}
+                className="text-muted-foreground hover:text-destructive rounded p-0.5 transition-colors"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        className={fieldClass}
+        value={buf}
+        onChange={(e) => setBuf(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+        onBlur={commit}
+        placeholder={placeholder}
+      />
+    </FormRow>
   );
 }

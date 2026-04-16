@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Trash2, Plus, ArrowUp, ArrowDown } from "lucide-react";
+import { Trash2, Plus, ArrowUp, ArrowDown, X } from "lucide-react";
+import { fieldClass, buttonClass, FieldLabel, StatusBadge } from "@/components/settings-ui";
+import { cn } from "@/lib/utils";
 
 // Desktop Work & Education tab: row-based editors for work_experience[] +
 // education[] + skills[]. Ports the web equivalent 1:1 so users on the
@@ -166,13 +168,19 @@ export function WorkEducationEditor({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Work Experience */}
-      <section>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold">Work Experience</h3>
-          <button onClick={addWork} className="text-xs px-2 py-1 rounded-lg border hover:bg-muted flex items-center gap-1">
-            <Plus className="h-3 w-3" /> Add
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h4 className="text-[13px] font-semibold text-foreground tracking-tight">
+            Work experience
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              {workRows.length} {workRows.length === 1 ? "role" : "roles"}
+            </span>
+          </h4>
+          <button type="button" onClick={addWork} className={buttonClass.secondary}>
+            <Plus className="h-3.5 w-3.5" />
+            Add role
           </button>
         </div>
         {workRows.length === 0 && (
@@ -180,33 +188,48 @@ export function WorkEducationEditor({
         )}
         <div className="space-y-3">
           {workRows.map((row, i) => (
-            <div key={i} className="border rounded-lg p-3 space-y-2">
-              <div className="grid grid-cols-2 gap-2">
+            <div
+              key={i}
+              className="rounded-md border border-border bg-[var(--card-subtle)] p-3 space-y-3"
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <LabelInput label="Company" value={row.company} onChange={(v) => updateWork(i, { company: v })} />
                 <LabelInput label="Title" value={row.title} onChange={(v) => updateWork(i, { title: v })} />
                 <LabelInput label="Location" value={row.location || ""} onChange={(v) => updateWork(i, { location: v })} />
                 <LabelInput label="Start (YYYY-MM)" value={row.start_date || ""} onChange={(v) => updateWork(i, { start_date: v })} />
                 <LabelInput label="End (YYYY-MM or Present)" value={row.end_date || ""} onChange={(v) => updateWork(i, { end_date: v })} />
-                <label className="flex items-center gap-2 text-xs self-end">
-                  <input type="checkbox" checked={!!row.current} onChange={(e) => updateWork(i, { current: e.target.checked })} /> Current
+                <label className="inline-flex items-center gap-2 text-[13px] text-foreground self-end pb-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-[var(--border-strong)] text-primary focus:ring-primary/40"
+                    checked={!!row.current}
+                    onChange={(e) => updateWork(i, { current: e.target.checked })}
+                  />
+                  Current role
                 </label>
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium">Achievements</label>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <FieldLabel>Achievements</FieldLabel>
                   <button
+                    type="button"
                     onClick={() => updateWork(i, { achievements: [...(row.achievements || []), ""] })}
-                    className="text-xs px-2 py-0.5 rounded border hover:bg-muted"
+                    className={buttonClass.ghost}
                   >
-                    + Bullet
+                    <Plus className="h-3 w-3" />
+                    Add bullet
                   </button>
                 </div>
+                {(row.achievements || []).length === 0 && (
+                  <p className="text-xs text-muted-foreground">No bullets yet.</p>
+                )}
                 {(row.achievements || []).map((a, bi) => (
-                  <div key={bi} className="flex gap-1 mb-1">
+                  <div key={bi} className="flex gap-1.5 items-start">
                     <input
-                      className="flex-1 border rounded px-2 py-1 text-xs bg-background"
+                      className={cn(fieldClass, "flex-1 text-xs")}
                       value={a}
+                      placeholder="e.g. Shipped X that improved Y by Z%"
                       onChange={(e) => {
                         const next = [...(row.achievements || [])];
                         next[bi] = e.target.value;
@@ -214,26 +237,29 @@ export function WorkEducationEditor({
                       }}
                     />
                     <button
+                      type="button"
                       onClick={() =>
                         updateWork(i, { achievements: (row.achievements || []).filter((_, x) => x !== bi) })
                       }
-                      className="text-destructive hover:bg-muted rounded px-1"
+                      className={cn(buttonClass.destructive, "mt-0.5")}
+                      aria-label="Remove bullet"
                     >
-                      <Trash2 className="h-3 w-3" />
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
               </div>
 
-              <div className="flex gap-1">
-                <button onClick={() => moveWork(i, -1)} className="text-xs p-1 rounded border hover:bg-muted" disabled={i === 0}>
-                  <ArrowUp className="h-3 w-3" />
+              <div className="flex items-center gap-1 pt-1 border-t border-border">
+                <button type="button" onClick={() => moveWork(i, -1)} className={cn(buttonClass.ghost, "px-1.5")} disabled={i === 0} aria-label="Move up">
+                  <ArrowUp className="h-3.5 w-3.5" />
                 </button>
-                <button onClick={() => moveWork(i, 1)} className="text-xs p-1 rounded border hover:bg-muted" disabled={i === workRows.length - 1}>
-                  <ArrowDown className="h-3 w-3" />
+                <button type="button" onClick={() => moveWork(i, 1)} className={cn(buttonClass.ghost, "px-1.5")} disabled={i === workRows.length - 1} aria-label="Move down">
+                  <ArrowDown className="h-3.5 w-3.5" />
                 </button>
-                <button onClick={() => removeWork(i)} className="text-xs p-1 rounded border text-destructive hover:bg-muted ml-auto">
-                  <Trash2 className="h-3 w-3" />
+                <button type="button" onClick={() => removeWork(i)} className={cn(buttonClass.destructive, "ml-auto")} aria-label="Remove role">
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Remove
                 </button>
               </div>
             </div>
@@ -242,11 +268,17 @@ export function WorkEducationEditor({
       </section>
 
       {/* Education */}
-      <section>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold">Education</h3>
-          <button onClick={addEdu} className="text-xs px-2 py-1 rounded-lg border hover:bg-muted flex items-center gap-1">
-            <Plus className="h-3 w-3" /> Add
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h4 className="text-[13px] font-semibold text-foreground tracking-tight">
+            Education
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              {eduRows.length} {eduRows.length === 1 ? "entry" : "entries"}
+            </span>
+          </h4>
+          <button type="button" onClick={addEdu} className={buttonClass.secondary}>
+            <Plus className="h-3.5 w-3.5" />
+            Add school
           </button>
         </div>
         {eduRows.length === 0 && (
@@ -254,24 +286,28 @@ export function WorkEducationEditor({
         )}
         <div className="space-y-3">
           {eduRows.map((row, i) => (
-            <div key={i} className="border rounded-lg p-3 space-y-2">
-              <div className="grid grid-cols-2 gap-2">
+            <div
+              key={i}
+              className="rounded-md border border-border bg-[var(--card-subtle)] p-3 space-y-3"
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <LabelInput label="School" value={row.school} onChange={(v) => updateEdu(i, { school: v })} />
                 <LabelInput label="Degree" value={row.degree} onChange={(v) => updateEdu(i, { degree: v })} />
-                <LabelInput label="Field of Study" value={row.field || ""} onChange={(v) => updateEdu(i, { field: v })} />
+                <LabelInput label="Field of study" value={row.field || ""} onChange={(v) => updateEdu(i, { field: v })} />
                 <LabelInput label="GPA" value={row.gpa || ""} onChange={(v) => updateEdu(i, { gpa: v })} />
                 <LabelInput label="Start (YYYY-MM)" value={row.start_date || ""} onChange={(v) => updateEdu(i, { start_date: v })} />
                 <LabelInput label="End (YYYY-MM)" value={row.end_date || ""} onChange={(v) => updateEdu(i, { end_date: v })} />
               </div>
-              <div className="flex gap-1">
-                <button onClick={() => moveEdu(i, -1)} className="text-xs p-1 rounded border hover:bg-muted" disabled={i === 0}>
-                  <ArrowUp className="h-3 w-3" />
+              <div className="flex items-center gap-1 pt-1 border-t border-border">
+                <button type="button" onClick={() => moveEdu(i, -1)} className={cn(buttonClass.ghost, "px-1.5")} disabled={i === 0} aria-label="Move up">
+                  <ArrowUp className="h-3.5 w-3.5" />
                 </button>
-                <button onClick={() => moveEdu(i, 1)} className="text-xs p-1 rounded border hover:bg-muted" disabled={i === eduRows.length - 1}>
-                  <ArrowDown className="h-3 w-3" />
+                <button type="button" onClick={() => moveEdu(i, 1)} className={cn(buttonClass.ghost, "px-1.5")} disabled={i === eduRows.length - 1} aria-label="Move down">
+                  <ArrowDown className="h-3.5 w-3.5" />
                 </button>
-                <button onClick={() => removeEdu(i)} className="text-xs p-1 rounded border text-destructive hover:bg-muted ml-auto">
-                  <Trash2 className="h-3 w-3" />
+                <button type="button" onClick={() => removeEdu(i)} className={cn(buttonClass.destructive, "ml-auto")} aria-label="Remove education">
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Remove
                 </button>
               </div>
             </div>
@@ -280,23 +316,35 @@ export function WorkEducationEditor({
       </section>
 
       {/* Skills */}
-      <section>
-        <h3 className="text-sm font-semibold mb-2">Skills</h3>
-        <div className="flex flex-wrap gap-1 mb-2">
-          {skills.map((s, i) => (
-            <span key={i} className="text-xs bg-muted rounded px-2 py-0.5 flex items-center gap-1">
-              {s}
-              <button
-                onClick={() => setSkills((prev) => prev.filter((_, idx) => idx !== i))}
-                className="hover:text-destructive"
+      <section className="space-y-2">
+        <h4 className="text-[13px] font-semibold text-foreground tracking-tight">
+          Skills
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            {skills.length}
+          </span>
+        </h4>
+        {skills.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {skills.map((s, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 rounded-md bg-secondary border border-border px-2 py-0.5 text-[12px] text-foreground"
               >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
+                {s}
+                <button
+                  type="button"
+                  onClick={() => setSkills((prev) => prev.filter((_, idx) => idx !== i))}
+                  className="text-muted-foreground hover:text-destructive rounded p-0.5 transition-colors"
+                  aria-label={`Remove ${s}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <input
-          className="border rounded px-2 py-1 w-full bg-background text-sm"
+          className={fieldClass}
           value={skillBuf}
           onChange={(e) => setSkillBuf(e.target.value)}
           onKeyDown={(e) => {
@@ -312,11 +360,12 @@ export function WorkEducationEditor({
 
       {!controlled && (
         <button
+          type="button"
           onClick={save}
           disabled={saving}
-          className="px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+          className={buttonClass.primary}
         >
-          {saving ? "Saving..." : "Save work & education"}
+          {saving ? "Saving…" : "Save work & education"}
         </button>
       )}
     </div>
@@ -325,10 +374,10 @@ export function WorkEducationEditor({
 
 function LabelInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
-    <div>
-      <label className="text-xs font-medium block mb-0.5">{label}</label>
+    <div className="space-y-1">
+      <FieldLabel>{label}</FieldLabel>
       <input
-        className="border rounded px-2 py-1 w-full bg-background text-sm"
+        className={fieldClass}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
