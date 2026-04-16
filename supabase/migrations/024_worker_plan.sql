@@ -54,6 +54,10 @@ CREATE INDEX IF NOT EXISTS idx_worker_plan_user_live
 -- Service role + the worker proxy (service-role) can write.
 ALTER TABLE public.worker_plan ENABLE ROW LEVEL SECURITY;
 
+-- Drop-then-create so the migration is idempotent (e.g. when the table
+-- was pre-populated via the Supabase MCP during development, the build
+-- step re-running this file would otherwise error on duplicate policy).
+DROP POLICY IF EXISTS worker_plan_select_own ON public.worker_plan;
 CREATE POLICY worker_plan_select_own ON public.worker_plan
   FOR SELECT
   USING (auth.uid() = user_id);
