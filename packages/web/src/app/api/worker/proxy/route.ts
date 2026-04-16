@@ -119,14 +119,31 @@ export async function POST(request: NextRequest) {
       }
 
       case "load_profile": {
-        const [userRes, profileRes, resumesRes] = await Promise.all([
+        const [userRes, profileRes, resumesRes, defaultBundleRes] = await Promise.all([
           supabase.from("users").select("*").eq("id", userId).single(),
           supabase.from("user_profiles").select("*").eq("user_id", userId).single(),
           supabase.from("user_resumes").select("*").eq("user_id", userId),
+          // The default application bundle holds the per-profile
+          // `application_email` users fill in via the "Gmail address"
+          // field. user_profiles.email is a separate column with no
+          // UI writer, so it's null for every user. Resolve it here
+          // so the worker's preflight check (which reads profile.email)
+          // unblocks instead of looping on awaiting_profile forever.
+          supabase
+            .from("user_application_profiles")
+            .select("application_email")
+            .eq("user_id", userId)
+            .eq("is_default", true)
+            .maybeSingle(),
         ]);
+        const profile = profileRes.data as Record<string, unknown> | null;
+        if (profile && !profile.email) {
+          const bundleEmail = (defaultBundleRes.data as { application_email?: string | null } | null)?.application_email;
+          if (bundleEmail) profile.email = bundleEmail;
+        }
         return apiSuccess({
           user: userRes.data,
-          profile: profileRes.data,
+          profile,
           resumes: resumesRes.data || [],
         });
       }
