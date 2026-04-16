@@ -62,10 +62,20 @@ COMPANY_PAUSES: dict[str, date] = {
 
 # Staffing agencies — not direct employers. Universal business rule; apps
 # go to recruiters instead of real hiring managers, so no tenant wants them.
+# Matched as substrings against lowered company names (worker.py), so generic
+# patterns like "consulting" and "staffing" catch the long tail of
+# body-shops without needing every slug in an allowlist.
 BLOCKED_STAFFING = [
+    # Named staffing platforms / body-shops
     "hackajob", "lensa", "jobright", "kforce", "dice", "collabera",
     "wiraa", "synergistic", "aditi", "hirenza", "jobot",
     "insight global", "teksystems", "mphasis", "data annotation",
+    "technosoft", "sysinc",
+    # Generic consultancy / staffing suffixes — substring-matched so they
+    # catch "Take2 Consulting LLC", "Radiance Sysinc", "Acme Staffing", etc.
+    "consulting", "consultants", "consulting group", "consulting llc",
+    "staffing", "it services", "solutions llc", "solutions inc",
+    "software inc",
 ]
 
 # ─── Scout → Filter → Apply cycle config ────────────────────────────────────

@@ -279,7 +279,13 @@ def _expand_tenant_boards(tenant: "TenantConfig", jobs: list[dict]) -> None:
 
 
 def _enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
-    """Insert discovered jobs via API proxy. Local URL cache for fast dedup."""
+    """Insert discovered jobs via API proxy. Local URL cache for fast dedup.
+
+    Also runs the staffing/consulting filter BEFORE enqueue so the queue
+    never gets polluted by body-shops. The apply loop also runs this check
+    at claim time (defense-in-depth), but filtering at enqueue saves the
+    cloud round-trip and keeps queue counts honest.
+    """
     global _seen_urls, _seen_urls_date
 
     today = date.today().isoformat()
@@ -287,13 +293,22 @@ def _enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
         _seen_urls = set()
         _seen_urls_date = today
 
-    # Filter out locally-cached URLs first
+    # Filter out locally-cached URLs + staffing agencies
     new_jobs = []
+    staffing_dropped = 0
     for job in jobs:
         url = job.get("apply_url", "")
-        if url and url not in _seen_urls:
-            new_jobs.append(job)
-            _seen_urls.add(url)
+        if not url or url in _seen_urls:
+            continue
+        company_lower = (job.get("company") or "").lower().strip()
+        if company_lower and any(s in company_lower for s in BLOCKED_STAFFING):
+            staffing_dropped += 1
+            continue
+        new_jobs.append(job)
+        _seen_urls.add(url)
+
+    if staffing_dropped:
+        logger.info(f"Filtered {staffing_dropped} staffing/consulting jobs pre-enqueue")
 
     if not new_jobs:
         return 0
