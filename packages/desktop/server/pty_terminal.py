@@ -1781,6 +1781,15 @@ exec /bin/zsh -l
         time.sleep(0.05)
         self.write(b"\n")
 
+    def _expected_daily_target(self) -> int:
+        """User's daily-apply cap. When applied_today hits this, stop
+        nudging on empty queue — day's job is done. Falls back to 25 if
+        the tenant snapshot isn't loaded yet."""
+        try:
+            return int((self._tenant_snapshot or {}).get("daily_apply_limit") or 25)
+        except Exception:
+            return 25
+
     def _nudge_cooldown_ok(self) -> bool:
         """Rate-limit nudges to at most once per NUDGE_COOLDOWN seconds so
         Claude has time to actually ACT on a nudge before getting another."""
@@ -1878,6 +1887,16 @@ exec /bin/zsh -l
                 # Signal 4 — PTY silence fallback
                 if stats["idle_min"] >= (self.IDLE_THRESHOLD // 60):
                     drift.append(f"PTY idle for {stats['idle_min']}m")
+
+                # Signal 5 — empty queue is never a terminal state. YOU
+                # are the worker; scout yourself when the apply pipeline
+                # has nothing to claim. This was the hidden gap: queue
+                # empty + worker alive + scout fresh previously produced
+                # NO drift, NO nudge — Claude sat idle all night. The
+                # empty-queue branch in _build_mission_nudge only runs
+                # when this signal is in the drift list.
+                if stats["in_queue"] == 0 and stats["applied_today"] < self._expected_daily_target():
+                    drift.append("queue empty — not at daily target yet")
 
                 if drift and self._nudge_cooldown_ok():
                     logger.info(f"Mission drift → nudge: {drift}")
