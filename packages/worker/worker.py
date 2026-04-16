@@ -23,6 +23,7 @@ from tenant import (
 from scout import REGISTERED_SOURCES
 from db import (
     claim_next_job, load_user_profile, update_queue_status, log_application,
+    fetch_next_plan, report_plan_outcome,
     check_daily_limit, count_profile_applied_today,
     get_answer_key, download_resume, download_resume_by_url, upload_screenshot,
     fetch_user_job_preferences, enqueue_discovered_jobs, update_heartbeat as db_heartbeat,
@@ -317,7 +318,22 @@ def _enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
     return enqueue_discovered_jobs(user_id, new_jobs)
 
 
-def run_scout_cycle(tenant: TenantConfig) -> int:
+# Style classification for scout sources — the cloud planner uses this
+# to route between "company-based" (hit known ATS slugs) and "title-based"
+# (search aggregators). If a new source is added to scout/, add it here
+# or it defaults to the unfiltered pool.
+_SCOUT_STYLE = {
+    "ashby": "company",
+    "greenhouse": "company",
+    "lever": "company",
+    "indeed": "title",
+    "himalayas": "title",
+    "linkedin_public": "title",
+    "linkedin": "title",
+}
+
+
+def run_scout_cycle(tenant: TenantConfig, style_filter: str | None = None) -> int:
     """Run one scout → filter → enqueue cycle for THIS tenant.
 
     Iterates REGISTERED_SOURCES from packages/worker/scout/. Each source
@@ -325,6 +341,10 @@ def run_scout_cycle(tenant: TenantConfig) -> int:
     `tenant.passes_filter()`. There is no fallback to admin defaults at
     any layer — if tenant has no target_titles, the worker refuses to boot
     at main() time before reaching this function.
+
+    `style_filter` routes the planner's scout_primary / scout_title_based
+    actions to the right source subset. When None, runs all sources
+    (legacy behavior; used by the pre-planner scout_loop).
 
     Priority dispatch:
       HIGH:    always run
@@ -341,6 +361,10 @@ def run_scout_cycle(tenant: TenantConfig) -> int:
     for source in REGISTERED_SOURCES:
         if not source.is_enabled_for(tenant):
             continue
+        if style_filter is not None:
+            source_style = _SCOUT_STYLE.get(source.name, "title")
+            if source_style != style_filter:
+                continue
         roll = random.random()
         if source.priority == "high":
             run_it = True
@@ -821,17 +845,85 @@ def main():
     # Daily update check — runs on first execution of each new day
     check_and_pull_updates()
 
-    # Start the per-tenant scout loop.
-    scout_thread = threading.Thread(
-        target=scout_loop, args=(tenant,), daemon=True, name="scout-loop"
-    )
-    scout_thread.start()
-    logger.info(
-        f"Scout loop started for {tenant.user_id[:8]} "
-        f"(interval={SCOUT_INTERVAL_MINUTES}m, {len(REGISTERED_SOURCES)} sources)"
-    )
+    # Planner-driven mode is the default. Set WORKER_USE_LEGACY_LOOP=1 to
+    # fall back to the old scout-thread + exponential-backoff main loop.
+    use_planner = os.environ.get("WORKER_USE_LEGACY_LOOP", "").lower() not in ("1", "true", "yes")
+
+    if use_planner:
+        logger.info(
+            f"Planner mode ON for {tenant.user_id[:8]} — scout is planner-directed, "
+            f"not on a timer. Set WORKER_USE_LEGACY_LOOP=1 to revert."
+        )
+    else:
+        # Legacy mode: start the standalone scout thread on a 30-min timer.
+        scout_thread = threading.Thread(
+            target=scout_loop, args=(tenant,), daemon=True, name="scout-loop"
+        )
+        scout_thread.start()
+        logger.info(
+            f"Legacy mode: scout loop started for {tenant.user_id[:8]} "
+            f"(interval={SCOUT_INTERVAL_MINUTES}m, {len(REGISTERED_SOURCES)} sources)"
+        )
 
     while running:
+        # Planner dispatch — runs at the top of every iteration. Non-apply
+        # actions (scout, idle) are handled here and the iteration skips.
+        # apply_next falls through to the claim+apply code below; outcome
+        # is reported at the end of the iteration via current_plan.
+        current_plan: dict | None = None
+        apply_outcome: str = "success"
+        apply_outcome_detail: str | None = None
+
+        if use_planner:
+            current_plan = fetch_next_plan()
+            if current_plan is None:
+                # Planner unreachable — back off and retry. Worker never
+                # burns a CPU loop waiting for the cloud.
+                time.sleep(30)
+                continue
+
+            action = str(current_plan.get("action", ""))
+            plan_id = str(current_plan.get("plan_id", ""))
+            reason = str(current_plan.get("reason", ""))
+            logger.info(f"[planner] {action} — {reason}")
+
+            if action != "apply_next":
+                # Every non-apply action reports its own outcome + continues.
+                try:
+                    if action == "idle_until_midnight":
+                        report_plan_outcome(plan_id, "skipped", reason or "daily cap")
+                        # Cap the sleep at 10 min so we re-check state
+                        # frequently enough to notice a cap being raised.
+                        time.sleep(600)
+                    elif action == "idle_until_next_tick":
+                        report_plan_outcome(plan_id, "skipped", reason or "no work")
+                        time.sleep(60)
+                    elif action in ("scout_primary", "scout_title_based", "scout_expand_boards"):
+                        style = "company" if action == "scout_primary" else "title"
+                        enqueued = run_scout_cycle(tenant, style_filter=style)
+                        report_plan_outcome(
+                            plan_id,
+                            "empty" if enqueued == 0 else "success",
+                            f"{enqueued} enqueued (style={style})",
+                        )
+                        time.sleep(5)
+                    elif action == "restart_worker":
+                        report_plan_outcome(plan_id, "skipped", "restart_worker not yet wired")
+                        time.sleep(60)
+                    else:
+                        report_plan_outcome(plan_id, "skipped", f"unhandled action: {action}")
+                        time.sleep(60)
+                except Exception as e:
+                    logger.warning(f"[planner] {action} failed: {e}")
+                    try:
+                        report_plan_outcome(plan_id, "failed", str(e)[:200])
+                    except Exception:
+                        pass
+                    time.sleep(30)
+                continue
+            # action == apply_next: fall through to existing claim+apply code.
+            # Outcome reporting happens at the bottom via a try/finally-style
+            # end-of-iteration hook using the current_plan reference.
         # Refresh tenant reference at the top of each iteration. The
         # reload thread updates `_current_tenant` every N seconds; we just
         # read it here so each apply cycle uses the freshest bundle list +
@@ -866,6 +958,24 @@ def main():
             running = False
             break
         if not job:
+            # Under planner mode, the planner should never issue apply_next
+            # when the queue is empty — so hitting this branch means the
+            # queue drained between plan issuance and claim. Report + short
+            # sleep. The next planner tick will re-decide based on fresh
+            # state. Legacy mode keeps the exponential backoff.
+            if use_planner and current_plan:
+                try:
+                    report_plan_outcome(
+                        str(current_plan.get("plan_id", "")),
+                        "skipped",
+                        "queue empty at claim time (race with drain)",
+                    )
+                except Exception:
+                    pass
+                # Prevent double-report at end-of-iteration finally.
+                current_plan = None
+                time.sleep(5)
+                continue
             time.sleep(idle_backoff)
             # Exponential backoff: 10s → 20s → 40s → 80s → 160s → 300s (cap)
             idle_backoff = min(idle_backoff * 2, MAX_IDLE_BACKOFF)
@@ -1181,6 +1291,8 @@ def main():
                 send_application_result(user_id, job, result.screenshot, profile_name=_bundle_name)
                 hourly_count += 1
                 update_heartbeat(user_id, "applied", f"{company} — {job.get('title', '')}")
+                apply_outcome = "success"
+                apply_outcome_detail = f"submitted {company} — {job.get('title', '')[:80]}"
             else:
                 # Browser timeout recovery
                 if result.error and "timeout" in result.error.lower():
@@ -1194,11 +1306,15 @@ def main():
 
                 if result.retriable and job.get('attempts', 0) < job.get('max_attempts', 3):
                     update_queue_status(job['id'], 'pending', error=result.error)
+                    apply_outcome = "skipped"
+                    apply_outcome_detail = f"retriable: {str(result.error)[:160]}"
                 else:
                     update_queue_status(job['id'], 'failed', error=result.error)
                     log_application(user_id, job, {'status': 'failed', 'error': result.error})
                     send_failure(user_id, company, job.get('title', ''), result.error)
                     update_heartbeat(user_id, "failed", f"{company} — {result.error[:80]}")
+                    apply_outcome = "failed"
+                    apply_outcome_detail = f"{company}: {str(result.error)[:160]}"
 
             time.sleep(cooldown)
             update_heartbeat(user_id, "sleep", f"cooldown {cooldown}s")
@@ -1206,7 +1322,24 @@ def main():
         except Exception as e:
             logger.exception(f"Error processing job {job['id']}")
             update_queue_status(job['id'], 'failed', error=str(e))
+            apply_outcome = "failed"
+            apply_outcome_detail = f"exception: {str(e)[:160]}"
             time.sleep(10)
+
+        finally:
+            # End-of-iteration planner outcome report. Fires for every apply
+            # iteration under planner mode — whether the work completed
+            # cleanly, hit a continue on a pre-flight skip, or raised.
+            # Legacy mode leaves current_plan as None so this is a no-op.
+            if use_planner and current_plan:
+                try:
+                    report_plan_outcome(
+                        str(current_plan.get("plan_id", "")),
+                        apply_outcome,
+                        apply_outcome_detail,
+                    )
+                except Exception:
+                    pass
 
 
 if __name__ == '__main__':

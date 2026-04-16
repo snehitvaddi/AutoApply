@@ -53,10 +53,18 @@ SCOUT_DIR = Path(__file__).resolve().parent.parent / "scout"
 class ScoutContractTest(unittest.TestCase):
     """Static analysis: every scout plugin is tenant-scoped, not admin-scoped."""
 
+    # Helper modules that live in scout/ but aren't ScoutSource plugins —
+    # exempt from the tenant.passes_filter / banned-role contract tests.
+    _HELPER_FILES = {
+        "__init__.py",
+        "base.py",
+        "ats_resolver.py",  # slug resolver for title→company board expansion (Fix 5)
+    }
+
     def _scout_source_files(self) -> list[Path]:
         return sorted(
             p for p in SCOUT_DIR.glob("*.py")
-            if p.name not in ("__init__.py", "base.py")
+            if p.name not in self._HELPER_FILES
         )
 
     def test_no_banned_role_strings(self) -> None:

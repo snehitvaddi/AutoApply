@@ -526,6 +526,39 @@ def enqueue_discovered_jobs(user_id: str, jobs: list[dict]) -> int:
     return result.get("enqueued", 0)
 
 
+# ── Cloud planner (Phase 1 of planner architecture) ──────────────────────
+
+def fetch_next_plan() -> dict | None:
+    """Ask the cloud planner what action to take next.
+
+    Returns {plan_id, action, params, reason, expires_at, state} on success.
+    None on any failure (caller should back off + retry). Never raises —
+    the worker loop must survive planner outages.
+    """
+    try:
+        result = _api_call("get_next_action")
+        if not isinstance(result, dict) or "action" not in result:
+            return None
+        return result
+    except Exception as e:
+        logger.debug(f"fetch_next_plan failed: {e}")
+        return None
+
+
+def report_plan_outcome(plan_id: str, outcome: str, detail: str | None = None) -> None:
+    """Post the result of executing a plan back to the cloud. Updates
+    worker_plan.outcome{,_detail,_at} so the Decision Log reflects reality
+    and the next planner call has fresh data to reason over.
+
+    outcome values (match CHECK constraint): success | empty | failed | skipped.
+    Swallows errors — worker keeps moving even if reporting fails.
+    """
+    try:
+        _api_call("report_plan_outcome", plan_id=plan_id, outcome=outcome, outcome_detail=detail)
+    except Exception as e:
+        logger.debug(f"report_plan_outcome failed: {e}")
+
+
 # ── Heartbeat ─────────────────────────────────────────────────────────────
 
 def update_heartbeat(user_id: str, action: str, details: str = ""):

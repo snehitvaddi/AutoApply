@@ -80,12 +80,9 @@ class PTYSession:
     """
 
     # Tick intervals
-    WATCHDOG_INTERVAL = 300            # 5 min — mission drift check
-    # Drift thresholds
-    IDLE_THRESHOLD = 1800              # 30 min — PTY silence
-    SCOUT_STALE_MULTIPLIER = 2         # 2x SCOUT_INTERVAL_MINUTES = overdue
-    NUDGE_COOLDOWN = 600               # 10 min min between nudges
-    STUCK_APPLIED_CYCLES = 3           # 3 x 5min = 15 min flat applied count
+    # WATCHDOG_INTERVAL / IDLE_THRESHOLD / SCOUT_STALE_MULTIPLIER /
+    # NUDGE_COOLDOWN / STUCK_APPLIED_CYCLES removed in Phase 1.3 —
+    # the watchdog they tuned is gone. Heartbeat cadence stays.
 
     def __init__(self):
         self._pty: PlatformPTY | None = None  # platform-aware PTY backend
@@ -94,7 +91,9 @@ class PTYSession:
         self.output_buffer: deque[bytes] = deque(maxlen=MAX_BUFFER)
         self._subscribers: list[asyncio.Queue] = []
         self._read_task: asyncio.Task | None = None
-        self._watchdog_task: asyncio.Task | None = None
+        # _watchdog_task removed in Phase 1.3 — the watchdog loop went
+        # away when decision-making moved to the cloud planner. Nothing
+        # writes text nudges into the PTY anymore.
         self._alive = False
         self.session_id: str | None = None
         self.last_output_at: float = 0
@@ -105,10 +104,9 @@ class PTYSession:
         # or the user hasn't finished setup; in that case the heartbeat
         # loop still fires with a "finish setup" message instead of crashing.
         self._tenant_snapshot: dict | None = None
-        self._last_nudge_at: float = 0
-        self._last_applied_count: int | None = None
-        self._stuck_cycles: int = 0
-        self._consecutive_empty_queue_ticks: int = 0
+        # _last_nudge_at / _last_applied_count / _stuck_cycles /
+        # _consecutive_empty_queue_ticks removed in Phase 1.3 alongside
+        # the watchdog. The cloud planner owns all that state now.
 
     @property
     def is_alive(self) -> bool:
@@ -1543,11 +1541,10 @@ exec /bin/zsh -l
             self._pty = None
             return False
 
-        # Start reading + watchdog in background. The watchdog detects
-        # real apply-loop drift (not just PTY byte-flow idle) and fires
-        # a tenant-scoped nudge with the next required action.
+        # Start the PTY read loop. The old watchdog/nudge task was removed
+        # in Phase 1.3 of the cloud-planner migration — decisions live in
+        # the cloud, not in text nudges sent to the terminal.
         self._read_task = asyncio.create_task(self._read_loop())
-        self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
         logger.info(f"PTY session started: PID {child_pid}, claude at {claude}")
 
@@ -1661,38 +1658,12 @@ exec /bin/zsh -l
             f"keep scout→filter→apply going."
         )
 
-    def _build_mission_nudge(self, drift: list[str]) -> str:
-        """Two short lines. A command, not a status report.
-        Line 1: the stick (what you're NOT doing). Line 2: the action."""
-        stats = self._read_mission_stats()
-
-        # Track empty-queue streak — reset when apply count advances
-        if stats["in_queue"] == 0:
-            self._consecutive_empty_queue_ticks += 1
-        else:
-            self._consecutive_empty_queue_ticks = 0
-        if self._last_applied_count is not None and stats["applied_today"] > self._last_applied_count:
-            self._consecutive_empty_queue_ticks = 0
-
-        q = stats["in_queue"]
-        t = stats["applied_today"]
-
-        if not stats["worker_alive"]:
-            return f"Worker is dead. applied_today={t}.\nRestart: cd ~/.applyloop/packages/worker && python3 worker.py. NOW."
-        if stats["scout_age_min"] is not None and stats["scout_age_min"] > 60:
-            return f"Scout hasn't run in {stats['scout_age_min']:.0f}m.\nRestart the worker. NOW."
-        if q > 0 and t == self._last_applied_count:
-            return f"Queue={q} and you're not applying. What are you doing?\nClaim next job and submit. NOW."
-        if q == 0:
-            tick = self._consecutive_empty_queue_ticks
-            if tick <= 1:
-                return f"Queue empty. applied_today={t}. You should be scouting.\nHit Ashby/Greenhouse/Lever/Workday direct and enqueue. NOW."
-            if tick == 2:
-                return f"Queue STILL empty for {tick} cycles. Broaden sources.\nHimalayas + LinkedIn public + Google dorks across all ATS. NOW."
-            return f"Queue empty for {tick} cycles. Something's broken.\nCheck scout.ts age, run title-based scout yourself, enqueue. NOW."
-        if stats["idle_min"] >= 30:
-            return f"You've been idle {stats['idle_min']}m. Queue={q}, applied={t}.\nScout, filter, or apply — pick one and do it. NOW."
-        return f"Progress stalled. Queue={q}, applied={t}.\nScout, filter, or apply. NOW."
+    # _build_mission_nudge removed in Phase 1.3 of the cloud-planner
+    # migration. Decisions now live in the cloud planner (/api/worker/proxy
+    # action=get_next_action) and the worker executes directly — no
+    # text nudges injected into the terminal, no watchdog-driven drift
+    # detection. The PTY is a display + chat surface; it does not decide
+    # what to do next.
 
     def _submit_to_pty(self, body: str) -> None:
         """Write a normal message to the terminal and press Enter.
@@ -1746,19 +1717,8 @@ exec /bin/zsh -l
         time.sleep(0.05)
         self.write(b"\n")
 
-    def _expected_daily_target(self) -> int:
-        """User's daily-apply cap. When applied_today hits this, stop
-        nudging on empty queue — day's job is done. Falls back to 25 if
-        the tenant snapshot isn't loaded yet."""
-        try:
-            return int((self._tenant_snapshot or {}).get("daily_apply_limit") or 25)
-        except Exception:
-            return 25
-
-    def _nudge_cooldown_ok(self) -> bool:
-        """Rate-limit nudges to at most once per NUDGE_COOLDOWN seconds so
-        Claude has time to actually ACT on a nudge before getting another."""
-        return (time.time() - self._last_nudge_at) >= self.NUDGE_COOLDOWN
+    # _expected_daily_target and _nudge_cooldown_ok removed in Phase 1.3.
+    # The planner enforces both cap + cadence centrally.
 
     async def _mission_heartbeat_loop(self):
         """Informational status refresh every 15 min. Always fires while
@@ -1781,103 +1741,10 @@ exec /bin/zsh -l
         except Exception as e:
             logger.debug(f"Heartbeat loop ended: {e}")
 
-    async def _watchdog_loop(self):
-        """Mission-drift guard. Ticks every 5 min and fires a nudge when any
-        of four drift signals trip:
-          1. applied_today hasn't grown in STUCK_APPLIED_CYCLES ticks AND
-             queue has jobs (worker alive but apply gate stuck)
-          2. scout is overdue by 2x SCOUT_INTERVAL_MINUTES (30m → 60m)
-          3. worker process dead (worker.pid points nowhere)
-          4. PTY idle for IDLE_THRESHOLD (fallback — PTY-byte-flow check)
-
-        Cooldown: at most one nudge per NUDGE_COOLDOWN seconds, no matter
-        how many signals fire, so Claude gets time to act between pokes.
-        """
-        # Import here to keep top-level import clean + avoid circular with
-        # config on restart.
-        try:
-            from config import SCOUT_INTERVAL_MINUTES  # noqa: F401 — sanity check
-            scout_interval_min = 30
-            try:
-                from config import SCOUT_INTERVAL_MINUTES as _siv
-                scout_interval_min = int(_siv)
-            except Exception:
-                pass
-        except Exception:
-            scout_interval_min = 30
-
-        scout_stale_min = scout_interval_min * self.SCOUT_STALE_MULTIPLIER
-
-        try:
-            while self.is_alive:
-                await asyncio.sleep(self.WATCHDOG_INTERVAL)
-                if not self.is_alive:
-                    return
-
-                self._refresh_tenant_context()
-                stats = self._read_mission_stats()
-                drift: list[str] = []
-
-                # Signal 1 — applied_today flat with non-empty queue
-                if (
-                    self._last_applied_count is not None
-                    and stats["applied_today"] == self._last_applied_count
-                    and stats["in_queue"] > 0
-                ):
-                    self._stuck_cycles += 1
-                else:
-                    self._stuck_cycles = 0
-                self._last_applied_count = stats["applied_today"]
-                if self._stuck_cycles >= self.STUCK_APPLIED_CYCLES:
-                    drift.append(
-                        f"applied_today stuck at {stats['applied_today']} for "
-                        f"{self._stuck_cycles * (self.WATCHDOG_INTERVAL // 60)}m "
-                        f"with {stats['in_queue']} in queue"
-                    )
-
-                # Signal 2 — scout overdue
-                if stats["scout_age_min"] is not None and stats["scout_age_min"] > scout_stale_min:
-                    drift.append(
-                        f"scout overdue by {stats['scout_age_min'] - scout_interval_min:.0f}m"
-                    )
-                elif stats["scout_age_min"] is None and stats["worker_alive"]:
-                    # Worker process alive but has never touched scout.ts —
-                    # shouldn't happen but worth surfacing.
-                    drift.append("scout heartbeat file missing despite worker alive")
-
-                # Signal 3 — worker process dead
-                if not stats["worker_alive"]:
-                    drift.append("worker process not running")
-
-                # Signal 4 — PTY silence fallback
-                if stats["idle_min"] >= (self.IDLE_THRESHOLD // 60):
-                    drift.append(f"PTY idle for {stats['idle_min']}m")
-
-                # Signal 5 — empty queue is never a terminal state. YOU
-                # are the worker; scout yourself when the apply pipeline
-                # has nothing to claim. This was the hidden gap: queue
-                # empty + worker alive + scout fresh previously produced
-                # NO drift, NO nudge — Claude sat idle all night. The
-                # empty-queue branch in _build_mission_nudge only runs
-                # when this signal is in the drift list.
-                if stats["in_queue"] == 0 and stats["applied_today"] < self._expected_daily_target():
-                    drift.append("queue empty — not at daily target yet")
-
-                if drift and self._nudge_cooldown_ok():
-                    logger.info(f"Mission drift → nudge: {drift}")
-                    body = self._build_mission_nudge(drift)
-                    # Threadpool — see heartbeat_loop comment
-                    await asyncio.to_thread(self._submit_to_pty, body)
-                    self._last_nudge_at = time.time()
-                    # Reset stuck counter after firing so we don't instantly
-                    # re-trip on the next tick.
-                    self._stuck_cycles = 0
-                elif drift:
-                    logger.debug(f"Drift detected but on cooldown: {drift}")
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.debug(f"Watchdog ended: {e}")
+    # _watchdog_loop removed in Phase 1.3. The decision-making it tried to
+    # do (detect drift → nudge Claude) is now the cloud planner's job.
+    # Worker executes what the planner decides; the PTY doesn't drive the
+    # agent anymore.
 
     def _broadcast(self, data: bytes):
         """Send data to all WebSocket subscribers."""
@@ -1969,9 +1836,6 @@ exec /bin/zsh -l
         if self._read_task:
             self._read_task.cancel()
             self._read_task = None
-        if self._watchdog_task:
-            self._watchdog_task.cancel()
-            self._watchdog_task = None
 
     def restart(self):
         """Stop and restart."""
