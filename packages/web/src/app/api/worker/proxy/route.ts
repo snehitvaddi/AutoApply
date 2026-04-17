@@ -72,6 +72,10 @@ export async function POST(request: NextRequest) {
           queueRow.title = jobDetail.title;
           queueRow.posted_at = jobDetail.posted_at;
           queueRow.location = jobDetail.location;
+          // external_id is the ATS-assigned job ID used as the dedup-token
+          // key in local SQLite (enqueue_to_local_db). Without it, log and
+          // enqueue resolve different tokens → stale 'queued' shadow rows.
+          queueRow.external_id = jobDetail.external_id;
         }
         // Surface profile binding so the worker can load the right bundle
         // (email, resume, app password, answer_key) for this job.

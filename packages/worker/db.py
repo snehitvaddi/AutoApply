@@ -221,7 +221,10 @@ def _log_to_local_db(job: dict, result: dict):
         conn = _get_local_conn()
         now = datetime.now(timezone.utc).isoformat()
         company = job.get("company", "")
-        job_id = job.get("job_id") or job.get("external_id") or ""
+        # MUST mirror enqueue_to_local_db's token scheme (external_id first).
+        # Mismatch here leaves every applied job orphaning a stale 'queued' row
+        # under a different token → `in_queue` stat grows forever.
+        job_id = job.get("external_id") or job.get("job_id") or ""
         apply_url = job.get("apply_url", "")
         # Resolve aggregator → real ATS for accurate platform stats
         raw_ats = job.get("ats", "")
@@ -291,7 +294,7 @@ def enqueue_to_local_db(jobs: list[dict]) -> int:
             job_id = job.get("external_id") or job.get("job_id") or ""
             dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else f"{company.lower().replace(' ', '-')}|{(job.get('title', '')).lower().replace(' ', '-')}"
             try:
-                conn.execute("""
+                cur = conn.execute("""
                     INSERT INTO applications (company, role, url, ats, source, location, posted_at, scouted_at, updated_at, status, dedup_token, application_profile_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)
                     ON CONFLICT(dedup_token) DO NOTHING
@@ -301,7 +304,9 @@ def enqueue_to_local_db(jobs: list[dict]) -> int:
                     job.get("posted_at"), now, now, dedup_token,
                     job.get("application_profile_id"),
                 ))
-                inserted += conn.total_changes  # approximate
+                # cur.rowcount is 1 on insert, 0 on conflict. conn.total_changes
+                # is cumulative, which produced triangular counts in the log.
+                inserted += cur.rowcount if cur.rowcount > 0 else 0
             except sqlite3.IntegrityError:
                 pass  # duplicate, skip
         conn.commit()
@@ -323,7 +328,8 @@ def update_local_status(job: dict, status: str, error: str | None = None):
         conn = _get_local_conn()
         now = datetime.now(timezone.utc).isoformat()
         company = job.get("company", "")
-        job_id = job.get("job_id") or job.get("external_id") or ""
+        # Mirror enqueue_to_local_db's token scheme (external_id first).
+        job_id = job.get("external_id") or job.get("job_id") or ""
         dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else None
 
         if dedup_token:

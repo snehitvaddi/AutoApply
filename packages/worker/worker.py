@@ -1273,6 +1273,12 @@ def main():
                 continue
             result = applier.apply(apply_url)
 
+            # Tracks whether we've already persisted a final outcome to the
+            # local `applications` table. If an exception fires after a
+            # successful submit log (e.g., Telegram send or heartbeat throws),
+            # we must NOT overwrite the 'submitted' row with 'failed'.
+            outcome_logged = False
+
             if result.success:
                 consecutive_timeouts = 0
                 screenshot_url = None
@@ -1280,6 +1286,7 @@ def main():
                     screenshot_url = upload_screenshot(user_id, result.screenshot)
                 update_queue_status(job['id'], 'submitted')
                 log_application(user_id, job, {'status': 'submitted', 'screenshot_url': screenshot_url})
+                outcome_logged = True
                 # Only render the bundle name for multi-profile users so
                 # single-profile users see the pre-refactor caption.
                 _bundle_name = job_profile.name if len(tenant.profiles) > 1 else None
@@ -1305,7 +1312,9 @@ def main():
                     apply_outcome_detail = f"retriable: {str(result.error)[:160]}"
                 else:
                     update_queue_status(job['id'], 'failed', error=result.error)
+                    update_local_status(job, 'failed', result.error)
                     log_application(user_id, job, {'status': 'failed', 'error': result.error})
+                    outcome_logged = True
                     send_failure(user_id, company, job.get('title', ''), result.error)
                     update_heartbeat(user_id, "failed", f"{company} — {result.error[:80]}")
                     apply_outcome = "failed"
@@ -1317,6 +1326,15 @@ def main():
         except Exception as e:
             logger.exception(f"Error processing job {job['id']}")
             update_queue_status(job['id'], 'failed', error=str(e))
+            # Only mirror the failure into local SQLite if we haven't already
+            # logged a submitted/failed outcome — otherwise a post-submit
+            # exception (telegram, heartbeat) would overwrite the submitted row.
+            if not locals().get('outcome_logged', False):
+                try:
+                    update_local_status(job, 'failed', f"exception: {str(e)[:160]}")
+                    log_application(user_id, job, {'status': 'failed', 'error': f"exception: {str(e)[:160]}"})
+                except Exception as inner:
+                    logger.debug(f"Exception-path local log failed (non-fatal): {inner}")
             apply_outcome = "failed"
             apply_outcome_detail = f"exception: {str(e)[:160]}"
             time.sleep(10)
