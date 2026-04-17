@@ -353,6 +353,48 @@ def update_local_status(job: dict, status: str, error: str | None = None):
         logger.warning(f"Local DB status update failed (non-fatal): {e}")
 
 
+def cleanup_stale_queued_shadows() -> int:
+    """Drop 'queued' rows that were orphaned by the pre-fix dedup-token bug.
+
+    Before `fix(stats)` (commit 4891e62), _log_to_local_db and
+    enqueue_to_local_db resolved different dedup tokens for the same job
+    (external_id vs job_id UUID). Every applied job therefore left a stale
+    'queued' shadow row in local SQLite, inflating the dashboard's
+    `in_queue` count indefinitely.
+
+    This cleanup runs at worker boot: for any (company, role) pair that
+    has at least one terminal row (submitted/failed), delete any lingering
+    'queued' or 'applying' row. Idempotent — re-running finds nothing.
+
+    Case-insensitive match because `role` is the job title and ATS data
+    is inconsistent about casing (Greenhouse returns Title Case, Lever
+    sometimes all-caps). company is already lowercased by the enqueue
+    path but we still LOWER() defensively.
+    """
+    try:
+        conn = _get_local_conn()
+        cur = conn.execute("""
+            DELETE FROM applications
+            WHERE status IN ('queued','applying')
+              AND EXISTS (
+                SELECT 1 FROM applications t
+                WHERE LOWER(t.company) = LOWER(applications.company)
+                  AND LOWER(t.role) = LOWER(applications.role)
+                  AND t.status IN ('submitted','failed')
+                  AND t.id != applications.id
+              )
+        """)
+        conn.commit()
+        deleted = cur.rowcount or 0
+        conn.close()
+        if deleted:
+            logger.info(f"Cleaned up {deleted} stale queued/applying shadow rows")
+        return deleted
+    except Exception as e:
+        logger.warning(f"Shadow-row cleanup failed (non-fatal): {e}")
+        return 0
+
+
 def _ensure_local_schema(conn: sqlite3.Connection):
     """Create the applications table if it doesn't exist."""
     conn.executescript("""

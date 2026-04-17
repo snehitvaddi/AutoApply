@@ -28,7 +28,7 @@ from db import (
     get_answer_key, download_resume, download_resume_by_url, upload_screenshot,
     fetch_user_job_preferences, enqueue_discovered_jobs, update_heartbeat as db_heartbeat,
     check_company_rate as db_check_company_rate,
-    update_local_status,
+    update_local_status, cleanup_stale_queued_shadows,
     WorkerAuthError,
 )
 from notifier import send_application_result, send_failure
@@ -822,6 +822,14 @@ def main():
     _set_current_tenant(tenant)
     _kill_stale_worker()
     _write_worker_pid()
+
+    # One-shot cleanup of orphan 'queued'/'applying' rows left behind by the
+    # pre-fix dedup-token bug. Idempotent — a no-op after the first boot
+    # once the stale rows are gone.
+    try:
+        cleanup_stale_queued_shadows()
+    except Exception as e:
+        logger.debug(f"shadow cleanup skipped: {e}")
 
     # Start the tenant reload thread — refreshes _current_tenant every
     # TENANT_RELOAD_INTERVAL_SECS so password rotations / bundle edits
