@@ -6,7 +6,7 @@ passes_filter(user_prefs=None) fallback that silently leaked admin defaults.
 """
 from __future__ import annotations
 
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -18,6 +18,39 @@ if TYPE_CHECKING:
     from tenant import TenantConfig
 
 
+def _fetch_ashby_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
+    jobs: list[JobPost] = []
+    try:
+        with httpx.Client(timeout=10, follow_redirects=True) as client:
+            resp = client.get(f"https://api.ashbyhq.com/posting-api/job-board/{slug}")
+            if resp.status_code != 200:
+                return jobs
+            for job in resp.json().get("jobs", []):
+                if not _is_fresh_24h(job.get("publishedAt")):
+                    continue
+                title = job.get("title", "")
+                loc = job.get("location", "")
+                if isinstance(loc, dict):
+                    loc = loc.get("name", "")
+                if not tenant.passes_filter(title, slug, loc):
+                    continue
+                apply_url = (
+                    job.get("applicationUrl")
+                    or f"https://jobs.ashbyhq.com/{slug}/application?jobId={job['id']}"
+                )
+                jobs.append({
+                    "title": title,
+                    "company": slug,
+                    "location": loc,
+                    "apply_url": apply_url,
+                    "external_id": str(job.get("id", "")),
+                    "ats": "ashby",
+                })
+    except Exception:
+        pass
+    return jobs
+
+
 class AshbyScout(ScoutSource):
     name = "ashby"
     priority = "high"
@@ -25,36 +58,15 @@ class AshbyScout(ScoutSource):
 
     def scout(self, tenant: "TenantConfig") -> list[JobPost]:
         jobs: list[JobPost] = []
-        with httpx.Client(timeout=10, follow_redirects=True) as client:
-            for slug in tenant.ashby_boards:
+        boards = list(tenant.ashby_boards)
+        if not boards:
+            return jobs
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for fut in as_completed(pool.submit(_fetch_ashby_board, s, tenant) for s in boards):
                 try:
-                    resp = client.get(f"https://api.ashbyhq.com/posting-api/job-board/{slug}")
-                    if resp.status_code != 200:
-                        continue
-                    for job in resp.json().get("jobs", []):
-                        if not _is_fresh_24h(job.get("publishedAt")):
-                            continue
-                        title = job.get("title", "")
-                        loc = job.get("location", "")
-                        if isinstance(loc, dict):
-                            loc = loc.get("name", "")
-                        if not tenant.passes_filter(title, slug, loc):
-                            continue
-                        apply_url = (
-                            job.get("applicationUrl")
-                            or f"https://jobs.ashbyhq.com/{slug}/application?jobId={job['id']}"
-                        )
-                        jobs.append({
-                            "title": title,
-                            "company": slug,
-                            "location": loc,
-                            "apply_url": apply_url,
-                            "external_id": str(job.get("id", "")),
-                            "ats": "ashby",
-                        })
+                    jobs.extend(fut.result())
                 except Exception as e:
-                    self.logger.debug(f"{slug} failed: {e}")
-                time.sleep(0.5)
+                    self.logger.debug(f"ashby board fetch failed: {e}")
         return jobs
 
 

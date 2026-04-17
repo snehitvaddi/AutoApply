@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 HIMALAYAS_API = "https://himalayas.app/jobs/api"
 
 
-def scan_himalayas(queries: list[str], limit: int = 50) -> list[dict]:
+def scan_himalayas(queries: list[str], limit: int = 150) -> list[dict]:
     """Search Himalayas remote job API for each query."""
     all_jobs = []
     with httpx.Client(timeout=15, follow_redirects=True) as client:

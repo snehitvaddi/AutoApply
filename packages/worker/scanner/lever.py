@@ -1,33 +1,31 @@
 import logging
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import httpx
 
 logger = logging.getLogger(__name__)
 
 LEVER_API = "https://api.lever.co/v0/postings"
-RATE_LIMIT_DELAY = 1.0
 
 
 def scan_lever_boards(companies: list[str]) -> list[dict]:
-    """Fetch jobs from Lever postings API for each company.
+    """Fetch jobs from Lever postings API for each company (parallel)."""
+    all_jobs: list[dict] = []
 
-    Args:
-        companies: List of Lever company slugs (e.g. ['netflix', 'figma']).
+    def _one(company: str) -> list[dict]:
+        try:
+            with httpx.Client(timeout=30, follow_redirects=True) as client:
+                return _fetch_lever_jobs(client, company)
+        except Exception as e:
+            logger.warning(f"Lever [{company}] failed: {e}")
+            return []
 
-    Returns:
-        List of normalized job dicts.
-    """
-    all_jobs = []
-
-    with httpx.Client(timeout=30, follow_redirects=True) as client:
-        for company in companies:
-            try:
-                jobs = _fetch_lever_jobs(client, company)
-                all_jobs.extend(jobs)
-                logger.info(f"Lever [{company}]: {len(jobs)} jobs")
-            except Exception as e:
-                logger.warning(f"Lever [{company}] failed: {e}")
-            time.sleep(RATE_LIMIT_DELAY)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futs = {pool.submit(_one, c): c for c in companies}
+        for fut in as_completed(futs):
+            jobs = fut.result()
+            all_jobs.extend(jobs)
+            logger.info(f"Lever [{futs[fut]}]: {len(jobs)} jobs")
 
     logger.info(f"Lever total: {len(all_jobs)} jobs from {len(companies)} companies")
     return all_jobs

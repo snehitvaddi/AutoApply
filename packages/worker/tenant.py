@@ -124,6 +124,8 @@ class ApplyProfile:
             return False
         if any(lvl in tl for lvl in self.excluded_levels):
             return False
+        if any(ex in tl for ex in self.excluded_titles):
+            return False
         if any(ec in cl for ec in self.excluded_companies):
             return False
         if self.preferred_locations:

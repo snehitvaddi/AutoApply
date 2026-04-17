@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from config import (
     WORKER_ID, POLL_INTERVAL, APPLY_COOLDOWN, ATS_COOLDOWNS,
     MAX_SYSTEM_APPS_PER_HOUR, BLOCKED_DOMAINS, COMPANY_PAUSES,
-    BLOCKED_STAFFING, SCOUT_INTERVAL_MINUTES,
+    is_staffing_agency, SCOUT_INTERVAL_MINUTES,
     MAX_COMPANY_APPS_PER_7_DAYS, QUEUE_STALE_HOURS, APPLY_STALE_MINUTES,
 )
 from tenant import (
@@ -301,8 +301,7 @@ def _enqueue_discovered_jobs(user_id: str, jobs: list[dict]):
         url = job.get("apply_url", "")
         if not url or url in _seen_urls:
             continue
-        company_lower = (job.get("company") or "").lower().strip()
-        if company_lower and any(s in company_lower for s in BLOCKED_STAFFING):
+        if is_staffing_agency(job.get("company") or ""):
             staffing_dropped += 1
             continue
         new_jobs.append(job)
@@ -348,8 +347,8 @@ def run_scout_cycle(tenant: TenantConfig, style_filter: str | None = None) -> in
 
     Priority dispatch:
       HIGH:    always run
-      MEDIUM:  run 80% of cycles
-      LOW:     run 40% of cycles
+      MEDIUM:  always run (was 0.8; throughput tuning — 2026-04)
+      LOW:     run 80% of cycles (was 0.4)
 
     Adding a new source only requires appending to scout.REGISTERED_SOURCES.
     """
@@ -365,13 +364,10 @@ def run_scout_cycle(tenant: TenantConfig, style_filter: str | None = None) -> in
             source_style = _SCOUT_STYLE.get(source.name, "title")
             if source_style != style_filter:
                 continue
-        roll = random.random()
-        if source.priority == "high":
+        if source.priority == "high" or source.priority == "medium":
             run_it = True
-        elif source.priority == "medium":
-            run_it = roll < 0.8
         else:  # "low"
-            run_it = roll < 0.4
+            run_it = random.random() < 0.8
         if not run_it:
             continue
         try:
@@ -1006,8 +1002,7 @@ def main():
             continue
 
         # Staffing agency check
-        company_lower = (company or "").lower().strip()
-        if any(s in company_lower for s in BLOCKED_STAFFING):
+        if is_staffing_agency(company):
             logger.info(f"Skipping staffing agency: {company}")
             update_queue_status(job['id'], 'cancelled', error='staffing agency')
             update_local_status(job, 'skipped', 'staffing agency')

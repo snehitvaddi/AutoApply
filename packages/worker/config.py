@@ -21,7 +21,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 WORKER_ID = os.environ.get("WORKER_ID", f"worker-{os.getpid()}")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "10"))
-APPLY_COOLDOWN = int(os.environ.get("APPLY_COOLDOWN", "30"))
+APPLY_COOLDOWN = int(os.environ.get("APPLY_COOLDOWN", "15"))
 # Default to the per-user workspace on any platform. /tmp doesn't exist
 # on Windows, and even on macOS /tmp is wiped on reboot — losing a
 # freshly-downloaded resume mid-run. The workspace dir matches what the
@@ -31,10 +31,10 @@ RESUME_DIR = os.environ.get("RESUME_DIR") or os.path.join(_WORKSPACE, "resumes")
 SCREENSHOT_DIR = os.environ.get("SCREENSHOT_DIR") or os.path.join(_WORKSPACE, "screenshots")
 
 ATS_COOLDOWNS = {
-    "greenhouse": 30,
-    "lever": 20,
-    "ashby": 15,
-    "smartrecruiters": 20,
+    "greenhouse": 15,
+    "lever": 12,
+    "ashby": 10,
+    "smartrecruiters": 12,
 }
 
 MAX_SYSTEM_APPS_PER_HOUR = 60
@@ -62,25 +62,64 @@ COMPANY_PAUSES: dict[str, date] = {
 
 # Staffing agencies — not direct employers. Universal business rule; apps
 # go to recruiters instead of real hiring managers, so no tenant wants them.
-# Matched as substrings against lowered company names (worker.py), so generic
-# patterns like "consulting" and "staffing" catch the long tail of
-# body-shops without needing every slug in an allowlist.
-BLOCKED_STAFFING = [
-    # Named staffing platforms / body-shops
+# Named platforms below are matched as substrings (they're distinctive).
+BLOCKED_STAFFING_NAMED = [
+    # Generic staffing / aggregator platforms
     "hackajob", "lensa", "jobright", "kforce", "dice", "collabera",
     "wiraa", "synergistic", "aditi", "hirenza", "jobot",
-    "insight global", "teksystems", "mphasis", "data annotation",
+    "insight global", "teksystems", "data annotation",
     "technosoft", "sysinc",
-    # Generic consultancy / staffing suffixes — substring-matched so they
-    # catch "Take2 Consulting LLC", "Radiance Sysinc", "Acme Staffing", etc.
-    "consulting", "consultants", "consulting group", "consulting llc",
-    "staffing", "it services", "solutions llc", "solutions inc",
-    "software inc",
+    # Indian body-shops / outsourced-services firms — they source candidates
+    # for a distant client, so applications never reach a real hiring manager.
+    "infosys", "wipro", "cognizant", "tcs", "tata consultancy",
+    "hcl technologies", "hcltech", "tech mahindra", "ltimindtree",
+    "mphasis", "mindtree", "genpact", "capgemini", "accenture",
+    "deloitte", "nagarro", "virtusa", "persistent systems",
+    "coforge", "happiest minds", "hexaware", "zensar",
+    "birlasoft", "mastech", "nttdata", "ntt data",
 ]
+
+# Generic suffixes — matched only as whole words / phrase-with-boundaries to
+# avoid nuking legit employers (e.g. earlier "software inc" substring dropped
+# any "* Software Inc" company; "consulting" dropped anything containing it).
+# See is_staffing_agency() below.
+BLOCKED_STAFFING_SUFFIXES = [
+    # Consultancy / staffing phrasing
+    "consulting", "consultants", "consultancy", "staffing",
+    # Body-shop naming patterns
+    "it services", "it solutions", "tech services", "tech solutions",
+    "global services", "business services", "digital services",
+    "infotech", "softech", "softtech", "infosystems", "info systems",
+    # LLC/Inc suffix phrases — body shops love these
+    "solutions llc", "solutions inc", "systems inc", "systems llc",
+    "enterprises inc", "enterprises llc", "innovations llc",
+    "labs llc",
+]
+
+# Legacy alias — preserved for any external importers. Prefer is_staffing_agency().
+BLOCKED_STAFFING = BLOCKED_STAFFING_NAMED + BLOCKED_STAFFING_SUFFIXES
+
+
+def is_staffing_agency(company: str) -> bool:
+    """True if company is a known staffing platform or body-shop.
+
+    Named platforms: substring. Generic suffixes: word-boundary regex so
+    e.g. "Amazon" isn't killed by a fragment of "amazon services llc".
+    """
+    if not company:
+        return False
+    c = company.lower().strip()
+    if any(s in c for s in BLOCKED_STAFFING_NAMED):
+        return True
+    import re
+    for suffix in BLOCKED_STAFFING_SUFFIXES:
+        if re.search(rf"\b{re.escape(suffix)}\b", c):
+            return True
+    return False
 
 # ─── Scout → Filter → Apply cycle config ────────────────────────────────────
 
-SCOUT_INTERVAL_MINUTES = int(os.environ.get("SCOUT_INTERVAL_MINUTES", "30"))
+SCOUT_INTERVAL_MINUTES = int(os.environ.get("SCOUT_INTERVAL_MINUTES", "15"))
 # Rolling 7-day cap per company. Simpler than the old 2/day + 5/15d pair —
 # matches real submission behavior and easier for Claude to reason about.
 MAX_COMPANY_APPS_PER_7_DAYS = 3

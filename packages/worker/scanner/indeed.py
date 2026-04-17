@@ -4,7 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def scan_indeed(queries: list[str], location: str = "United States", results_per_query: int = 50) -> list[dict]:
+def scan_indeed(queries: list[str], location: str = "United States", results_per_query: int = 150) -> list[dict]:
     """Search Indeed for jobs matching each query."""
     try:
         from jobspy import scrape_jobs
