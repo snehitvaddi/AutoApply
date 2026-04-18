@@ -72,7 +72,7 @@ export default function JobsListPage() {
   // displays whatever data it had when the server last answered.
   const [lastFetch, setLastFetch] = useState<number | null>(null)
   const [backendReachable, setBackendReachable] = useState<boolean>(true)
-  const appliedEndRef = useRef<HTMLDivElement>(null)
+  const appliedScrollRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -135,10 +135,21 @@ export default function JobsListPage() {
     return () => clearInterval(interval)
   }, [refresh])
 
-  // Auto-scroll applied list to bottom (newest)
+  // Auto-scroll applied list to bottom (newest). scrollIntoView on a sentinel
+  // child inside a nested flex container doesn't reliably scroll THIS
+  // container — it can scroll a parent or get overruled by flex sizing.
+  // Setting scrollTop directly on the scrollable div is deterministic.
+  // Two rAFs: first to let React commit the new rows, second to let the
+  // browser paint so scrollHeight reflects the real content height.
   useEffect(() => {
-    appliedEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [applied])
+    const c = appliedScrollRef.current
+    if (!c) return
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        c.scrollTop = c.scrollHeight
+      })
+    })
+  }, [applied, filter])
 
   const filteredApplied =
     filter === "all"
@@ -200,7 +211,7 @@ export default function JobsListPage() {
                 </div>
                 <span className="text-[10px] text-muted-foreground">oldest ↑ newest ↓</span>
               </div>
-              <div className="flex-1 overflow-y-auto">
+              <div ref={appliedScrollRef} className="flex-1 overflow-y-auto">
                 {filteredApplied.length === 0 ? (
                   <div className="flex h-full items-center justify-center p-8">
                     <p className="text-sm text-muted-foreground">No applications yet</p>
@@ -245,7 +256,6 @@ export default function JobsListPage() {
                     </tbody>
                   </table>
                 )}
-                <div ref={appliedEndRef} />
               </div>
             </div>
 

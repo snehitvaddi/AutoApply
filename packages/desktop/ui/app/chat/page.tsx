@@ -220,6 +220,22 @@ export default function ChatPage() {
     return () => { cancelled = true }
   }, [])
 
+  // Force scroll-to-bottom once when history finishes loading. Without this
+  // the chat lands at the top of a 200-message backfill and the user has to
+  // manually scroll to catch up with the live conversation.
+  useEffect(() => {
+    if (!historyLoaded) return
+    const c = scrollContainerRef.current
+    if (!c) return
+    // Two rAFs: first to let React commit the items, second to let the
+    // browser paint so scrollHeight is accurate.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        c.scrollTop = c.scrollHeight
+      })
+    })
+  }, [historyLoaded])
+
   // Scroll-to-bottom on live append, but NOT while user is reading history
   // upward (detected by checking distance-from-bottom before the new append).
   useEffect(() => {
