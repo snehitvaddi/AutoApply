@@ -558,8 +558,16 @@ class GreenhouseApplier(BaseApplier):
                 error="recaptcha_blocked", retriable=False,
             )
 
-        # No confirmation text but submit button gone — likely successful
-        return ApplyResult(success=True, screenshot=img)
+        # No confirmation text AND no submit button. Previously we treated
+        # "button gone = success" — but Greenhouse sometimes hides the
+        # submit button after a 500/validation error without showing a
+        # thank-you page. Refuse to fake success: fail loud so the
+        # dashboard tells the truth and the retry path kicks in.
+        return ApplyResult(
+            success=False, screenshot=img,
+            error="no confirmation page detected after submit — likely silent failure",
+            retriable=False,
+        )
 
     def _attempt_error_recovery(
         self, snap_raw: str, errors: str, previous_fills: list, prof_summary: str

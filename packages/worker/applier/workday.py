@@ -43,7 +43,7 @@ import time
 import logging
 from typing import Optional
 
-from applier.base import BaseApplier, ApplyResult
+from applier.base import BaseApplier, ApplyResult, is_submission_confirmed
 from applier.greenhouse import (
     browser, snapshot, fill_fields, click_ref, type_into,
     upload_file, take_screenshot, wait_load, navigate_url,
@@ -471,13 +471,19 @@ class WorkdayApplier(BaseApplier):
                     time.sleep(5)
                     img = take_screenshot()
 
-                    post_raw = snapshot()
-                    post_text = (post_raw or "").lower()
-                    if any(s in post_text for s in [
-                        "thank you", "submitted", "received your application",
-                        "application has been received",
-                    ]):
-                        return ApplyResult(success=True, screenshot=img)
+                    # Positive-confirmation gate. Previously BOTH branches
+                    # returned success=True (the confirmation check was dead
+                    # code). Now we fail loud if Workday's post-submit page
+                    # doesn't show a confirmation signal — captchas, session
+                    # kicks to login, and backend rejects all looked like
+                    # submits before.
+                    post_text = snapshot() or ""
+                    if not is_submission_confirmed(post_text):
+                        return ApplyResult(
+                            success=False, screenshot=img,
+                            error="no confirmation page detected after submit — likely silent failure",
+                            retriable=False,
+                        )
                     return ApplyResult(success=True, screenshot=img)
 
                 # Click Next/Continue to advance the wizard
