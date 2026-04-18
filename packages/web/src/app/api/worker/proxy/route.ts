@@ -894,13 +894,25 @@ export async function POST(request: NextRequest) {
         // Rules-first decision ladder; LLM fallback is Phase 3.
         //
         // Live state inputs:
-        //   - in_queue      active queue rows (pending/locked/in_progress)
+        //   - in_queue      CLAIMABLE queue rows (status='pending' only)
         //   - applied_today submissions since UTC midnight
         //   - daily_cap     min of users.daily_apply_limit & default bundle.max_daily
         //                   (null means no cap on that side)
         //   - last_scout_*  last 3 scout decisions from worker_plan
         //
         // Writes one row to worker_plan with a 10-min expiry.
+        //
+        // Why we recover stale locks first: a worker that crashed mid-apply
+        // leaves its row in status='locked' forever. The planner used to
+        // count those as in_queue → always returned apply_next → claim_next_job
+        // refuses (only picks 'pending') → infinite apply_next spin with
+        // queue=N, applied=0 for hours. Calling recover_stale_locks
+        // recycles any lock older than 10 min back to 'pending' before we
+        // count. Also, we now count ONLY 'pending' — so even if a new kind
+        // of stuck row appears, the planner can't trip into the same spin.
+
+        // Best-effort recovery. RPC is idempotent; ignore its return value.
+        await supabase.rpc("recover_stale_locks");
 
         const utcMidnightIso = new Date().toISOString().slice(0, 10) + "T00:00:00Z";
 
@@ -909,7 +921,7 @@ export async function POST(request: NextRequest) {
             .from("application_queue")
             .select("id", { count: "exact", head: true })
             .eq("user_id", userId)
-            .in("status", ["pending", "locked", "in_progress"]),
+            .eq("status", "pending"),
           supabase
             .from("applications")
             .select("id", { count: "exact", head: true })
