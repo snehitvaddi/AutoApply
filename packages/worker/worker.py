@@ -33,7 +33,10 @@ from db import (
     update_local_status, cleanup_stale_queued_shadows, prune_old_screenshots,
     WorkerAuthError,
 )
-from notifier import send_application_result, send_failure
+from notifier import (
+    send_application_result, send_failure,
+    send_scout_summary, send_session_event,
+)
 from knowledge import build_answer_key, load_global_template
 from applier.base import MissingResumeError
 from applier.greenhouse import GreenhouseApplier
@@ -423,6 +426,12 @@ def run_scout_cycle(tenant: TenantConfig, style_filter: str | None = None) -> in
     _touch_scout_heartbeat(enqueued=enqueued, raw=raw_count)
     logger.info(f"Scout complete: {enqueued} new jobs enqueued (from {raw_count} raw)")
     update_heartbeat(tenant.user_id, "scouted", f"{enqueued} enqueued from {summary}")
+    # Telegram summary — fire-and-forget. Skipped internally when raw+enqueued=0
+    # so the user isn't spammed during quiet stretches.
+    try:
+        send_scout_summary(tenant.user_id, raw_count, enqueued, counts)
+    except Exception as e:
+        logger.debug(f"scout-summary notify failed (non-fatal): {e}")
     return enqueued
 
 
@@ -815,6 +824,10 @@ def main():
         return
     except WorkerAuthError as e:
         logger.error(f"Worker token rejected — cannot load tenant: {e}")
+        try:
+            send_session_event(user_id, "auth_expired", "Worker token revoked or invalid. Re-run the installer.")
+        except Exception:
+            pass
         return
     except Exception as e:
         logger.exception(f"Failed to load tenant config: {e}")
@@ -839,6 +852,13 @@ def main():
         prune_old_screenshots(days=7)
     except Exception as e:
         logger.debug(f"screenshot prune skipped: {e}")
+
+    # Telegram session-start ping so the user knows the worker is live.
+    try:
+        mode = "cloud-planner" if os.environ.get("WORKER_USE_CLOUD_PLANNER", "").lower() in ("1", "true", "yes") else "local-first"
+        send_session_event(tenant.user_id, "worker_started", f"mode: {mode}")
+    except Exception as e:
+        logger.debug(f"worker_started notify failed (non-fatal): {e}")
 
     # Start the tenant reload thread — refreshes _current_tenant every
     # TENANT_RELOAD_INTERVAL_SECS so password rotations / bundle edits
@@ -984,6 +1004,10 @@ def main():
                 job = claim_next_job_locally(tenant.user_id, WORKER_ID)
         except WorkerAuthError as e:
             logger.error(f"Authentication failed — exiting worker loop: {e}")
+            try:
+                send_session_event(tenant.user_id, "auth_expired", "Worker token revoked mid-loop.")
+            except Exception:
+                pass
             running = False
             break
         if not job:
@@ -1363,7 +1387,10 @@ def main():
                     update_local_status(job, 'failed', result.error)
                     log_application(user_id, job, {'status': 'failed', 'error': result.error})
                     outcome_logged = True
-                    send_failure(user_id, company, job.get('title', ''), result.error)
+                    send_failure(
+                        user_id, company, job.get('title', ''), result.error,
+                        screenshot_path=result.screenshot,
+                    )
                     update_heartbeat(user_id, "failed", f"{company} — {result.error[:80]}")
                     apply_outcome = "failed"
                     apply_outcome_detail = f"{company}: {str(result.error)[:160]}"
