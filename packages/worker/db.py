@@ -488,9 +488,35 @@ def _ensure_local_schema(conn: sqlite3.Connection):
 
 # ── User profile ──────────────────────────────────────────────────────────
 
-def load_user_profile(user_id: str) -> dict:
-    """Fetch user profile + resumes."""
-    return _api_call("load_profile")
+# Profile cache — same 5-min TTL as preferences. Before this, the apply
+# loop called load_user_profile(user_id) twice per iteration (preflight
+# + inside the loop body), costing ~2 cloud round-trips per job. With
+# the cache a single apply cycle reads from memory after the first hit.
+_profile_cache: dict = {}
+PROFILE_CACHE_TTL = 300  # 5 minutes — matches preferences + tenant reload
+
+
+def load_user_profile(user_id: str, force: bool = False) -> dict:
+    """Fetch user profile + resumes. Cached for 5 min so the hot apply path
+    doesn't round-trip the cloud on every iteration.
+
+    Pass force=True to bust the cache (e.g., right after a profile update).
+    """
+    now = time.time()
+    if not force and user_id in _profile_cache:
+        data, ts = _profile_cache[user_id]
+        if now - ts < PROFILE_CACHE_TTL:
+            return data
+    result = _api_call("load_profile")
+    _profile_cache[user_id] = (result, now)
+    return result
+
+
+def refresh_config_caches() -> None:
+    """Bust every in-memory config cache. Call after a settings change or
+    when the worker has reason to believe the cloud has newer data."""
+    _profile_cache.clear()
+    _prefs_cache.clear()
 
 
 # ── Daily limits ──────────────────────────────────────────────────────────
