@@ -122,6 +122,41 @@ export async function POST(request: NextRequest) {
         return apiSuccess({ ok: true });
       }
 
+      case "upload_screenshot": {
+        // Worker sends the PNG as base64. We land it in the private
+        // 'screenshots' bucket at {user_id}/{ts}_{name} and return a
+        // 7-day signed URL so the desktop dashboard + admin can show
+        // the image without public exposure. See migration 028.
+        const b64 = String(params.file_base64 || "");
+        const filename = String(params.filename || "screenshot.png");
+        if (!b64) return apiError("validation_error", "file_base64 required");
+        const buf = Buffer.from(b64, "base64");
+        if (buf.length > 5 * 1024 * 1024) {
+          return apiError("validation_error", "screenshot too large (>5 MB)");
+        }
+        const safe = filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100) || "screenshot.png";
+        const storagePath = `${userId}/${Date.now()}_${safe}`;
+        const uploadRes = await supabase.storage
+          .from("screenshots")
+          .upload(storagePath, buf, {
+            contentType: filename.toLowerCase().endsWith(".jpg") ? "image/jpeg" : "image/png",
+            upsert: false,
+          });
+        if (uploadRes.error) {
+          return apiError(
+            "internal_server_error",
+            `screenshot upload failed: ${uploadRes.error.message}`,
+          );
+        }
+        const signed = await supabase.storage
+          .from("screenshots")
+          .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
+        return apiSuccess({
+          url: signed.data?.signedUrl ?? null,
+          storage_path: storagePath,
+        });
+      }
+
       case "load_profile": {
         const [userRes, profileRes, resumesRes, defaultBundleRes] = await Promise.all([
           supabase.from("users").select("*").eq("id", userId).single(),

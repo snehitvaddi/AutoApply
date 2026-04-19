@@ -688,9 +688,57 @@ def download_resume(user_id: str, job_title: str | None = None) -> str:
 # ── Screenshot upload ─────────────────────────────────────────────────────
 
 def upload_screenshot(user_id: str, screenshot_path: str) -> str | None:
-    """Upload screenshot — for now, return local path. Cloud upload via API TBD."""
-    # Screenshots stay local for now. The Telegram notifier sends them directly.
-    return screenshot_path
+    """Upload screenshot to the cloud 'screenshots' bucket and return a
+    7-day signed URL. Falls back to the local path if cloud is unreachable
+    — the Telegram notifier can still attach the local file directly, and
+    the desktop Kanban can display the local path via file://.
+
+    Small by design: screenshots are capped at 5 MB (validated server-
+    side). base64 overhead is ~33%, so <7 MB payload per call.
+    """
+    if not screenshot_path or not os.path.exists(screenshot_path):
+        return None
+    try:
+        import base64 as _b64
+        with open(screenshot_path, "rb") as f:
+            b64 = _b64.b64encode(f.read()).decode("ascii")
+        filename = os.path.basename(screenshot_path)
+        result = _api_call("upload_screenshot", file_base64=b64, filename=filename)
+        url = result.get("url")
+        return url or screenshot_path
+    except Exception as e:
+        logger.debug(f"Screenshot cloud upload failed (falling back to local): {e}")
+        return screenshot_path
+
+
+def prune_old_screenshots(days: int = 7) -> int:
+    """Delete local screenshot files older than N days. Prevents
+    SCREENSHOT_DIR from growing unbounded on long-running installs.
+    Idempotent; safe to call at every worker boot + periodically.
+    """
+    try:
+        from config import SCREENSHOT_DIR
+    except Exception:
+        return 0
+    if not os.path.isdir(SCREENSHOT_DIR):
+        return 0
+    cutoff = time.time() - days * 86400
+    removed = 0
+    try:
+        for name in os.listdir(SCREENSHOT_DIR):
+            p = os.path.join(SCREENSHOT_DIR, name)
+            try:
+                if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+                    removed += 1
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"screenshot prune scan failed: {e}")
+        return 0
+    if removed:
+        logger.info(f"Pruned {removed} local screenshots older than {days}d")
+    return removed
 
 
 # ── Job enqueuing ─────────────────────────────────────────────────────────

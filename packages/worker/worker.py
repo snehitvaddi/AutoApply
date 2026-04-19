@@ -30,7 +30,7 @@ from db import (
     fetch_user_job_preferences, enqueue_discovered_jobs, update_heartbeat as db_heartbeat,
     check_company_rate as db_check_company_rate,
     check_company_rate_locally,
-    update_local_status, cleanup_stale_queued_shadows,
+    update_local_status, cleanup_stale_queued_shadows, prune_old_screenshots,
     WorkerAuthError,
 )
 from notifier import send_application_result, send_failure
@@ -832,6 +832,13 @@ def main():
         cleanup_stale_queued_shadows()
     except Exception as e:
         logger.debug(f"shadow cleanup skipped: {e}")
+
+    # Bound the local screenshot directory — delete files >7 days old so
+    # the disk doesn't grow forever. Idempotent; cheap; runs at boot.
+    try:
+        prune_old_screenshots(days=7)
+    except Exception as e:
+        logger.debug(f"screenshot prune skipped: {e}")
 
     # Start the tenant reload thread — refreshes _current_tenant every
     # TENANT_RELOAD_INTERVAL_SECS so password rotations / bundle edits
