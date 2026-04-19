@@ -88,6 +88,101 @@ def _resolve_ats_from_url(apply_url: str, tagged_ats: str) -> str:
             return ats_name
     return tagged_ats  # couldn't resolve — keep original
 
+
+_KNOWN_ATS_DOMAINS = (
+    "boards.greenhouse.io", "boards-api.greenhouse.io", "job-boards.greenhouse.io",
+    "greenhouse.io",
+    "jobs.lever.co", "lever.co",
+    "jobs.ashbyhq.com", "ashbyhq.com",
+    "jobs.smartrecruiters.com", "smartrecruiters.com",
+    "myworkdayjobs.com", "myworkday.com",
+)
+
+
+def _ddg_search(query: str, max_results: int = 10) -> list[str]:
+    """DuckDuckGo HTML search, no API key. Returns a list of result URLs.
+    Best-effort: network / parsing errors yield []."""
+    try:
+        import httpx
+        import re
+        from urllib.parse import parse_qs, unquote, urlparse
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        with httpx.Client(timeout=12, follow_redirects=True, headers=headers) as client:
+            resp = client.post(
+                "https://html.duckduckgo.com/html/",
+                data={"q": query},
+            )
+            if resp.status_code != 200:
+                return []
+            html = resp.text
+        urls: list[str] = []
+        for m in re.finditer(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"', html):
+            href = m.group(1)
+            # DDG wraps external links in /l/?kh=-1&uddg=<encoded>. Unwrap.
+            if href.startswith("//") or href.startswith("/l/") or href.startswith("/"):
+                try:
+                    parsed = urlparse(href if href.startswith("http") else "https:" + href)
+                    qs = parse_qs(parsed.query)
+                    real = qs.get("uddg", [None])[0]
+                    if real:
+                        href = unquote(real)
+                except Exception:
+                    pass
+            urls.append(href)
+            if len(urls) >= max_results:
+                break
+        return urls
+    except Exception:
+        return []
+
+
+def resolve_linkedin_apply_url(
+    linkedin_url: str, company: str = "", title: str = ""
+) -> tuple[str | None, str | None]:
+    """Find the real company apply URL for a LinkedIn-sourced job.
+
+    LinkedIn's public HTML gates anonymous viewers behind a sign-in modal
+    and hides the external apply URL — so we don't bother with that path.
+    Instead we web-search `"<company>" <title> (greenhouse|lever|ashby|
+    workday|smartrecruiters)` via DuckDuckGo HTML (no API key, no auth)
+    and pick the first result that hits a known-ATS domain.
+
+    Returns (url, reason). url=None when nothing plausible was found.
+    """
+    if not company and not linkedin_url:
+        return None, "no_input"
+    # Normalise: strip generic suffixes that make the search noisier
+    clean_title = (title or "").strip()
+    clean_company = (company or "").strip()
+    if not (clean_company or clean_title):
+        return None, "no_company_or_title"
+    # Tight query first — exact company match anchors the search
+    queries = []
+    if clean_company and clean_title:
+        queries.append(
+            f'"{clean_company}" "{clean_title}" careers '
+            f'(greenhouse OR lever OR ashby OR workday OR smartrecruiters)'
+        )
+    if clean_company:
+        queries.append(
+            f'"{clean_company}" careers site:greenhouse.io OR site:lever.co '
+            f'OR site:ashbyhq.com OR site:myworkdayjobs.com'
+        )
+    for q in queries:
+        for url in _ddg_search(q, max_results=12):
+            ul = url.lower()
+            if "linkedin.com" in ul:
+                continue
+            if any(dom in ul for dom in _KNOWN_ATS_DOMAINS):
+                return url, "ddg_known_ats"
+    return None, "no_ats_match_in_search"
+
 running = True
 
 
@@ -1311,6 +1406,38 @@ def main():
             ats = _resolve_ats_from_url(apply_url, raw_ats)
             if ats != raw_ats:
                 logger.info(f"ATS resolved: {raw_ats} → {ats} (from URL)")
+
+            # LinkedIn URLs need a second step: fetch the job detail page and
+            # extract the "Apply on company website" URL. If we can resolve to
+            # a real company ATS (greenhouse/ashby/lever/etc.) we replace
+            # apply_url and re-resolve the ATS. If only Easy Apply is
+            # available, skip the job (don't re-queue) so the loop moves on.
+            if ats == "linkedin" and "linkedin.com" in (apply_url or "").lower():
+                resolved_url, reason = resolve_linkedin_apply_url(
+                    apply_url, company=company, title=job.get('title', '')
+                )
+                if resolved_url:
+                    logger.info(
+                        f"LinkedIn resolved to company URL: {resolved_url[:80]} "
+                        f"(via {reason})"
+                    )
+                    apply_url = resolved_url
+                    job['apply_url'] = resolved_url
+                    ats = _resolve_ats_from_url(apply_url, "linkedin")
+                    if ats == "linkedin":
+                        ats = "other"  # resolved to a non-LinkedIn, non-coded ATS
+                else:
+                    logger.info(
+                        f"LinkedIn job {job['id']} ({company}) can't be resolved "
+                        f"({reason}) — skipping instead of queueing forever"
+                    )
+                    update_queue_status(
+                        job['id'], 'cancelled',
+                        error=f'linkedin_unresolvable:{reason}',
+                    )
+                    update_local_status(job, 'skipped', f'LinkedIn: {reason}')
+                    continue
+
             cooldown = ATS_COOLDOWNS.get(ats, APPLY_COOLDOWN)
 
             # Get the right applier. If no coded applier exists for this ATS,

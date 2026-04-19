@@ -131,6 +131,16 @@ class ApplyProfile:
         if self.preferred_locations:
             locs = [loc.lower() for loc in self.preferred_locations]
             if ll and not any(loc in ll for loc in locs):
+                # Intent-aware fallback. If the user asked for "United
+                # States" / "USA" / "US", accept any location that LOOKS
+                # US-ish — state codes (", CA", "CA,"), "remote", common
+                # US metros. Before this, Ashby / Greenhouse / Lever jobs
+                # returning "San Francisco, CA" were dropped 100% because
+                # they don't contain the literal string "united states",
+                # while LinkedIn (which injects "United States" into its
+                # search) was the only source passing.
+                if _wants_us(locs) and _is_us_location(ll):
+                    return True
                 return False
         elif self.remote_only:
             # Remote-only tenants: reject blank locations too. A missing
@@ -523,3 +533,56 @@ def _keyword_hit(kw: str, text: str) -> bool:
     if kw in _SHORT_KEYWORDS or len(kw) <= 3:
         return bool(re.search(rf'\b{re.escape(kw)}\b', text))
     return kw in text
+
+
+# US-aware location matching. When a user sets preferred_locations=["United
+# States"], they intend "US jobs" — but ATS APIs return "San Francisco, CA"
+# or "Austin, TX" or "Remote", none of which literally contain the phrase
+# "united states." We treat all of those as a match.
+
+_US_TOKENS = (
+    "united states", "usa", "u.s.a", "u.s.", " us ", ",us", "us,",
+    ", us", "(us)", "remote - us", "remote, us", "remote us",
+)
+
+_US_STATE_CODES = (
+    "al","ak","az","ar","ca","co","ct","de","fl","ga","hi","id","il",
+    "in","ia","ks","ky","la","me","md","ma","mi","mn","ms","mo","mt",
+    "ne","nv","nh","nj","nm","ny","nc","nd","oh","ok","or","pa","ri",
+    "sc","sd","tn","tx","ut","vt","va","wa","wv","wi","wy","dc",
+)
+
+# Pre-compiled: matches ", XX" or " XX," or " XX " where XX is a US state code.
+_US_STATE_CODE_RE = re.compile(
+    r"(?:[,\s]|^)(" + "|".join(_US_STATE_CODES) + r")(?:[,\s.)]|$)",
+    re.IGNORECASE,
+)
+
+
+def _wants_us(preferred_lower_list: list[str]) -> bool:
+    """True if any preferred_locations entry indicates 'US' intent."""
+    return any(
+        any(tok in loc for tok in ("united states", "usa", "us", "u.s"))
+        for loc in preferred_lower_list
+    )
+
+
+def _is_us_location(loc_lower: str) -> bool:
+    """True if the given (already-lowercased) location string looks US-ish.
+
+    Accepts: literal "united states" / "usa" / "US" tokens, "remote" (as
+    most remote listings from US-based ATSes are US-only by default),
+    and "city, ST" patterns where ST is a 2-letter US state code.
+
+    Empty string is rejected here; callers already short-circuit on blank
+    locations.
+    """
+    if not loc_lower:
+        return False
+    if any(tok in loc_lower for tok in _US_TOKENS):
+        return True
+    if "remote" in loc_lower:
+        return True
+    if _US_STATE_CODE_RE.search(loc_lower):
+        return True
+    return False
