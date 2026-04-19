@@ -146,6 +146,12 @@ def get_stats() -> dict:
 
         total = total_submitted + total_failed
         rate = round(total_submitted / total * 100) if total > 0 else 0
+        # Live counters that were previously computed ad-hoc or not at all.
+        # Surface them in get_stats() so the dashboard can render them
+        # without adding a second polling endpoint.
+        applying_now = conn.execute(
+            "SELECT COUNT(*) FROM applications WHERE status='applying'"
+        ).fetchone()[0]
 
         return {
             "applied_today": today_submitted,
@@ -153,6 +159,10 @@ def get_stats() -> dict:
             "in_queue": in_queue,
             "success_rate": rate,
             "total_failed": total_failed,
+            "applying_now": applying_now,
+            # Minutes since the last scout cycle. None if scout has never
+            # run on this install. Rendered as "Last scout: Xm ago".
+            "last_scout_min_ago": get_scout_age_minutes(),
         }
     finally:
         conn.close()

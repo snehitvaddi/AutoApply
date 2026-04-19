@@ -10,9 +10,10 @@ interface StatCardProps {
   }
   trend?: "up" | "down"
   pulseDot?: boolean
+  subtitle?: string
 }
 
-export function StatCard({ title, value, badge, trend, pulseDot }: StatCardProps) {
+export function StatCard({ title, value, badge, trend, pulseDot, subtitle }: StatCardProps) {
   return (
     <div className="rounded-xl border border-border bg-card p-5">
       <p className="text-sm text-muted-foreground">{title}</p>
@@ -37,6 +38,9 @@ export function StatCard({ title, value, badge, trend, pulseDot }: StatCardProps
           <ArrowUp className="h-4 w-4 text-success" />
         )}
       </div>
+      {subtitle && (
+        <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+      )}
     </div>
   )
 }

@@ -75,6 +75,8 @@ export interface DashboardStats {
   total_applied: number;
   in_queue: number;
   success_rate: number;
+  applying_now?: number;
+  last_scout_min_ago?: number | null;
 }
 
 export async function getStats() {

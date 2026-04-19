@@ -285,6 +285,11 @@ export default function DashboardPage() {
           <StatCard
             title="Applied Today"
             value={loading ? "—" : String(stats?.applied_today ?? 0)}
+            subtitle={
+              (stats?.applying_now ?? 0) > 0
+                ? `${stats?.applying_now} applying now`
+                : undefined
+            }
           />
           <StatCard
             title="Total Applied"
@@ -294,6 +299,15 @@ export default function DashboardPage() {
             title="In Queue"
             value={loading ? "—" : String(stats?.in_queue ?? 0)}
             pulseDot={(stats?.in_queue ?? 0) > 0}
+            subtitle={
+              stats?.last_scout_min_ago != null
+                ? `Last scout: ${
+                    stats.last_scout_min_ago < 1
+                      ? "just now"
+                      : `${Math.round(stats.last_scout_min_ago)}m ago`
+                  }`
+                : undefined
+            }
           />
           <StatCard
             title="Success Rate"

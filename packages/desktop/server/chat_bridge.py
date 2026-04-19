@@ -86,6 +86,12 @@ def _persist_broadcast(payload: dict) -> None:
     meta: dict | None = None
 
     if ptype == "telegram":
+        # Tag the row so the chat UI can render the "from Telegram" /
+        # "sent to Telegram" badge on replay. Without this, viaTelegram
+        # was always False for Claude replies that actually went through
+        # the bot — the user couldn't tell cross-channel messages apart
+        # from local chat replies.
+        meta = {"original_type": "telegram"}
         if payload.get("from_bot"):
             sender = chat_log.SENDER_CLAUDE
         else:
