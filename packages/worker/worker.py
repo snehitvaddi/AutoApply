@@ -22,12 +22,14 @@ from tenant import (
 )
 from scout import REGISTERED_SOURCES
 from db import (
-    claim_next_job, load_user_profile, update_queue_status, log_application,
+    claim_next_job, claim_next_job_locally, load_user_profile,
+    update_queue_status, log_application,
     fetch_next_plan, report_plan_outcome,
-    check_daily_limit, count_profile_applied_today,
+    check_daily_limit, check_daily_limit_locally, count_profile_applied_today,
     get_answer_key, download_resume, download_resume_by_url, upload_screenshot,
     fetch_user_job_preferences, enqueue_discovered_jobs, update_heartbeat as db_heartbeat,
     check_company_rate as db_check_company_rate,
+    check_company_rate_locally,
     update_local_status, cleanup_stale_queued_shadows,
     WorkerAuthError,
 )
@@ -849,24 +851,36 @@ def main():
     # Daily update check — runs on first execution of each new day
     check_and_pull_updates()
 
-    # Planner-driven mode is the default. Set WORKER_USE_LEGACY_LOOP=1 to
-    # fall back to the old scout-thread + exponential-backoff main loop.
-    use_planner = os.environ.get("WORKER_USE_LEGACY_LOOP", "").lower() not in ("1", "true", "yes")
+    # LOCAL-FIRST is the default (2026-04-19 onward). Worker runs its own
+    # scout thread, claims from local SQLite, and enforces rate limits
+    # locally. Cloud is config pull + observability write only — nothing
+    # the cloud does can stall the apply loop.
+    #
+    # Opt-in to the old cloud-planner brain with WORKER_USE_CLOUD_PLANNER=1.
+    # Legacy WORKER_USE_LEGACY_LOOP=1 is preserved as an alias (= "local-
+    # first", same as the new default) so no one's env breaks on update.
+    use_planner = os.environ.get("WORKER_USE_CLOUD_PLANNER", "").lower() in ("1", "true", "yes")
+    # If the user explicitly set the legacy var, honour their intent even
+    # though it's now redundant.
+    if os.environ.get("WORKER_USE_LEGACY_LOOP", "").lower() in ("1", "true", "yes"):
+        use_planner = False
 
     if use_planner:
         logger.info(
-            f"Planner mode ON for {tenant.user_id[:8]} — scout is planner-directed, "
-            f"not on a timer. Set WORKER_USE_LEGACY_LOOP=1 to revert."
+            f"Cloud-planner mode ON for {tenant.user_id[:8]} — opt-in. "
+            f"Scout + claim + rate checks go through the cloud."
         )
     else:
-        # Legacy mode: start the standalone scout thread on a 30-min timer.
+        # Local-first mode: start the standalone scout thread on a timer.
         scout_thread = threading.Thread(
             target=scout_loop, args=(tenant,), daemon=True, name="scout-loop"
         )
         scout_thread.start()
         logger.info(
-            f"Legacy mode: scout loop started for {tenant.user_id[:8]} "
-            f"(interval={SCOUT_INTERVAL_MINUTES}m, {len(REGISTERED_SOURCES)} sources)"
+            f"Local-first mode (default): scout loop started for "
+            f"{tenant.user_id[:8]} (interval={SCOUT_INTERVAL_MINUTES}m, "
+            f"{len(REGISTERED_SOURCES)} sources). Cloud is mirror-only; "
+            f"Vercel / Supabase outages cannot stall this loop."
         )
 
     while running:
@@ -956,7 +970,11 @@ def main():
         _prune_stale_queue_locally()
 
         try:
-            job = claim_next_job(WORKER_ID)
+            if use_planner:
+                job = claim_next_job(WORKER_ID)
+            else:
+                # Local-first claim. Atomic on local SQLite, no cloud RTT.
+                job = claim_next_job_locally(tenant.user_id, WORKER_ID)
         except WorkerAuthError as e:
             logger.error(f"Authentication failed — exiting worker loop: {e}")
             running = False
@@ -1016,8 +1034,15 @@ def main():
             update_local_status(job, 'skipped', 'staffing agency')
             continue
 
-        # Company rate limit (max 3 per rolling 7 days)
-        if not check_company_rate(user_id, company):
+        # Company rate limit (max 3 per rolling 7 days). Local variant in
+        # default mode avoids a blocking cloud RTT; cloud stays graceful-
+        # default (returns True on failure) when used in planner mode.
+        _rate_ok = (
+            check_company_rate_locally(user_id, company)
+            if not use_planner
+            else check_company_rate(user_id, company)
+        )
+        if not _rate_ok:
             logger.info(f"Company rate limit reached for {company}, skipping")
             update_queue_status(job['id'], 'cancelled', error='company rate limit (5/30d)')
             update_local_status(job, 'skipped', 'company rate limit')
@@ -1030,7 +1055,15 @@ def main():
             continue
 
         # Check daily limit
-        if not check_daily_limit(user_id):
+        # Daily limit — local cap from tenant.daily_apply_limit (default
+        # mode) or cloud fallback (planner mode). Local variant never
+        # stalls the loop on cloud downtime.
+        _daily_ok = (
+            check_daily_limit_locally(user_id, tenant.daily_apply_limit)
+            if not use_planner
+            else check_daily_limit(user_id)
+        )
+        if not _daily_ok:
             logger.info(f"User {user_id} daily limit reached, skipping")
             update_queue_status(job['id'], 'pending')  # put back
             time.sleep(5)
