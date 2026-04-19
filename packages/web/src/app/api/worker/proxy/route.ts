@@ -472,6 +472,41 @@ export async function POST(request: NextRequest) {
             .eq("user_id", userId);
         }
 
+        // Dedupe by (user_id, file_name). The desktop ProfilesTab
+        // dropdown grew one entry per upload because this path always
+        // INSERTed. Re-uploads of the same filename now UPDATE the
+        // existing row's storage_path instead (the new bytes live at a
+        // new timestamped storage path; the stale one is orphaned —
+        // cheap, and storage upsert isn't safe here because upload:
+        // `upsert: false` above guarantees unique object paths).
+        const { data: existingRow } = await supabase
+          .from("user_resumes")
+          .select("id")
+          .eq("user_id", userId)
+          .eq("file_name", finalName)
+          .maybeSingle();
+
+        if (existingRow?.id) {
+          const { data: updatedRow, error: updateErr } = await supabase
+            .from("user_resumes")
+            .update({
+              storage_path: storagePath,
+              is_default: makeDefault,
+              target_keywords: targetKeywords,
+            })
+            .eq("id", existingRow.id)
+            .select("id, storage_path, file_name, is_default, target_keywords, created_at")
+            .single();
+          if (updateErr) {
+            try { await supabase.storage.from("resumes").remove([storagePath]); } catch {}
+            return apiError("internal_server_error", updateErr.message);
+          }
+          return apiSuccess({
+            resume: updatedRow,
+            size_bytes: buf.length,
+          });
+        }
+
         const { data: insertRow, error: insertErr } = await supabase
           .from("user_resumes")
           .insert({

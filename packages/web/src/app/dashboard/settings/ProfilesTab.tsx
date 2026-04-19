@@ -75,7 +75,20 @@ export function ProfilesTab({
         fetch("/api/settings/email-accounts").then((r) => r.json()),
       ]);
       setProfiles(pRes?.data?.profiles || []);
-      const resumeList = Array.isArray(rRes?.data) ? rRes.data : (rRes?.data?.resumes || []);
+      const rawResumeList: Resume[] = Array.isArray(rRes?.data) ? rRes.data : (rRes?.data?.resumes || []);
+      // Dedupe by file_name. Before the upload endpoint learned to
+      // upsert by (user_id, file_name), every re-upload of the same
+      // PDF created a fresh user_resumes row — the dropdown ballooned
+      // to 7+ identical entries. The upsert fix prevents NEW
+      // duplicates; this client-side collapse hides the legacy ones
+      // that already exist in the DB. We keep the most recent row per
+      // filename (list is ordered DESC by created_at server-side).
+      const seen = new Set<string>();
+      const resumeList = rawResumeList.filter((r) => {
+        if (seen.has(r.file_name)) return false;
+        seen.add(r.file_name);
+        return true;
+      });
       setResumes(resumeList);
       setEmailAccounts(eRes?.data?.email_accounts || []);
     } finally {
@@ -337,8 +350,68 @@ export function ProfilesTab({
   // and the new-profile draft. Pulling it into a closure avoids
   // duplicating ~150 lines of form JSX across two render branches.
   function renderEditorBody() {
+    // Resume-first layout. Per user feedback (Apr 2026) the resume is
+    // the single most critical artifact — worker blocks with
+    // awaiting_resume_upload when it's missing — so it lives at the
+    // TOP of the editor, above Essentials. The old order buried it
+    // below Board overrides which made new users scroll past five
+    // sections to get to the thing that matters.
+    const resumeSection = (
+      <div className="pb-3">
+        <h3 className="text-sm font-semibold mb-1">Resume</h3>
+        <p className="text-xs text-gray-500 mb-2">PDF used when applying via this profile. Re-uploading the same filename updates the existing entry (no more dropdown bloat).</p>
+        {(() => {
+          const activeResume = resumes.find((r) => r.id === draft.resume_id);
+          return (
+            <div className="text-xs text-gray-600 mb-2">
+              {activeResume
+                ? <>Active: <span className="font-mono text-gray-900">{activeResume.file_name}</span></>
+                : <span className="text-gray-400">No resume selected yet — upload one below.</span>}
+            </div>
+          );
+        })()}
+        {/* Keep a compact picker so users with multiple DISTINCT
+            resumes (e.g. AI_Engineer vs DA) can switch. The dropdown
+            is deduped by file_name in load() above, so the 7-copy
+            runaway from the old INSERT-every-upload path doesn't
+            reappear. */}
+        {resumes.length > 1 && (
+          <select className="border rounded px-2 py-1 w-full mb-2 text-sm" value={draft.resume_id || ""} onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}>
+            <option value="">(none)</option>
+            {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
+          </select>
+        )}
+        <InlineResumeUpload
+          // Existing-profile edit gets a real id; new-profile draft
+          // is null and skips the parse step until first save.
+          profileId={editingId !== "__new__" ? editingId : null}
+          onUploaded={(rid) => {
+            setDraft((d) => ({ ...d, resume_id: rid }));
+            load();
+          }}
+          onParsed={(parsed) => {
+            // Merge parsed W&E into the draft so the editor pre-fills.
+            // Use functional setState so we don't read a stale draft.
+            setDraft((d) => ({
+              ...d,
+              work_experience: (parsed.work_experience as never) || d.work_experience,
+              education: (parsed.education as never) || d.education,
+              skills: (parsed.skills as never) || d.skills,
+            }));
+            // Force the WorkEducationEditor to remount so its internal
+            // state re-syncs from `initial` (now carrying the parsed
+            // values). Without this, the editor's stale-local-state
+            // useEffect immediately overwrites the parsed data with []
+            // via its onChange callback. parseSeq drives the React key.
+            setParseSeq((n) => n + 1);
+          }}
+        />
+      </div>
+    );
     return (
       <>
+        {resumeSection}
+        <div className="border-t pt-3" />
         <LabelInput label="Profile name" value={draft.name || ""} onChange={(v) => setDraft({ ...draft, name: v })} placeholder="AI Engineer" />
         <ChipInput label="Target titles" values={draft.target_titles || []} onChange={(v) => setDraft({ ...draft, target_titles: v })} placeholder="AI Engineer, ML Engineer" />
         <ChipInput label="Target keywords" values={draft.target_keywords || []} onChange={(v) => setDraft({ ...draft, target_keywords: v })} placeholder="pytorch, llm" />
@@ -379,44 +452,6 @@ export function ProfilesTab({
           </details>
           <ChipInput label="Ashby boards" values={draft.ashby_boards || []} onChange={(v) => setDraft({ ...draft, ashby_boards: v.length ? v : null })} placeholder="openai, anthropic, linear" />
           <ChipInput label="Greenhouse boards" values={draft.greenhouse_boards || []} onChange={(v) => setDraft({ ...draft, greenhouse_boards: v.length ? v : null })} placeholder="stripe, airbnb, datadog" />
-        </div>
-
-        {/* Resume picker — moved INSIDE the profile (not a separate
-            tab anymore). Pool lives in user_resumes; this dropdown
-            picks one by id. Upload UX is the same /api/settings/resumes
-            POST that the (now-removed) Resumes tab used. */}
-        <div className="border-t pt-3 mt-2">
-          <h3 className="text-sm font-semibold mb-1">Resume</h3>
-          <p className="text-xs text-gray-500 mb-2">PDF used when applying via this profile. Upload a new one below to add to the pool.</p>
-          <select className="border rounded px-2 py-1 w-full mb-2" value={draft.resume_id || ""} onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}>
-            <option value="">(none)</option>
-            {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
-          </select>
-          <InlineResumeUpload
-            // Existing-profile edit gets a real id; new-profile draft
-            // is null and skips the parse step until first save.
-            profileId={editingId !== "__new__" ? editingId : null}
-            onUploaded={(rid) => {
-              setDraft((d) => ({ ...d, resume_id: rid }));
-              load();
-            }}
-            onParsed={(parsed) => {
-              // Merge parsed W&E into the draft so the editor pre-fills.
-              // Use functional setState so we don't read a stale draft.
-              setDraft((d) => ({
-                ...d,
-                work_experience: (parsed.work_experience as never) || d.work_experience,
-                education: (parsed.education as never) || d.education,
-                skills: (parsed.skills as never) || d.skills,
-              }));
-              // Force the WorkEducationEditor to remount so its internal
-              // state re-syncs from `initial` (now carrying the parsed
-              // values). Without this, the editor's stale-local-state
-              // useEffect immediately overwrites the parsed data with []
-              // via its onChange callback. parseSeq drives the React key.
-              setParseSeq((n) => n + 1);
-            }}
-          />
         </div>
 
         {/* Gmail credentials — entirely per-profile now. The shared
@@ -705,7 +740,11 @@ function InlineResumeUpload({
       <div className="flex items-center gap-2">
         <input
           type="file"
-          accept=".pdf,application/pdf"
+          // BOTH MIME and extension — macOS Finder greyed out PDFs
+          // when only one was specified, depending on how the file
+          // was downloaded. Belt-and-suspenders fixes the dimmed
+          // file-picker issue users reported.
+          accept="application/pdf,.pdf"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
           className="text-xs flex-1"
           disabled={phase !== "idle"}

@@ -102,7 +102,18 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
       // Handle both apiList shape (.data.data) and the legacy
       // { resumes: [] } shape.
       const rd = r?.data;
-      const resumeList = Array.isArray(rd?.data) ? rd.data : (Array.isArray(rd) ? rd : (rd?.resumes || []));
+      const rawResumeList: Resume[] = Array.isArray(rd?.data) ? rd.data : (Array.isArray(rd) ? rd : (rd?.resumes || []));
+      // Dedupe by file_name — the desktop dropdown was showing the
+      // same PDF 7 times because every re-upload INSERTed a new
+      // user_resumes row. Server-side upsert (proxy upload_resume
+      // + cloud /api/settings/resumes) now prevents fresh dupes;
+      // this guards legacy rows that already exist.
+      const seen = new Set<string>();
+      const resumeList = rawResumeList.filter((r) => {
+        if (seen.has(r.file_name)) return false;
+        seen.add(r.file_name);
+        return true;
+      });
       setResumes(resumeList);
       setEmailAccounts(e?.data?.email_accounts || []);
     } finally { setLoading(false); }
@@ -231,8 +242,58 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
   // The editor body — used inline by both an expanded existing-profile
   // card AND the new-profile draft. Keeping the form here as a closure
   // means the rendering JSX stays a single source of truth.
+  // Active resume, if any — for the "Current resume" display at the
+  // top of the editor.
+  const activeResume = resumes.find((r) => r.id === draft.resume_id);
+
   const editorBody = (
       <div className="space-y-5">
+        {/* Resume-first layout. Per user feedback (Apr 2026) the
+            resume is the single most critical artifact — worker blocks
+            with awaiting_resume_upload when it's missing — so it lives
+            at the TOP of the editor, above Essentials. The old order
+            buried it below Exclusions / Location which made new users
+            scroll past ~five sections to get to the critical upload. */}
+        <Section
+          title="Resume"
+          description="PDF used when applying via this profile. Re-uploading the same filename updates the existing entry (no more dropdown bloat)."
+        >
+          <div className="text-[13px] text-foreground">
+            {activeResume
+              ? <>Active: <span className="font-mono">{activeResume.file_name}</span></>
+              : <span className="text-muted-foreground">No resume selected yet — upload one below.</span>}
+          </div>
+          {/* Only show the picker when the user actually has
+              multiple DISTINCT resumes (dedup is applied in load()),
+              otherwise it's noise. The file-upload input is the
+              single way to add or replace a resume. */}
+          {resumes.length > 1 && (
+            <FormRow label="Switch resume">
+              <select
+                className={fieldClass}
+                value={draft.resume_id || ""}
+                onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}
+              >
+                <option value="">(none)</option>
+                {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
+              </select>
+            </FormRow>
+          )}
+          <DesktopInlineResumeUpload
+            profileId={editingId !== "__new__" ? editingId : null}
+            onUploaded={(rid) => { setDraft((d) => ({ ...d, resume_id: rid })); load(); }}
+            onParsed={(parsed) => {
+              setDraft((d) => ({
+                ...d,
+                work_experience: (parsed.work_experience as never) || d.work_experience,
+                education: (parsed.education as never) || d.education,
+                skills: (parsed.skills as never) || d.skills,
+              }));
+              setParseSeq((n) => n + 1);
+            }}
+          />
+        </Section>
+
         <Section
           title="Essentials"
           description="What to apply to. Profile name and at least one target title are required; everything else is optional."
@@ -305,35 +366,6 @@ export function ProfilesTab({ onMessage }: { onMessage: (text: string, type: "su
               />
             </label>
           </div>
-        </Section>
-
-        <Section
-          title="Resume"
-          description="PDF used when applying via this profile. Uploads go into the shared resume pool so other profiles can pick from the same set."
-        >
-          <FormRow label="Active resume">
-            <select
-              className={fieldClass}
-              value={draft.resume_id || ""}
-              onChange={(e) => setDraft({ ...draft, resume_id: e.target.value || null })}
-            >
-              <option value="">(none)</option>
-              {resumes.map((r) => <option key={r.id} value={r.id}>{r.file_name}</option>)}
-            </select>
-          </FormRow>
-          <DesktopInlineResumeUpload
-            profileId={editingId !== "__new__" ? editingId : null}
-            onUploaded={(rid) => { setDraft((d) => ({ ...d, resume_id: rid })); load(); }}
-            onParsed={(parsed) => {
-              setDraft((d) => ({
-                ...d,
-                work_experience: (parsed.work_experience as never) || d.work_experience,
-                education: (parsed.education as never) || d.education,
-                skills: (parsed.skills as never) || d.skills,
-              }));
-              setParseSeq((n) => n + 1);
-            }}
-          />
         </Section>
 
         <Section
@@ -794,7 +826,11 @@ function DesktopInlineResumeUpload({
       <div className="flex items-center gap-2">
         <input
           type="file"
-          accept=".pdf,application/pdf"
+          // BOTH MIME and extension — macOS Finder greyed out PDFs
+          // when only one was specified, depending on how the file
+          // was downloaded. Belt-and-suspenders fixes the dimmed
+          // file-picker issue users reported.
+          accept="application/pdf,.pdf"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
           className={cn(
             fieldClass,

@@ -63,7 +63,38 @@ export async function POST(request: NextRequest) {
     ? targetRoles.split(",").map((s) => s.trim()).filter(Boolean)
     : [];
 
-  // Insert resume record
+  // Dedupe by (user_id, file_name). Re-uploading the same filename
+  // should REPLACE the existing row's storage_path / metadata, not
+  // append another dropdown option. The dropdown grew forever before
+  // this — every PDF re-upload created a new user_resumes row even
+  // though Supabase Storage upserts at the same path (belt-and-
+  // suspenders: upsert:true above already stomps the file bytes).
+  const { data: existing } = await supabase
+    .from("user_resumes")
+    .select("id")
+    .eq("user_id", auth.userId)
+    .eq("file_name", file.name)
+    .maybeSingle();
+
+  if (existing?.id) {
+    const { data: resume, error: updateError } = await supabase
+      .from("user_resumes")
+      .update({
+        storage_path: uploadData.path,
+        is_default: isDefault,
+        target_keywords: targetKeywords,
+      })
+      .eq("id", existing.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      return apiError("internal_server_error", updateError.message);
+    }
+    return apiSuccess({ resume }, 200);
+  }
+
+  // No row yet — insert fresh.
   const { data: resume, error: insertError } = await supabase
     .from("user_resumes")
     .insert({
