@@ -114,9 +114,74 @@ def fetch_user_job_preferences(user_id: str) -> dict:
 # ── Job queue ──────────────────────────────────────────────────────────────
 
 def claim_next_job(worker_id: str) -> dict | None:
-    """Claim next pending job from the queue."""
+    """Claim next pending job from the cloud queue (legacy / planner mode)."""
     result = _api_call("claim_job", worker_id=worker_id)
     return result.get("job")
+
+
+def claim_next_job_locally(user_id: str, worker_id: str) -> dict | None:
+    """Local-first claim — atomically take the oldest 'queued' row from the
+    local applications.db, mark it 'applying', and return it in the same
+    shape the cloud claim_next_job produces so downstream apply code is
+    unchanged.
+
+    Uses SQLite 3.35+ UPDATE ... RETURNING for atomicity. Only one worker
+    runs per user on a machine, so row-level contention is effectively zero.
+
+    Returns None when the queue is empty. Returns a job dict when a row
+    was claimed. Any SQLite error is surfaced via logger.warning and the
+    call returns None so the caller sleeps a tick and retries.
+    """
+    try:
+        conn = _get_local_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        row = conn.execute(
+            """
+            UPDATE applications
+            SET status = 'applying', updated_at = ?
+            WHERE id = (
+                SELECT id FROM applications
+                WHERE status = 'queued'
+                ORDER BY scouted_at ASC
+                LIMIT 1
+            )
+            RETURNING id, company, role, url, ats, source, location,
+                      posted_at, scouted_at, dedup_token, application_profile_id
+            """,
+            (now,),
+        ).fetchone()
+        conn.commit()
+        conn.close()
+        if not row:
+            return None
+        (lid, company, role, url, ats, source, location, posted_at,
+         scouted_at, dedup_token, application_profile_id) = row
+        # dedup_token format: "company|external_id". Parse out external_id
+        # so the downstream log path can re-derive the same key.
+        external_id = ""
+        if dedup_token and "|" in dedup_token:
+            external_id = dedup_token.split("|", 1)[1]
+        return {
+            "id": str(lid),            # local integer id, stringified
+            "user_id": user_id,
+            "job_id": None,            # only meaningful for cloud queue rows
+            "company": company or "",
+            "title": role or "",
+            "ats": ats or "",
+            "source": source or "",
+            "apply_url": url or "",
+            "location": location or "",
+            "posted_at": posted_at,
+            "scouted_at": scouted_at,
+            "external_id": external_id,
+            "application_profile_id": application_profile_id,
+            "attempts": 0,             # local schema doesn't track retries yet
+            "max_attempts": 3,
+            "_local": True,            # marker so update_queue_status can route writes
+        }
+    except Exception as e:
+        logger.warning(f"local claim failed: {e}")
+        return None
 
 
 def update_queue_status(queue_id: str, status: str, error: str | None = None):
@@ -431,9 +496,35 @@ def load_user_profile(user_id: str) -> dict:
 # ── Daily limits ──────────────────────────────────────────────────────────
 
 def check_daily_limit(user_id: str) -> bool:
-    """Return True if user hasn't exceeded daily limit."""
+    """Return True if user hasn't exceeded daily limit (cloud call)."""
     result = _api_call("check_daily_limit")
     return result.get("within_limit", True)
+
+
+def check_daily_limit_locally(user_id: str, daily_cap: int | None) -> bool:
+    """Local daily-cap check — counts submitted rows for today (user's local
+    day) from the local SQLite mirror. daily_cap=None means no cap → True.
+
+    Timezone matches count_profile_applied_today: strftime with 'localtime'
+    so the cap aligns with the user's day, not UTC. Non-fatal on error:
+    returns True so a cloud/SQLite hiccup doesn't stall the apply loop.
+    """
+    if daily_cap is None or daily_cap <= 0:
+        return True
+    try:
+        conn = _get_local_conn()
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM applications
+            WHERE status='submitted'
+              AND strftime('%Y-%m-%d', applied_at, 'localtime') = date('now', 'localtime')
+            """
+        ).fetchone()
+        conn.close()
+        return int(row[0]) < daily_cap if row else True
+    except Exception as e:
+        logger.debug(f"local daily-limit check failed (allowing): {e}")
+        return True
 
 
 def count_profile_applied_today(profile_id: str) -> int:
@@ -459,9 +550,38 @@ def count_profile_applied_today(profile_id: str) -> int:
 
 
 def check_company_rate(user_id: str, company: str) -> bool:
-    """Return True if user can still apply to this company (< 5 in 15 days)."""
+    """Return True if user can still apply to this company (cloud call)."""
     result = _api_call("check_company_rate", company=company)
     return result.get("within_limit", True)
+
+
+def check_company_rate_locally(user_id: str, company: str) -> bool:
+    """Local company-rate check — enforces MAX_COMPANY_APPS_PER_7_DAYS
+    against the local applications mirror. Case-insensitive match on
+    company (ATS data drifts between Title Case and lowercase).
+
+    Non-fatal on error: returns True so a SQLite hiccup doesn't block
+    the apply loop.
+    """
+    if not company:
+        return True
+    try:
+        from config import MAX_COMPANY_APPS_PER_7_DAYS
+        conn = _get_local_conn()
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM applications
+            WHERE status='submitted'
+              AND LOWER(company) = LOWER(?)
+              AND applied_at >= datetime('now', '-7 days')
+            """,
+            (company.strip(),),
+        ).fetchone()
+        conn.close()
+        return int(row[0]) < MAX_COMPANY_APPS_PER_7_DAYS if row else True
+    except Exception as e:
+        logger.debug(f"local company-rate check failed (allowing): {e}")
+        return True
 
 
 # ── Answer key ────────────────────────────────────────────────────────────
