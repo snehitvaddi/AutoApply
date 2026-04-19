@@ -567,22 +567,102 @@ def _wants_us(preferred_lower_list: list[str]) -> bool:
     )
 
 
+# Non-US location tokens. Matching one of these in a lowercased location
+# string means the job is almost certainly outside the US. Kept conservative:
+# only include unambiguous country/region/city names. "Paris, TX" in the US
+# is rare; we accept the false-positive rate for the vast simplification
+# compared to enumerating ~30 000 US cities.
+_FOREIGN_TOKENS = (
+    # Europe
+    "united kingdom", "england", "scotland", "wales", "northern ireland", " uk",
+    "(uk)", "uk)", " uk,", ",uk",
+    "germany", "berlin", "munich", "hamburg",
+    "france", "paris", "lyon",
+    "italy", "milan", "rome",
+    "spain", "madrid", "barcelona",
+    "netherlands", "amsterdam", "rotterdam",
+    "belgium", "brussels",
+    "switzerland", "zurich", "geneva",
+    "austria", "vienna",
+    "sweden", "stockholm",
+    "norway", "oslo",
+    "denmark", "copenhagen",
+    "finland", "helsinki",
+    "ireland", "dublin",
+    "poland", "warsaw",
+    "czech", "prague",
+    "hungary", "budapest",
+    "portugal", "lisbon",
+    "greece", "athens",
+    "romania", "bulgaria",
+    "ukraine", "russia", "moscow",
+    "turkey", "istanbul",
+    # Americas
+    "canada", "toronto", "vancouver", "montreal", "ottawa", "calgary", "edmonton",
+    "mexico", "mexico city", "guadalajara",
+    "brazil", "sao paulo", "são paulo", "rio de janeiro",
+    "argentina", "buenos aires",
+    "chile", "santiago",
+    # APAC
+    "australia", "sydney", "melbourne", "brisbane", "perth",
+    "new zealand", "auckland",
+    "japan", "tokyo", "osaka",
+    "korea", "seoul",
+    "china", "beijing", "shanghai", "shenzhen", "guangzhou",
+    "hong kong",
+    "taiwan", "taipei",
+    "singapore",
+    "malaysia", "kuala lumpur",
+    "india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad",
+    "chennai", "pune", "gurgaon", "noida", "kolkata",
+    "philippines", "manila",
+    "thailand", "bangkok",
+    "vietnam", "ho chi minh", "hanoi",
+    "indonesia", "jakarta",
+    "pakistan", "lahore", "karachi", "islamabad",
+    "bangladesh", "dhaka",
+    # MEA
+    "united arab emirates", "uae", "dubai", "abu dhabi",
+    "saudi arabia", "riyadh",
+    "qatar", "doha",
+    "israel", "tel aviv",
+    "egypt", "cairo",
+    "south africa", "cape town", "johannesburg",
+    "nigeria", "lagos",
+    "kenya", "nairobi",
+    # Region tags
+    "emea", "apac", "mena", "latam", "europe",
+)
+
+
 def _is_us_location(loc_lower: str) -> bool:
     """True if the given (already-lowercased) location string looks US-ish.
 
-    Accepts: literal "united states" / "usa" / "US" tokens, "remote" (as
-    most remote listings from US-based ATSes are US-only by default),
-    and "city, ST" patterns where ST is a 2-letter US state code.
+    Three-tier check:
+      1. Explicit US tokens ("united states", "usa", etc.) → yes.
+      2. "Remote" (US-based ATSes default to US-only unless tagged "global"/
+         a region) → yes.
+      3. State-code pattern (", CA" etc.) → yes.
+      4. Bare city ("San Francisco") — permissive: accept UNLESS the string
+         contains a foreign token (see _FOREIGN_TOKENS). Avoids having to
+         enumerate US cities.
 
-    Empty string is rejected here; callers already short-circuit on blank
-    locations.
+    Empty string is rejected; callers short-circuit on blank locations.
     """
     if not loc_lower:
         return False
+    # Fast accept: explicit US tokens
     if any(tok in loc_lower for tok in _US_TOKENS):
         return True
+    # Fast reject: explicit foreign tokens
+    if any(tok in loc_lower for tok in _FOREIGN_TOKENS):
+        return False
+    # Accept "remote" unless already flagged foreign
     if "remote" in loc_lower:
         return True
+    # Accept state-code pattern
     if _US_STATE_CODE_RE.search(loc_lower):
         return True
-    return False
+    # Permissive default — no foreign token found, assume US.
+    # Coded appliers will refuse a non-US address if it slips through.
+    return True
