@@ -1942,8 +1942,11 @@ async def pty_terminal_websocket(ws: WebSocket):
     # Send status
     await ws.send_json({"type": "status", **session_manager.pty.status()})
 
-    # Backfill — send buffered output
-    for chunk in session_manager.pty.output_buffer:
+    # Backfill — send buffered output. Snapshot the deque FIRST because
+    # the PTY reader thread appends concurrently; iterating the live deque
+    # races with it and raises `deque mutated during iteration`, which
+    # crashed every /ws/terminal connection today. list() is atomic.
+    for chunk in list(session_manager.pty.output_buffer):
         await ws.send_bytes(chunk)
 
     # Subscribe to live output
