@@ -744,28 +744,44 @@ def prune_old_screenshots(days: int = 7) -> int:
 # ── Job enqueuing ─────────────────────────────────────────────────────────
 
 def enqueue_discovered_jobs(user_id: str, jobs: list[dict]) -> int:
-    """Insert discovered jobs via API proxy + local SQLite for desktop Kanban."""
+    """Insert discovered jobs — LOCAL SQLite is primary, cloud is best-effort.
+
+    Rewritten (2026-04-19): previously a cloud timeout / network error
+    raised out of _api_call, skipping the local write entirely. Under
+    local-first mode the local queue IS the source of truth; a cloud
+    hiccup cannot be allowed to drop jobs on the floor.
+
+    Order: local first (guaranteed), then cloud mirror (try/except).
+    Return value is the local insert count; cloud drops + cloud errors
+    are logged but don't affect the return.
+    """
     if not jobs:
         return 0
-    result = _api_call("enqueue_jobs", jobs=jobs)
-    # Surface server-side rejection reasons. Silent `enqueued: 0` was the
-    # root cause of overnight self-recovery blackout — when the server
-    # rejects, Claude needs the reason in the log to fix its payload.
-    drops = result.get("drops") or []
-    if drops:
-        import logging as _lg
-        _log = _lg.getLogger(__name__)
-        by_reason: dict[str, int] = {}
-        for d in drops:
-            r = str(d.get("reason", "unknown"))
-            by_reason[r] = by_reason.get(r, 0) + 1
-        _log.warning(
-            "enqueue_jobs dropped %d/%d: %s",
-            len(drops), len(jobs),
-            ", ".join(f"{k}×{v}" for k, v in by_reason.items()),
-        )
-    enqueue_to_local_db(jobs)
-    return result.get("enqueued", 0)
+    # Primary: local insert. Always happens.
+    local_count = enqueue_to_local_db(jobs)
+    # Secondary: cloud mirror. Best-effort; any failure just logs.
+    cloud_count = 0
+    try:
+        result = _api_call("enqueue_jobs", jobs=jobs)
+        drops = result.get("drops") or []
+        if drops:
+            import logging as _lg
+            _log = _lg.getLogger(__name__)
+            by_reason: dict[str, int] = {}
+            for d in drops:
+                r = str(d.get("reason", "unknown"))
+                by_reason[r] = by_reason.get(r, 0) + 1
+            _log.warning(
+                "enqueue_jobs cloud dropped %d/%d: %s",
+                len(drops), len(jobs),
+                ", ".join(f"{k}×{v}" for k, v in by_reason.items()),
+            )
+        cloud_count = result.get("enqueued", 0)
+    except WorkerAuthError:
+        raise
+    except Exception as e:
+        logger.debug(f"cloud enqueue failed (non-fatal, local has the data): {e}")
+    return max(local_count, cloud_count)
 
 
 # ── Cloud planner (Phase 1 of planner architecture) ──────────────────────
