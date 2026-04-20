@@ -444,10 +444,18 @@ class TenantConfig:
         if any(ec in cl for ec in self.excluded_companies):
             return False
 
-        # Location filter — preferred_locations wins if set, then remote_only
+        # Location filter — preferred_locations wins if set, then remote_only.
+        # US-intent: if the user asked for "United States" / "USA" / "US",
+        # accept any location that looks US-ish even if it doesn't literally
+        # contain the phrase (bare city names, state codes, etc). See
+        # _is_us_location for the permissive match rules. Before this fix,
+        # Ashby/Greenhouse returned "San Francisco" / "Austin" and 100% got
+        # dropped because "united states" wasn't a substring.
         if self.preferred_locations:
             locs = [loc.lower() for loc in self.preferred_locations]
             if ll and not any(loc in ll for loc in locs):
+                if _wants_us(locs) and _is_us_location(ll):
+                    return True
                 return False
         elif self.remote_only:
             if "remote" not in ll:
