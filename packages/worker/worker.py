@@ -1505,10 +1505,31 @@ def main():
                 else:
                     consecutive_timeouts = 0
 
-                if result.retriable and job.get('attempts', 0) < job.get('max_attempts', 3):
-                    update_queue_status(job['id'], 'pending', error=result.error)
+                # Retriable re-queue. Before today's fix, `attempts` never
+                # incremented here — so `attempts < max_attempts` was always
+                # True and retriable jobs looped forever, never hitting the
+                # hard-fail else branch. Dashboard never saw the failure and
+                # the same captcha/timeout job spun indefinitely.
+                _prior_attempts = int(job.get('attempts') or 0)
+                _max_attempts = int(job.get('max_attempts') or 3)
+                _new_attempts = _prior_attempts + 1
+                if result.retriable and _new_attempts < _max_attempts:
+                    update_queue_status(
+                        job['id'], 'pending', error=result.error,
+                        attempts=_new_attempts,
+                    )
+                    # Also surface retry progress on the dashboard so it's
+                    # visible, not silent. Local row goes back to 'queued'
+                    # with retry-count in notes.
+                    try:
+                        update_local_status(
+                            job, 'queued',
+                            f"retry {_new_attempts}/{_max_attempts}: {str(result.error)[:120]}",
+                        )
+                    except Exception:
+                        pass
                     apply_outcome = "skipped"
-                    apply_outcome_detail = f"retriable: {str(result.error)[:160]}"
+                    apply_outcome_detail = f"retriable {_new_attempts}/{_max_attempts}: {str(result.error)[:160]}"
                 else:
                     update_queue_status(job['id'], 'failed', error=result.error)
                     update_local_status(job, 'failed', result.error)

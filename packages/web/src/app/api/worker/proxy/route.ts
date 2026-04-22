@@ -86,6 +86,13 @@ export async function POST(request: NextRequest) {
       case "update_queue": {
         const updateData: Record<string, unknown> = { status: params.status };
         if (params.error) updateData.error = params.error;
+        // Advance the retry counter when the worker signals it. Previously
+        // this never updated → attempts stayed 0 → retriable cap was never
+        // reached → jobs looped forever under "retriable" with the user
+        // seeing nothing in the dashboard. Global bug pre-2026-04-22.
+        if (params.attempts !== undefined && params.attempts !== null) {
+          updateData.attempts = Number(params.attempts);
+        }
         await supabase
           .from("application_queue")
           .update(updateData)

@@ -184,11 +184,16 @@ def claim_next_job_locally(user_id: str, worker_id: str) -> dict | None:
         return None
 
 
-def update_queue_status(queue_id: str, status: str, error: str | None = None):
-    """Update application queue row status."""
+def update_queue_status(queue_id: str, status: str, error: str | None = None, attempts: int | None = None):
+    """Update application queue row status. `attempts` is optional — only
+    passed when we want the cloud to advance the retry counter (on retriable
+    re-queue). Without this the counter stays at 0 and the retry cap is
+    never enforced, so jobs loop forever."""
     params: dict = {"queue_id": queue_id, "status": status}
     if error:
         params["error"] = error
+    if attempts is not None:
+        params["attempts"] = attempts
     _api_call("update_queue", **params)
 
 
