@@ -19,7 +19,7 @@ from applier.greenhouse import (
     browser, snapshot, fill_fields, click_ref, select_option,
     upload_file, take_screenshot, wait_load, navigate_url,
     parse_snapshot, match_text_field, match_dropdown,
-    type_into, press_key,
+    type_into, press_key, evaluate_js,
 )
 from config import SCREENSHOT_DIR
 
@@ -51,7 +51,7 @@ class SmartRecruitersApplier(BaseApplier):
                     "snapshot": snapshot, "parse_snapshot": parse_snapshot,
                     "fill_fields": fill_fields, "click_ref": click_ref,
                     "select_option": select_option, "upload_file": upload_file,
-                    "take_screenshot": take_screenshot,
+                    "take_screenshot": take_screenshot, "evaluate_js": evaluate_js,
                 },
                 ats_name="smartrecruiters", max_steps=3,
             )

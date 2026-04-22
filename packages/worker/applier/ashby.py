@@ -51,7 +51,7 @@ class AshbyApplier(BaseApplier):
                     "snapshot": snapshot, "parse_snapshot": parse_snapshot,
                     "fill_fields": fill_fields, "click_ref": click_ref,
                     "select_option": select_option, "upload_file": upload_file,
-                    "take_screenshot": take_screenshot,
+                    "take_screenshot": take_screenshot, "evaluate_js": evaluate_js,
                 },
                 ats_name="ashby", max_steps=3,
             )

@@ -439,6 +439,7 @@ class WorkdayApplier(BaseApplier):
                     "fill_fields": fill_fields, "click_ref": click_ref,
                     "select_option": lambda ref, val: None,  # Workday rarely has native selects
                     "upload_file": upload_file, "take_screenshot": take_screenshot,
+                    "evaluate_js": evaluate_js,
                 },
                 ats_name="workday", max_steps=8,
             )
