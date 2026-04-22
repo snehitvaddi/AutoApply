@@ -21,6 +21,7 @@ from .greenhouse import GreenhouseScout
 from .lever import LeverScout
 from .indeed import IndeedScout
 from .himalayas import HimalayasScout
+from .linkedin_scroll import LinkedInScrollScout
 
 _logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ REGISTERED_SOURCES: list[ScoutSource] = [
     LeverScout(),
     IndeedScout(),
     HimalayasScout(),
+    LinkedInScrollScout(),
 ]
 
 # LinkedInPublicScout is registered conditionally. It depends on scrapling,

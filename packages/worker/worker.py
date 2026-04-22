@@ -285,7 +285,7 @@ def update_heartbeat(user_id: str, action: str, details: str = ""):
 _ATS_EXPAND_PROBE_CAP = 8
 # Title-based sources we want to enrich. Company-based sources already
 # know their slug, so there's nothing to resolve.
-_TITLE_SOURCES = {"linkedin", "himalayas", "indeed", "linkedin_public"}
+_TITLE_SOURCES = {"linkedin", "himalayas", "indeed", "linkedin_public", "linkedin_scroll"}
 # Hard cap on the persisted slug set so nothing runaway-grows.
 _BOARDS_LIST_CAP = 500
 
@@ -428,6 +428,7 @@ _SCOUT_STYLE = {
     "indeed": "title",
     "himalayas": "title",
     "linkedin_public": "title",
+    "linkedin_scroll": "title",
     "linkedin": "title",
 }
 
