@@ -132,18 +132,47 @@ PAGE SNAPSHOT (accessibility tree; every interactive element has [ref=eXX]):
 
 Return this exact JSON shape:
 {{
-  "page_state": "normal" | "captcha" | "login_wall" | "bot_detected" | "rate_limited" | "error_page" | "already_submitted" | "needs_direct_url",
-  "action":     "fill_and_submit" | "skip_non_retriable" | "wait_retry" | "attempt_account_creation" | "search_direct_url",
-  "reason":     "one-line human-readable reason for the action",
-  "fills":      [{{"ref": "eXX", "value": "..."}}],
-  "selects":    [{{"ref": "eXX", "value": "..."}}],
-  "dropdowns":  [{{"ref": "eXX", "search": "..."}}],
-  "radios":     [{{"ref": "eXX"}}],
-  "checkboxes": [{{"ref": "eXX"}}],
-  "upload_ref": "eXX" | null,
-  "submit_ref": "eXX" | null,
-  "custom_js":  ["() => {{ /* your arbitrary browser-side JS */ }}"]
+  "page_state":    "normal" | "captcha" | "login_wall" | "bot_detected" | "rate_limited" | "error_page" | "already_submitted" | "needs_direct_url" | "search_results",
+  "action":        "fill_and_submit" | "skip_non_retriable" | "wait_retry" | "attempt_account_creation" | "search_direct_url" | "navigate_to",
+  "reason":        "one-line human-readable reason for the action",
+  "search_query":  "used when action=search_direct_url — what to Google",
+  "navigate_url":  "used when action=navigate_to — which URL to jump to next",
+  "fills":         [{{"ref": "eXX", "value": "..."}}],
+  "selects":       [{{"ref": "eXX", "value": "..."}}],
+  "dropdowns":     [{{"ref": "eXX", "search": "..."}}],
+  "radios":        [{{"ref": "eXX"}}],
+  "checkboxes":    [{{"ref": "eXX"}}],
+  "upload_ref":    "eXX" | null,
+  "submit_ref":    "eXX" | null,
+  "custom_js":     ["() => {{ /* your arbitrary browser-side JS */ }}"]
 }}
+
+LINKEDIN / SIGN-IN-GATED PAGES:
+When the snapshot shows a LinkedIn sign-in modal, a "You must be signed
+in to apply" message, or any gate that blocks the real apply URL:
+- Set page_state="needs_direct_url"
+- Set action="search_direct_url"
+- Set search_query to: `"{company}" "{role}" careers apply`
+  (use the company + role visible on the page; fall back to the COMPANY
+  + ROLE values at the top of this prompt)
+- The driver will navigate to google.com/search for that query and call
+  you again. You'll then see the Google results page.
+
+GOOGLE SEARCH RESULTS PAGE:
+When the snapshot shows Google search results (you'll see result titles +
+URLs like "greenhouse.io/..." "lever.co/..." "ashbyhq.com/..."
+"myworkdayjobs.com/..." "smartrecruiters.com/..."):
+- Set page_state="search_results"
+- Set action="navigate_to"
+- Set navigate_url to the FIRST result URL whose domain matches one of:
+  greenhouse.io, lever.co, ashbyhq.com, myworkdayjobs.com, smartrecruiters.com
+- Prefer results on the ACTUAL company's careers page over aggregator
+  reposts (Dice, Indeed, LinkedIn).
+- If NO result matches a known ATS domain, set action="skip_non_retriable"
+  with reason="no ATS careers page found for <company>".
+- The driver will navigate to that URL and call you again. That page
+  should be a normal application form — you'll then set action=
+  "fill_and_submit" as usual.
 
 CUSTOM_JS ESCAPE HATCH — when the standard plan isn't enough:
 The driver will run each string in `custom_js` via OpenClaw's `browser
@@ -466,15 +495,54 @@ def llm_first_apply(
                     "retriable": False,
                 }
             if action == "search_direct_url":
-                # Signal to the worker that the LinkedIn/aggregator URL
-                # can't be applied to directly. The existing LinkedIn
-                # skip path handles it at the worker level (commit
-                # 0b4c55d's resolver).
-                return {
-                    "success": False, "screenshot": take_screenshot(),
-                    "error": f"needs_direct_url:{reason[:120]}",
-                    "retriable": False,
-                }
+                # Claude saw a sign-in wall / LinkedIn gate. Navigate to
+                # Google with its suggested query and loop back — next
+                # iteration will see the results page, Claude picks the
+                # first ATS URL, emits navigate_to, driver jumps there.
+                search_query = str(plan.get("search_query") or f"{company_hint} careers").strip()
+                if not search_query:
+                    return {
+                        "success": False, "screenshot": take_screenshot(),
+                        "error": f"needs_direct_url:no_query:{reason[:80]}",
+                        "retriable": False,
+                    }
+                from urllib.parse import quote_plus
+                google_url = f"https://www.google.com/search?q={quote_plus(search_query)}"
+                logger.info(f"{ats_name}: LinkedIn gate → searching Google: {search_query!r}")
+                try:
+                    navigate_url(google_url)
+                    wait_load(5000)
+                    _t.sleep(2)
+                except Exception as e:
+                    return {
+                        "success": False, "screenshot": take_screenshot(),
+                        "error": f"google navigate failed: {e}",
+                        "retriable": True,
+                    }
+                continue  # next iteration: Claude sees Google results
+            if action == "navigate_to":
+                # Claude picked an ATS URL from Google results. Jump
+                # there and continue the loop — next iteration snapshots
+                # the new page (should be a real apply form).
+                target = str(plan.get("navigate_url") or "").strip()
+                if not target or not target.startswith("http"):
+                    return {
+                        "success": False, "screenshot": take_screenshot(),
+                        "error": f"navigate_to:invalid_url:{target[:80]}",
+                        "retriable": False,
+                    }
+                logger.info(f"{ats_name}: navigating to Claude-picked URL: {target[:120]}")
+                try:
+                    navigate_url(target)
+                    wait_load(5000)
+                    _t.sleep(2)
+                except Exception as e:
+                    return {
+                        "success": False, "screenshot": take_screenshot(),
+                        "error": f"navigate_to failed: {e}",
+                        "retriable": True,
+                    }
+                continue  # next iteration: Claude sees the new page
             # Default: fill_and_submit
             logger.info(
                 f"  fills={len(plan.get('fills', []) or [])} "
