@@ -421,8 +421,37 @@ class WorkdayApplier(BaseApplier):
     def apply(self, apply_url: str) -> ApplyResult:
         os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
+        # Claude-first path. Workday is a 7-step wizard — Claude plans each
+        # page, driver snapshots + re-plans on each. Hard-fails fall through
+        # to the existing wizard code below if Claude is unreachable.
+        import re as _re
+        _m = _re.search(r"://(?:[a-z0-9-]+\.)?my(?:workday|workdayjobs)\.com/([^/?]+)", apply_url or "")
+        _slug = _m.group(1) if _m else ""
+        from applier.llm_fill import llm_first_apply, claude_available
+        if claude_available():
+            res = llm_first_apply(
+                apply_url=apply_url, company_hint=_slug,
+                profile_summary=self.profile_summary(),
+                answer_key=self.answer_key, resume_path=self.resume_path,
+                browser_fns={
+                    "navigate_url": navigate_url, "wait_load": wait_load,
+                    "snapshot": snapshot, "parse_snapshot": parse_snapshot,
+                    "fill_fields": fill_fields, "click_ref": click_ref,
+                    "select_option": lambda ref, val: None,  # Workday rarely has native selects
+                    "upload_file": upload_file, "take_screenshot": take_screenshot,
+                },
+                ats_name="workday", max_steps=8,
+            )
+            if res is not None:
+                return ApplyResult(
+                    success=bool(res.get("success")),
+                    screenshot=res.get("screenshot"),
+                    error=res.get("error"),
+                    retriable=bool(res.get("retriable")),
+                )
+
         try:
-            logger.info(f"Navigating to Workday: {apply_url}")
+            logger.info(f"Navigating to Workday: {apply_url} (legacy path)")
             navigate_url(apply_url)
             wait_load(8000)
             time.sleep(2)

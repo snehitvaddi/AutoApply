@@ -22,26 +22,55 @@ from applier.greenhouse import (
     upload_file, take_screenshot, wait_load, navigate_url,
     parse_snapshot, match_text_field, match_dropdown, evaluate_js,
 )
+from applier.llm_fill import llm_first_apply, claude_available
 from config import SCREENSHOT_DIR
 
 logger = logging.getLogger(__name__)
 
 
-class LeverApplier(BaseApplier):
-    """Applies to Lever jobs using OpenClaw browser CLI.
+def _slug_from_url(url: str) -> str:
+    """Extract the lever company slug from a jobs.lever.co/<slug>/... URL."""
+    import re as _re
+    m = _re.search(r"lever\.co/([^/]+)", url or "")
+    return m.group(1) if m else ""
 
-    Lever forms are simpler than Greenhouse:
-    - Single name field (full name)
-    - All questions on one page
-    - Radio buttons instead of comboboxes
-    """
+
+class LeverApplier(BaseApplier):
+    """Applies to Lever jobs. Claude-first with legacy regex fallback."""
 
     def apply(self, apply_url: str) -> ApplyResult:
         os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
+        # Claude-first path. Python just drives the browser.
+        if claude_available():
+            res = llm_first_apply(
+                apply_url=apply_url,
+                company_hint=_slug_from_url(apply_url),
+                profile_summary=self.profile_summary(),
+                answer_key=self.answer_key,
+                resume_path=self.resume_path,
+                browser_fns={
+                    "navigate_url": navigate_url, "wait_load": wait_load,
+                    "snapshot": snapshot, "parse_snapshot": parse_snapshot,
+                    "fill_fields": fill_fields, "click_ref": click_ref,
+                    "select_option": select_option, "upload_file": upload_file,
+                    "take_screenshot": take_screenshot,
+                },
+                ats_name="lever",
+                max_steps=2,
+            )
+            if res is not None:
+                return ApplyResult(
+                    success=bool(res.get("success")),
+                    screenshot=res.get("screenshot"),
+                    error=res.get("error"),
+                    retriable=bool(res.get("retriable")),
+                )
+            # else Claude unavailable — fall through to legacy
+
         try:
-            # 1. Open the application form
-            logger.info(f"Navigating to {apply_url}")
+            # 1. Open the application form (legacy regex path)
+            logger.info(f"Navigating to {apply_url} (legacy path)")
             navigate_url(apply_url)
             wait_load(5000)
             time.sleep(1)
