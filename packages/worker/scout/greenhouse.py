@@ -26,8 +26,11 @@ def _fetch_greenhouse_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
             if resp.status_code != 200:
                 return jobs
             for job in resp.json().get("jobs", []):
-                if not _is_fresh_24h(job.get("updated_at")):
-                    continue
+                # See scout/ashby.py for rationale — Greenhouse boards API
+                # only lists currently-open jobs. Dropping by updated_at
+                # <24h eliminates everything (most listings sit open for
+                # weeks). Local stale-queue prune handles "sat in our
+                # queue too long" separately.
                 title = job.get("title", "")
                 loc = job.get("location", {})
                 if isinstance(loc, dict):

@@ -14,6 +14,37 @@ class ApplyResult:
     retriable: bool = False
 
 
+# Shared positive-confirmation phrases. Several appliers used to mark
+# success just because the form element disappeared or the submit click
+# didn't raise — that lets reCAPTCHA overlays, silent 500s, validation
+# modals, and bot-detection all pass as "submitted". Every applier that
+# reaches a post-submit page now must find one of these strings before
+# returning success=True.
+CONFIRM_SIGNALS = (
+    "thank you for applying",
+    "thank you for your application",
+    "thanks for applying",
+    "application received",
+    "application submitted",
+    "we've received",
+    "we have received",
+    "successfully submitted",
+    "you've applied",
+    "your application has been submitted",
+    "application has been received",
+    "application complete",
+)
+
+
+def is_submission_confirmed(page_text: str) -> bool:
+    """True if the given (lowercased or mixed-case) page text contains
+    any of the shared positive-confirmation phrases. Case-insensitive."""
+    if not page_text:
+        return False
+    t = page_text.lower()
+    return any(sig in t for sig in CONFIRM_SIGNALS)
+
+
 class MissingResumeError(FileNotFoundError):
     """Raised when the configured resume_path doesn't exist on disk.
 

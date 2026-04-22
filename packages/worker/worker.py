@@ -22,16 +22,21 @@ from tenant import (
 )
 from scout import REGISTERED_SOURCES
 from db import (
-    claim_next_job, load_user_profile, update_queue_status, log_application,
+    claim_next_job, claim_next_job_locally, load_user_profile,
+    update_queue_status, log_application,
     fetch_next_plan, report_plan_outcome,
-    check_daily_limit, count_profile_applied_today,
+    check_daily_limit, check_daily_limit_locally, count_profile_applied_today,
     get_answer_key, download_resume, download_resume_by_url, upload_screenshot,
     fetch_user_job_preferences, enqueue_discovered_jobs, update_heartbeat as db_heartbeat,
     check_company_rate as db_check_company_rate,
-    update_local_status, cleanup_stale_queued_shadows,
+    check_company_rate_locally,
+    update_local_status, cleanup_stale_queued_shadows, prune_old_screenshots,
     WorkerAuthError,
 )
-from notifier import send_application_result, send_failure
+from notifier import (
+    send_application_result, send_failure,
+    send_scout_summary, send_session_event,
+)
 from knowledge import build_answer_key, load_global_template
 from applier.base import MissingResumeError
 from applier.greenhouse import GreenhouseApplier
@@ -82,6 +87,101 @@ def _resolve_ats_from_url(apply_url: str, tagged_ats: str) -> str:
         if any(p in url_lower for p in patterns):
             return ats_name
     return tagged_ats  # couldn't resolve — keep original
+
+
+_KNOWN_ATS_DOMAINS = (
+    "boards.greenhouse.io", "boards-api.greenhouse.io", "job-boards.greenhouse.io",
+    "greenhouse.io",
+    "jobs.lever.co", "lever.co",
+    "jobs.ashbyhq.com", "ashbyhq.com",
+    "jobs.smartrecruiters.com", "smartrecruiters.com",
+    "myworkdayjobs.com", "myworkday.com",
+)
+
+
+def _ddg_search(query: str, max_results: int = 10) -> list[str]:
+    """DuckDuckGo HTML search, no API key. Returns a list of result URLs.
+    Best-effort: network / parsing errors yield []."""
+    try:
+        import httpx
+        import re
+        from urllib.parse import parse_qs, unquote, urlparse
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        with httpx.Client(timeout=12, follow_redirects=True, headers=headers) as client:
+            resp = client.post(
+                "https://html.duckduckgo.com/html/",
+                data={"q": query},
+            )
+            if resp.status_code != 200:
+                return []
+            html = resp.text
+        urls: list[str] = []
+        for m in re.finditer(r'<a[^>]+class="result__a"[^>]+href="([^"]+)"', html):
+            href = m.group(1)
+            # DDG wraps external links in /l/?kh=-1&uddg=<encoded>. Unwrap.
+            if href.startswith("//") or href.startswith("/l/") or href.startswith("/"):
+                try:
+                    parsed = urlparse(href if href.startswith("http") else "https:" + href)
+                    qs = parse_qs(parsed.query)
+                    real = qs.get("uddg", [None])[0]
+                    if real:
+                        href = unquote(real)
+                except Exception:
+                    pass
+            urls.append(href)
+            if len(urls) >= max_results:
+                break
+        return urls
+    except Exception:
+        return []
+
+
+def resolve_linkedin_apply_url(
+    linkedin_url: str, company: str = "", title: str = ""
+) -> tuple[str | None, str | None]:
+    """Find the real company apply URL for a LinkedIn-sourced job.
+
+    LinkedIn's public HTML gates anonymous viewers behind a sign-in modal
+    and hides the external apply URL — so we don't bother with that path.
+    Instead we web-search `"<company>" <title> (greenhouse|lever|ashby|
+    workday|smartrecruiters)` via DuckDuckGo HTML (no API key, no auth)
+    and pick the first result that hits a known-ATS domain.
+
+    Returns (url, reason). url=None when nothing plausible was found.
+    """
+    if not company and not linkedin_url:
+        return None, "no_input"
+    # Normalise: strip generic suffixes that make the search noisier
+    clean_title = (title or "").strip()
+    clean_company = (company or "").strip()
+    if not (clean_company or clean_title):
+        return None, "no_company_or_title"
+    # Tight query first — exact company match anchors the search
+    queries = []
+    if clean_company and clean_title:
+        queries.append(
+            f'"{clean_company}" "{clean_title}" careers '
+            f'(greenhouse OR lever OR ashby OR workday OR smartrecruiters)'
+        )
+    if clean_company:
+        queries.append(
+            f'"{clean_company}" careers site:greenhouse.io OR site:lever.co '
+            f'OR site:ashbyhq.com OR site:myworkdayjobs.com'
+        )
+    for q in queries:
+        for url in _ddg_search(q, max_results=12):
+            ul = url.lower()
+            if "linkedin.com" in ul:
+                continue
+            if any(dom in ul for dom in _KNOWN_ATS_DOMAINS):
+                return url, "ddg_known_ats"
+    return None, "no_ats_match_in_search"
 
 running = True
 
@@ -421,6 +521,12 @@ def run_scout_cycle(tenant: TenantConfig, style_filter: str | None = None) -> in
     _touch_scout_heartbeat(enqueued=enqueued, raw=raw_count)
     logger.info(f"Scout complete: {enqueued} new jobs enqueued (from {raw_count} raw)")
     update_heartbeat(tenant.user_id, "scouted", f"{enqueued} enqueued from {summary}")
+    # Telegram summary — fire-and-forget. Skipped internally when raw+enqueued=0
+    # so the user isn't spammed during quiet stretches.
+    try:
+        send_scout_summary(tenant.user_id, raw_count, enqueued, counts)
+    except Exception as e:
+        logger.debug(f"scout-summary notify failed (non-fatal): {e}")
     return enqueued
 
 
@@ -813,6 +919,10 @@ def main():
         return
     except WorkerAuthError as e:
         logger.error(f"Worker token rejected — cannot load tenant: {e}")
+        try:
+            send_session_event(user_id, "auth_expired", "Worker token revoked or invalid. Re-run the installer.")
+        except Exception:
+            pass
         return
     except Exception as e:
         logger.exception(f"Failed to load tenant config: {e}")
@@ -830,6 +940,20 @@ def main():
         cleanup_stale_queued_shadows()
     except Exception as e:
         logger.debug(f"shadow cleanup skipped: {e}")
+
+    # Bound the local screenshot directory — delete files >7 days old so
+    # the disk doesn't grow forever. Idempotent; cheap; runs at boot.
+    try:
+        prune_old_screenshots(days=7)
+    except Exception as e:
+        logger.debug(f"screenshot prune skipped: {e}")
+
+    # Telegram session-start ping so the user knows the worker is live.
+    try:
+        mode = "cloud-planner" if os.environ.get("WORKER_USE_CLOUD_PLANNER", "").lower() in ("1", "true", "yes") else "local-first"
+        send_session_event(tenant.user_id, "worker_started", f"mode: {mode}")
+    except Exception as e:
+        logger.debug(f"worker_started notify failed (non-fatal): {e}")
 
     # Start the tenant reload thread — refreshes _current_tenant every
     # TENANT_RELOAD_INTERVAL_SECS so password rotations / bundle edits
@@ -849,24 +973,36 @@ def main():
     # Daily update check — runs on first execution of each new day
     check_and_pull_updates()
 
-    # Planner-driven mode is the default. Set WORKER_USE_LEGACY_LOOP=1 to
-    # fall back to the old scout-thread + exponential-backoff main loop.
-    use_planner = os.environ.get("WORKER_USE_LEGACY_LOOP", "").lower() not in ("1", "true", "yes")
+    # LOCAL-FIRST is the default (2026-04-19 onward). Worker runs its own
+    # scout thread, claims from local SQLite, and enforces rate limits
+    # locally. Cloud is config pull + observability write only — nothing
+    # the cloud does can stall the apply loop.
+    #
+    # Opt-in to the old cloud-planner brain with WORKER_USE_CLOUD_PLANNER=1.
+    # Legacy WORKER_USE_LEGACY_LOOP=1 is preserved as an alias (= "local-
+    # first", same as the new default) so no one's env breaks on update.
+    use_planner = os.environ.get("WORKER_USE_CLOUD_PLANNER", "").lower() in ("1", "true", "yes")
+    # If the user explicitly set the legacy var, honour their intent even
+    # though it's now redundant.
+    if os.environ.get("WORKER_USE_LEGACY_LOOP", "").lower() in ("1", "true", "yes"):
+        use_planner = False
 
     if use_planner:
         logger.info(
-            f"Planner mode ON for {tenant.user_id[:8]} — scout is planner-directed, "
-            f"not on a timer. Set WORKER_USE_LEGACY_LOOP=1 to revert."
+            f"Cloud-planner mode ON for {tenant.user_id[:8]} — opt-in. "
+            f"Scout + claim + rate checks go through the cloud."
         )
     else:
-        # Legacy mode: start the standalone scout thread on a 30-min timer.
+        # Local-first mode: start the standalone scout thread on a timer.
         scout_thread = threading.Thread(
             target=scout_loop, args=(tenant,), daemon=True, name="scout-loop"
         )
         scout_thread.start()
         logger.info(
-            f"Legacy mode: scout loop started for {tenant.user_id[:8]} "
-            f"(interval={SCOUT_INTERVAL_MINUTES}m, {len(REGISTERED_SOURCES)} sources)"
+            f"Local-first mode (default): scout loop started for "
+            f"{tenant.user_id[:8]} (interval={SCOUT_INTERVAL_MINUTES}m, "
+            f"{len(REGISTERED_SOURCES)} sources). Cloud is mirror-only; "
+            f"Vercel / Supabase outages cannot stall this loop."
         )
 
     while running:
@@ -956,9 +1092,17 @@ def main():
         _prune_stale_queue_locally()
 
         try:
-            job = claim_next_job(WORKER_ID)
+            if use_planner:
+                job = claim_next_job(WORKER_ID)
+            else:
+                # Local-first claim. Atomic on local SQLite, no cloud RTT.
+                job = claim_next_job_locally(tenant.user_id, WORKER_ID)
         except WorkerAuthError as e:
             logger.error(f"Authentication failed — exiting worker loop: {e}")
+            try:
+                send_session_event(tenant.user_id, "auth_expired", "Worker token revoked mid-loop.")
+            except Exception:
+                pass
             running = False
             break
         if not job:
@@ -1016,8 +1160,15 @@ def main():
             update_local_status(job, 'skipped', 'staffing agency')
             continue
 
-        # Company rate limit (max 3 per rolling 7 days)
-        if not check_company_rate(user_id, company):
+        # Company rate limit (max 3 per rolling 7 days). Local variant in
+        # default mode avoids a blocking cloud RTT; cloud stays graceful-
+        # default (returns True on failure) when used in planner mode.
+        _rate_ok = (
+            check_company_rate_locally(user_id, company)
+            if not use_planner
+            else check_company_rate(user_id, company)
+        )
+        if not _rate_ok:
             logger.info(f"Company rate limit reached for {company}, skipping")
             update_queue_status(job['id'], 'cancelled', error='company rate limit (5/30d)')
             update_local_status(job, 'skipped', 'company rate limit')
@@ -1030,7 +1181,15 @@ def main():
             continue
 
         # Check daily limit
-        if not check_daily_limit(user_id):
+        # Daily limit — local cap from tenant.daily_apply_limit (default
+        # mode) or cloud fallback (planner mode). Local variant never
+        # stalls the loop on cloud downtime.
+        _daily_ok = (
+            check_daily_limit_locally(user_id, tenant.daily_apply_limit)
+            if not use_planner
+            else check_daily_limit(user_id)
+        )
+        if not _daily_ok:
             logger.info(f"User {user_id} daily limit reached, skipping")
             update_queue_status(job['id'], 'pending')  # put back
             time.sleep(5)
@@ -1247,6 +1406,38 @@ def main():
             ats = _resolve_ats_from_url(apply_url, raw_ats)
             if ats != raw_ats:
                 logger.info(f"ATS resolved: {raw_ats} → {ats} (from URL)")
+
+            # LinkedIn URLs need a second step: fetch the job detail page and
+            # extract the "Apply on company website" URL. If we can resolve to
+            # a real company ATS (greenhouse/ashby/lever/etc.) we replace
+            # apply_url and re-resolve the ATS. If only Easy Apply is
+            # available, skip the job (don't re-queue) so the loop moves on.
+            if ats == "linkedin" and "linkedin.com" in (apply_url or "").lower():
+                resolved_url, reason = resolve_linkedin_apply_url(
+                    apply_url, company=company, title=job.get('title', '')
+                )
+                if resolved_url:
+                    logger.info(
+                        f"LinkedIn resolved to company URL: {resolved_url[:80]} "
+                        f"(via {reason})"
+                    )
+                    apply_url = resolved_url
+                    job['apply_url'] = resolved_url
+                    ats = _resolve_ats_from_url(apply_url, "linkedin")
+                    if ats == "linkedin":
+                        ats = "other"  # resolved to a non-LinkedIn, non-coded ATS
+                else:
+                    logger.info(
+                        f"LinkedIn job {job['id']} ({company}) can't be resolved "
+                        f"({reason}) — skipping instead of queueing forever"
+                    )
+                    update_queue_status(
+                        job['id'], 'cancelled',
+                        error=f'linkedin_unresolvable:{reason}',
+                    )
+                    update_local_status(job, 'skipped', f'LinkedIn: {reason}')
+                    continue
+
             cooldown = ATS_COOLDOWNS.get(ats, APPLY_COOLDOWN)
 
             # Get the right applier. If no coded applier exists for this ATS,
@@ -1323,7 +1514,10 @@ def main():
                     update_local_status(job, 'failed', result.error)
                     log_application(user_id, job, {'status': 'failed', 'error': result.error})
                     outcome_logged = True
-                    send_failure(user_id, company, job.get('title', ''), result.error)
+                    send_failure(
+                        user_id, company, job.get('title', ''), result.error,
+                        screenshot_path=result.screenshot,
+                    )
                     update_heartbeat(user_id, "failed", f"{company} — {result.error[:80]}")
                     apply_outcome = "failed"
                     apply_outcome_detail = f"{company}: {str(result.error)[:160]}"

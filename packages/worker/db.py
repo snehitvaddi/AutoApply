@@ -114,9 +114,74 @@ def fetch_user_job_preferences(user_id: str) -> dict:
 # ── Job queue ──────────────────────────────────────────────────────────────
 
 def claim_next_job(worker_id: str) -> dict | None:
-    """Claim next pending job from the queue."""
+    """Claim next pending job from the cloud queue (legacy / planner mode)."""
     result = _api_call("claim_job", worker_id=worker_id)
     return result.get("job")
+
+
+def claim_next_job_locally(user_id: str, worker_id: str) -> dict | None:
+    """Local-first claim — atomically take the oldest 'queued' row from the
+    local applications.db, mark it 'applying', and return it in the same
+    shape the cloud claim_next_job produces so downstream apply code is
+    unchanged.
+
+    Uses SQLite 3.35+ UPDATE ... RETURNING for atomicity. Only one worker
+    runs per user on a machine, so row-level contention is effectively zero.
+
+    Returns None when the queue is empty. Returns a job dict when a row
+    was claimed. Any SQLite error is surfaced via logger.warning and the
+    call returns None so the caller sleeps a tick and retries.
+    """
+    try:
+        conn = _get_local_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        row = conn.execute(
+            """
+            UPDATE applications
+            SET status = 'applying', updated_at = ?
+            WHERE id = (
+                SELECT id FROM applications
+                WHERE status = 'queued'
+                ORDER BY scouted_at ASC
+                LIMIT 1
+            )
+            RETURNING id, company, role, url, ats, source, location,
+                      posted_at, scouted_at, dedup_token, application_profile_id
+            """,
+            (now,),
+        ).fetchone()
+        conn.commit()
+        conn.close()
+        if not row:
+            return None
+        (lid, company, role, url, ats, source, location, posted_at,
+         scouted_at, dedup_token, application_profile_id) = row
+        # dedup_token format: "company|external_id". Parse out external_id
+        # so the downstream log path can re-derive the same key.
+        external_id = ""
+        if dedup_token and "|" in dedup_token:
+            external_id = dedup_token.split("|", 1)[1]
+        return {
+            "id": str(lid),            # local integer id, stringified
+            "user_id": user_id,
+            "job_id": None,            # only meaningful for cloud queue rows
+            "company": company or "",
+            "title": role or "",
+            "ats": ats or "",
+            "source": source or "",
+            "apply_url": url or "",
+            "location": location or "",
+            "posted_at": posted_at,
+            "scouted_at": scouted_at,
+            "external_id": external_id,
+            "application_profile_id": application_profile_id,
+            "attempts": 0,             # local schema doesn't track retries yet
+            "max_attempts": 3,
+            "_local": True,            # marker so update_queue_status can route writes
+        }
+    except Exception as e:
+        logger.warning(f"local claim failed: {e}")
+        return None
 
 
 def update_queue_status(queue_id: str, status: str, error: str | None = None):
@@ -423,17 +488,69 @@ def _ensure_local_schema(conn: sqlite3.Connection):
 
 # ── User profile ──────────────────────────────────────────────────────────
 
-def load_user_profile(user_id: str) -> dict:
-    """Fetch user profile + resumes."""
-    return _api_call("load_profile")
+# Profile cache — same 5-min TTL as preferences. Before this, the apply
+# loop called load_user_profile(user_id) twice per iteration (preflight
+# + inside the loop body), costing ~2 cloud round-trips per job. With
+# the cache a single apply cycle reads from memory after the first hit.
+_profile_cache: dict = {}
+PROFILE_CACHE_TTL = 300  # 5 minutes — matches preferences + tenant reload
+
+
+def load_user_profile(user_id: str, force: bool = False) -> dict:
+    """Fetch user profile + resumes. Cached for 5 min so the hot apply path
+    doesn't round-trip the cloud on every iteration.
+
+    Pass force=True to bust the cache (e.g., right after a profile update).
+    """
+    now = time.time()
+    if not force and user_id in _profile_cache:
+        data, ts = _profile_cache[user_id]
+        if now - ts < PROFILE_CACHE_TTL:
+            return data
+    result = _api_call("load_profile")
+    _profile_cache[user_id] = (result, now)
+    return result
+
+
+def refresh_config_caches() -> None:
+    """Bust every in-memory config cache. Call after a settings change or
+    when the worker has reason to believe the cloud has newer data."""
+    _profile_cache.clear()
+    _prefs_cache.clear()
 
 
 # ── Daily limits ──────────────────────────────────────────────────────────
 
 def check_daily_limit(user_id: str) -> bool:
-    """Return True if user hasn't exceeded daily limit."""
+    """Return True if user hasn't exceeded daily limit (cloud call)."""
     result = _api_call("check_daily_limit")
     return result.get("within_limit", True)
+
+
+def check_daily_limit_locally(user_id: str, daily_cap: int | None) -> bool:
+    """Local daily-cap check — counts submitted rows for today (user's local
+    day) from the local SQLite mirror. daily_cap=None means no cap → True.
+
+    Timezone matches count_profile_applied_today: strftime with 'localtime'
+    so the cap aligns with the user's day, not UTC. Non-fatal on error:
+    returns True so a cloud/SQLite hiccup doesn't stall the apply loop.
+    """
+    if daily_cap is None or daily_cap <= 0:
+        return True
+    try:
+        conn = _get_local_conn()
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM applications
+            WHERE status='submitted'
+              AND strftime('%Y-%m-%d', applied_at, 'localtime') = date('now', 'localtime')
+            """
+        ).fetchone()
+        conn.close()
+        return int(row[0]) < daily_cap if row else True
+    except Exception as e:
+        logger.debug(f"local daily-limit check failed (allowing): {e}")
+        return True
 
 
 def count_profile_applied_today(profile_id: str) -> int:
@@ -459,9 +576,38 @@ def count_profile_applied_today(profile_id: str) -> int:
 
 
 def check_company_rate(user_id: str, company: str) -> bool:
-    """Return True if user can still apply to this company (< 5 in 15 days)."""
+    """Return True if user can still apply to this company (cloud call)."""
     result = _api_call("check_company_rate", company=company)
     return result.get("within_limit", True)
+
+
+def check_company_rate_locally(user_id: str, company: str) -> bool:
+    """Local company-rate check — enforces MAX_COMPANY_APPS_PER_7_DAYS
+    against the local applications mirror. Case-insensitive match on
+    company (ATS data drifts between Title Case and lowercase).
+
+    Non-fatal on error: returns True so a SQLite hiccup doesn't block
+    the apply loop.
+    """
+    if not company:
+        return True
+    try:
+        from config import MAX_COMPANY_APPS_PER_7_DAYS
+        conn = _get_local_conn()
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM applications
+            WHERE status='submitted'
+              AND LOWER(company) = LOWER(?)
+              AND applied_at >= datetime('now', '-7 days')
+            """,
+            (company.strip(),),
+        ).fetchone()
+        conn.close()
+        return int(row[0]) < MAX_COMPANY_APPS_PER_7_DAYS if row else True
+    except Exception as e:
+        logger.debug(f"local company-rate check failed (allowing): {e}")
+        return True
 
 
 # ── Answer key ────────────────────────────────────────────────────────────
@@ -542,36 +688,100 @@ def download_resume(user_id: str, job_title: str | None = None) -> str:
 # ── Screenshot upload ─────────────────────────────────────────────────────
 
 def upload_screenshot(user_id: str, screenshot_path: str) -> str | None:
-    """Upload screenshot — for now, return local path. Cloud upload via API TBD."""
-    # Screenshots stay local for now. The Telegram notifier sends them directly.
-    return screenshot_path
+    """Upload screenshot to the cloud 'screenshots' bucket and return a
+    7-day signed URL. Falls back to the local path if cloud is unreachable
+    — the Telegram notifier can still attach the local file directly, and
+    the desktop Kanban can display the local path via file://.
+
+    Small by design: screenshots are capped at 5 MB (validated server-
+    side). base64 overhead is ~33%, so <7 MB payload per call.
+    """
+    if not screenshot_path or not os.path.exists(screenshot_path):
+        return None
+    try:
+        import base64 as _b64
+        with open(screenshot_path, "rb") as f:
+            b64 = _b64.b64encode(f.read()).decode("ascii")
+        filename = os.path.basename(screenshot_path)
+        result = _api_call("upload_screenshot", file_base64=b64, filename=filename)
+        url = result.get("url")
+        return url or screenshot_path
+    except Exception as e:
+        logger.debug(f"Screenshot cloud upload failed (falling back to local): {e}")
+        return screenshot_path
+
+
+def prune_old_screenshots(days: int = 7) -> int:
+    """Delete local screenshot files older than N days. Prevents
+    SCREENSHOT_DIR from growing unbounded on long-running installs.
+    Idempotent; safe to call at every worker boot + periodically.
+    """
+    try:
+        from config import SCREENSHOT_DIR
+    except Exception:
+        return 0
+    if not os.path.isdir(SCREENSHOT_DIR):
+        return 0
+    cutoff = time.time() - days * 86400
+    removed = 0
+    try:
+        for name in os.listdir(SCREENSHOT_DIR):
+            p = os.path.join(SCREENSHOT_DIR, name)
+            try:
+                if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+                    removed += 1
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"screenshot prune scan failed: {e}")
+        return 0
+    if removed:
+        logger.info(f"Pruned {removed} local screenshots older than {days}d")
+    return removed
 
 
 # ── Job enqueuing ─────────────────────────────────────────────────────────
 
 def enqueue_discovered_jobs(user_id: str, jobs: list[dict]) -> int:
-    """Insert discovered jobs via API proxy + local SQLite for desktop Kanban."""
+    """Insert discovered jobs — LOCAL SQLite is primary, cloud is best-effort.
+
+    Rewritten (2026-04-19): previously a cloud timeout / network error
+    raised out of _api_call, skipping the local write entirely. Under
+    local-first mode the local queue IS the source of truth; a cloud
+    hiccup cannot be allowed to drop jobs on the floor.
+
+    Order: local first (guaranteed), then cloud mirror (try/except).
+    Return value is the local insert count; cloud drops + cloud errors
+    are logged but don't affect the return.
+    """
     if not jobs:
         return 0
-    result = _api_call("enqueue_jobs", jobs=jobs)
-    # Surface server-side rejection reasons. Silent `enqueued: 0` was the
-    # root cause of overnight self-recovery blackout — when the server
-    # rejects, Claude needs the reason in the log to fix its payload.
-    drops = result.get("drops") or []
-    if drops:
-        import logging as _lg
-        _log = _lg.getLogger(__name__)
-        by_reason: dict[str, int] = {}
-        for d in drops:
-            r = str(d.get("reason", "unknown"))
-            by_reason[r] = by_reason.get(r, 0) + 1
-        _log.warning(
-            "enqueue_jobs dropped %d/%d: %s",
-            len(drops), len(jobs),
-            ", ".join(f"{k}×{v}" for k, v in by_reason.items()),
-        )
-    enqueue_to_local_db(jobs)
-    return result.get("enqueued", 0)
+    # Primary: local insert. Always happens.
+    local_count = enqueue_to_local_db(jobs)
+    # Secondary: cloud mirror. Best-effort; any failure just logs.
+    cloud_count = 0
+    try:
+        result = _api_call("enqueue_jobs", jobs=jobs)
+        drops = result.get("drops") or []
+        if drops:
+            import logging as _lg
+            _log = _lg.getLogger(__name__)
+            by_reason: dict[str, int] = {}
+            for d in drops:
+                r = str(d.get("reason", "unknown"))
+                by_reason[r] = by_reason.get(r, 0) + 1
+            _log.warning(
+                "enqueue_jobs cloud dropped %d/%d: %s",
+                len(drops), len(jobs),
+                ", ".join(f"{k}×{v}" for k, v in by_reason.items()),
+            )
+        cloud_count = result.get("enqueued", 0)
+    except WorkerAuthError:
+        raise
+    except Exception as e:
+        logger.debug(f"cloud enqueue failed (non-fatal, local has the data): {e}")
+    return max(local_count, cloud_count)
 
 
 # ── Cloud planner (Phase 1 of planner architecture) ──────────────────────

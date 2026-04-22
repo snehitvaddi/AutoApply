@@ -26,8 +26,14 @@ def _fetch_ashby_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
             if resp.status_code != 200:
                 return jobs
             for job in resp.json().get("jobs", []):
-                if not _is_fresh_24h(job.get("publishedAt")):
-                    continue
+                # NOTE: we deliberately DO NOT drop by publishedAt here.
+                # Ashby's public board API only returns jobs that are
+                # currently OPEN for applications — if a role was posted
+                # 3 weeks ago and hasn't been filled, it's still alive.
+                # The 24h rule is a LinkedIn/aggregator discipline to
+                # avoid stale noise; it's wrong for curated ATS APIs.
+                # Stale-queue pruning still applies downstream (24h in
+                # our local queue without being applied to = dropped).
                 title = job.get("title", "")
                 loc = job.get("location", "")
                 if isinstance(loc, dict):

@@ -73,8 +73,16 @@ def send_application_result(
         logger.error(f"Failed to send Telegram notification for user {user_id}: {e}")
 
 
-def send_failure(user_id: str, company: str, role: str, error: str | None):
-    """Send a failure notification to the user's Telegram."""
+def send_failure(
+    user_id: str,
+    company: str,
+    role: str,
+    error: str | None,
+    screenshot_path: str | None = None,
+):
+    """Send a failure notification to the user's Telegram. If a screenshot
+    path is given, attach the image (parity with send_application_result).
+    """
     chat_id = get_user_telegram_chat_id(user_id)
     if not chat_id:
         return
@@ -87,12 +95,75 @@ def send_failure(user_id: str, company: str, role: str, error: str | None):
     )
 
     try:
+        if screenshot_path:
+            try:
+                with open(screenshot_path, "rb") as photo:
+                    _telegram_api(
+                        "sendPhoto",
+                        data={"chat_id": chat_id, "parse_mode": "Markdown", "caption": text},
+                        files={"photo": ("fail.png", photo, "image/png")},
+                    )
+                    return
+            except Exception as e:
+                logger.debug(f"Failed to attach screenshot, sending text only: {e}")
         _telegram_api(
             "sendMessage",
             data={"chat_id": chat_id, "parse_mode": "Markdown", "text": text},
         )
     except Exception as e:
         logger.error(f"Failed to send failure notification for user {user_id}: {e}")
+
+
+def send_scout_summary(user_id: str, raw: int, enqueued: int, per_source: dict):
+    """Fire after each scout cycle so the user sees activity even when
+    nothing submitted. Short by design — the goal is presence, not detail.
+    """
+    chat_id = get_user_telegram_chat_id(user_id)
+    if not chat_id:
+        return
+    if raw == 0 and enqueued == 0:
+        # Skip empty-cycle spam — nothing interesting to report.
+        return
+    # Only include non-zero sources so the line stays short on busy cycles.
+    src_line = ", ".join(f"{k}: {v}" for k, v in per_source.items() if v) or "—"
+    text = (
+        f"*Scout*\n"
+        f"Discovered *{raw}* jobs, enqueued *{enqueued}*.\n"
+        f"_Sources:_ {src_line}"
+    )
+    try:
+        _telegram_api(
+            "sendMessage",
+            data={"chat_id": chat_id, "parse_mode": "Markdown", "text": text},
+        )
+    except Exception as e:
+        logger.debug(f"scout-summary send failed (non-fatal): {e}")
+
+
+def send_session_event(user_id: str, event: str, detail: str = ""):
+    """Session-lifecycle notifications — worker_started, auth_expired,
+    rate_limit, paused, resumed. Plain text, fire-and-forget.
+    """
+    chat_id = get_user_telegram_chat_id(user_id)
+    if not chat_id:
+        return
+    emoji = {
+        "worker_started": "🟢",
+        "auth_expired": "🔴",
+        "rate_limit": "⚠️",
+        "paused": "⏸️",
+        "resumed": "▶️",
+    }.get(event, "ℹ️")
+    text = f"{emoji} *{event.replace('_', ' ').title()}*"
+    if detail:
+        text += f"\n{detail}"
+    try:
+        _telegram_api(
+            "sendMessage",
+            data={"chat_id": chat_id, "parse_mode": "Markdown", "text": text},
+        )
+    except Exception as e:
+        logger.debug(f"session-event send failed (non-fatal): {e}")
 
 
 def send_daily_summary(user_id: str, stats: dict):

@@ -135,6 +135,10 @@ export default function ChatPage() {
   const [hasMoreHistory, setHasMoreHistory] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  // WhatsApp/Slack-style anchor: true = snap to bottom on every content
+  // resize. User scrolling up past ~120px disengages; scrolling back
+  // within ~120px of bottom re-engages.
+  const anchoredToBottom = useRef(true)
 
   const onMessage = useCallback((data: unknown) => {
     const msg = data as {
@@ -220,17 +224,44 @@ export default function ChatPage() {
     return () => { cancelled = true }
   }, [])
 
-  // Scroll-to-bottom on live append, but NOT while user is reading history
-  // upward (detected by checking distance-from-bottom before the new append).
+  // WhatsApp/Slack auto-scroll: ResizeObserver on the scroll container
+  // snaps to bottom whenever content grows AS LONG AS the user is anchored.
+  // This handles markdown reflow (code blocks, images) that finishes
+  // over 100-300ms after React commits — double-rAF wasn't enough.
+  useEffect(() => {
+    const c = scrollContainerRef.current
+    if (!c) return
+    const snap = () => {
+      if (anchoredToBottom.current) {
+        c.scrollTop = c.scrollHeight
+      }
+    }
+    // Observe the scroll container AND its first child (the items list) so
+    // we catch both outer height and inner content height changes.
+    const ro = new ResizeObserver(snap)
+    ro.observe(c)
+    const inner = c.firstElementChild
+    if (inner) ro.observe(inner)
+    // Initial snap in case content is already there (e.g., remount with
+    // live state still in memory — Next.js App Router tab switch).
+    snap()
+    return () => ro.disconnect()
+  }, [])
+
+  // First-load force-snap: once history arrives, override any prior scroll
+  // state and land at bottom. Runs once per mount.
   useEffect(() => {
     if (!historyLoaded) return
     const c = scrollContainerRef.current
     if (!c) return
-    const distanceFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight
-    if (distanceFromBottom < 200) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-    }
-  }, [items, historyLoaded])
+    anchoredToBottom.current = true
+    c.scrollTop = c.scrollHeight
+    // Re-snap a few times as markdown/code blocks settle.
+    const t1 = setTimeout(() => { if (anchoredToBottom.current) c.scrollTop = c.scrollHeight }, 50)
+    const t2 = setTimeout(() => { if (anchoredToBottom.current) c.scrollTop = c.scrollHeight }, 200)
+    const t3 = setTimeout(() => { if (anchoredToBottom.current) c.scrollTop = c.scrollHeight }, 500)
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
+  }, [historyLoaded])
 
   // Load older history when the user scrolls near the top. Remembers the
   // anchor row so the visual scroll position doesn't jump after prepending.
@@ -265,10 +296,12 @@ export default function ChatPage() {
     }
   }, [items, loadingOlder, hasMoreHistory])
 
-  // Fire loadOlderHistory when the scroll container reaches the top.
+  // Track anchor state + fire loadOlderHistory when near top.
   const handleScroll = useCallback(() => {
     const c = scrollContainerRef.current
     if (!c) return
+    const distanceFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight
+    anchoredToBottom.current = distanceFromBottom < 120
     if (c.scrollTop < 60 && hasMoreHistory && !loadingOlder) {
       loadOlderHistory()
     }
@@ -277,6 +310,8 @@ export default function ChatPage() {
   const handleSend = () => {
     const text = input.trim()
     if (!text) return
+    // Typing a message always re-anchors you to the bottom (WhatsApp pattern).
+    anchoredToBottom.current = true
     setItems((prev) => [...prev, { type: "user", content: text }])
     send({ action: "message", message: text })
     setInput("")

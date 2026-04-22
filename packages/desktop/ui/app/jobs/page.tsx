@@ -72,7 +72,11 @@ export default function JobsListPage() {
   // displays whatever data it had when the server last answered.
   const [lastFetch, setLastFetch] = useState<number | null>(null)
   const [backendReachable, setBackendReachable] = useState<boolean>(true)
-  const appliedEndRef = useRef<HTMLDivElement>(null)
+  const appliedScrollRef = useRef<HTMLDivElement>(null)
+  // Anchor-to-bottom state — mirrors the chat page pattern. On first mount
+  // and on every refresh, snap to bottom; if the user scrolls up >120px,
+  // disengage so their reading position isn't yanked.
+  const appliedAnchor = useRef(true)
 
   const refresh = useCallback(async () => {
     try {
@@ -135,10 +139,48 @@ export default function JobsListPage() {
     return () => clearInterval(interval)
   }, [refresh])
 
-  // Auto-scroll applied list to bottom (newest)
+  // WhatsApp/Slack auto-scroll via ResizeObserver — snaps to bottom on
+  // every content growth while anchored. Double-rAF wasn't enough here
+  // because the Applied table's row heights settle over multiple paints
+  // (variable content, sticky header reflow). Observing the container
+  // catches every reflow.
   useEffect(() => {
-    appliedEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [applied])
+    const c = appliedScrollRef.current
+    if (!c) return
+    const snap = () => {
+      if (appliedAnchor.current) {
+        c.scrollTop = c.scrollHeight
+      }
+    }
+    const ro = new ResizeObserver(snap)
+    ro.observe(c)
+    const inner = c.firstElementChild
+    if (inner) ro.observe(inner)
+    snap()
+    return () => ro.disconnect()
+  }, [])
+
+  // Force-snap on mount and whenever the Applied list identity changes
+  // (filter switch, refresh completes with new rows). Multi-stage
+  // timeouts catch slow table reflows.
+  useEffect(() => {
+    const c = appliedScrollRef.current
+    if (!c) return
+    appliedAnchor.current = true
+    c.scrollTop = c.scrollHeight
+    const t1 = setTimeout(() => { if (appliedAnchor.current) c.scrollTop = c.scrollHeight }, 50)
+    const t2 = setTimeout(() => { if (appliedAnchor.current) c.scrollTop = c.scrollHeight }, 200)
+    const t3 = setTimeout(() => { if (appliedAnchor.current) c.scrollTop = c.scrollHeight }, 500)
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
+  }, [applied, filter])
+
+  // Track anchor state when the user scrolls manually.
+  const handleAppliedScroll = useCallback(() => {
+    const c = appliedScrollRef.current
+    if (!c) return
+    const distanceFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight
+    appliedAnchor.current = distanceFromBottom < 120
+  }, [])
 
   const filteredApplied =
     filter === "all"
@@ -200,7 +242,7 @@ export default function JobsListPage() {
                 </div>
                 <span className="text-[10px] text-muted-foreground">oldest ↑ newest ↓</span>
               </div>
-              <div className="flex-1 overflow-y-auto">
+              <div ref={appliedScrollRef} onScroll={handleAppliedScroll} className="flex-1 overflow-y-auto">
                 {filteredApplied.length === 0 ? (
                   <div className="flex h-full items-center justify-center p-8">
                     <p className="text-sm text-muted-foreground">No applications yet</p>
@@ -245,7 +287,6 @@ export default function JobsListPage() {
                     </tbody>
                   </table>
                 )}
-                <div ref={appliedEndRef} />
               </div>
             </div>
 

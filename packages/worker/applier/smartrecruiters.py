@@ -14,7 +14,7 @@ import json
 import time
 import logging
 
-from applier.base import BaseApplier, ApplyResult
+from applier.base import BaseApplier, ApplyResult, is_submission_confirmed
 from applier.greenhouse import (
     browser, snapshot, fill_fields, click_ref, select_option,
     upload_file, take_screenshot, wait_load, navigate_url,
@@ -184,7 +184,18 @@ class SmartRecruitersApplier(BaseApplier):
                         time.sleep(3)
                         break
 
+            # Positive-confirmation gate. The older code treated any snapshot
+            # containing the substring "submit" as page 2, then marked the
+            # whole apply as success without checking for a thank-you page —
+            # so a validation modal saying "click submit to retry" passed.
+            post_text = snapshot() or ""
             img = take_screenshot()
+            if not is_submission_confirmed(post_text):
+                return ApplyResult(
+                    success=False, screenshot=img,
+                    error="no confirmation page detected after submit — likely silent failure",
+                    retriable=False,
+                )
             return ApplyResult(success=True, screenshot=img)
 
         except Exception as e:

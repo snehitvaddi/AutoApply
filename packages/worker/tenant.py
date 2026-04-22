@@ -131,6 +131,16 @@ class ApplyProfile:
         if self.preferred_locations:
             locs = [loc.lower() for loc in self.preferred_locations]
             if ll and not any(loc in ll for loc in locs):
+                # Intent-aware fallback. If the user asked for "United
+                # States" / "USA" / "US", accept any location that LOOKS
+                # US-ish — state codes (", CA", "CA,"), "remote", common
+                # US metros. Before this, Ashby / Greenhouse / Lever jobs
+                # returning "San Francisco, CA" were dropped 100% because
+                # they don't contain the literal string "united states",
+                # while LinkedIn (which injects "United States" into its
+                # search) was the only source passing.
+                if _wants_us(locs) and _is_us_location(ll):
+                    return True
                 return False
         elif self.remote_only:
             # Remote-only tenants: reject blank locations too. A missing
@@ -434,10 +444,18 @@ class TenantConfig:
         if any(ec in cl for ec in self.excluded_companies):
             return False
 
-        # Location filter — preferred_locations wins if set, then remote_only
+        # Location filter — preferred_locations wins if set, then remote_only.
+        # US-intent: if the user asked for "United States" / "USA" / "US",
+        # accept any location that looks US-ish even if it doesn't literally
+        # contain the phrase (bare city names, state codes, etc). See
+        # _is_us_location for the permissive match rules. Before this fix,
+        # Ashby/Greenhouse returned "San Francisco" / "Austin" and 100% got
+        # dropped because "united states" wasn't a substring.
         if self.preferred_locations:
             locs = [loc.lower() for loc in self.preferred_locations]
             if ll and not any(loc in ll for loc in locs):
+                if _wants_us(locs) and _is_us_location(ll):
+                    return True
                 return False
         elif self.remote_only:
             if "remote" not in ll:
@@ -523,3 +541,136 @@ def _keyword_hit(kw: str, text: str) -> bool:
     if kw in _SHORT_KEYWORDS or len(kw) <= 3:
         return bool(re.search(rf'\b{re.escape(kw)}\b', text))
     return kw in text
+
+
+# US-aware location matching. When a user sets preferred_locations=["United
+# States"], they intend "US jobs" — but ATS APIs return "San Francisco, CA"
+# or "Austin, TX" or "Remote", none of which literally contain the phrase
+# "united states." We treat all of those as a match.
+
+_US_TOKENS = (
+    "united states", "usa", "u.s.a", "u.s.", " us ", ",us", "us,",
+    ", us", "(us)", "remote - us", "remote, us", "remote us",
+)
+
+_US_STATE_CODES = (
+    "al","ak","az","ar","ca","co","ct","de","fl","ga","hi","id","il",
+    "in","ia","ks","ky","la","me","md","ma","mi","mn","ms","mo","mt",
+    "ne","nv","nh","nj","nm","ny","nc","nd","oh","ok","or","pa","ri",
+    "sc","sd","tn","tx","ut","vt","va","wa","wv","wi","wy","dc",
+)
+
+# Pre-compiled: matches ", XX" or " XX," or " XX " where XX is a US state code.
+_US_STATE_CODE_RE = re.compile(
+    r"(?:[,\s]|^)(" + "|".join(_US_STATE_CODES) + r")(?:[,\s.)]|$)",
+    re.IGNORECASE,
+)
+
+
+def _wants_us(preferred_lower_list: list[str]) -> bool:
+    """True if any preferred_locations entry indicates 'US' intent."""
+    return any(
+        any(tok in loc for tok in ("united states", "usa", "us", "u.s"))
+        for loc in preferred_lower_list
+    )
+
+
+# Non-US location tokens. Matching one of these in a lowercased location
+# string means the job is almost certainly outside the US. Kept conservative:
+# only include unambiguous country/region/city names. "Paris, TX" in the US
+# is rare; we accept the false-positive rate for the vast simplification
+# compared to enumerating ~30 000 US cities.
+_FOREIGN_TOKENS = (
+    # Europe
+    "united kingdom", "england", "scotland", "wales", "northern ireland", " uk",
+    "(uk)", "uk)", " uk,", ",uk",
+    "germany", "berlin", "munich", "hamburg",
+    "france", "paris", "lyon",
+    "italy", "milan", "rome",
+    "spain", "madrid", "barcelona",
+    "netherlands", "amsterdam", "rotterdam",
+    "belgium", "brussels",
+    "switzerland", "zurich", "geneva",
+    "austria", "vienna",
+    "sweden", "stockholm",
+    "norway", "oslo",
+    "denmark", "copenhagen",
+    "finland", "helsinki",
+    "ireland", "dublin",
+    "poland", "warsaw",
+    "czech", "prague",
+    "hungary", "budapest",
+    "portugal", "lisbon",
+    "greece", "athens",
+    "romania", "bulgaria",
+    "ukraine", "russia", "moscow",
+    "turkey", "istanbul",
+    # Americas
+    "canada", "toronto", "vancouver", "montreal", "ottawa", "calgary", "edmonton",
+    "mexico", "mexico city", "guadalajara",
+    "brazil", "sao paulo", "são paulo", "rio de janeiro",
+    "argentina", "buenos aires",
+    "chile", "santiago",
+    # APAC
+    "australia", "sydney", "melbourne", "brisbane", "perth",
+    "new zealand", "auckland",
+    "japan", "tokyo", "osaka",
+    "korea", "seoul",
+    "china", "beijing", "shanghai", "shenzhen", "guangzhou",
+    "hong kong",
+    "taiwan", "taipei",
+    "singapore",
+    "malaysia", "kuala lumpur",
+    "india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad",
+    "chennai", "pune", "gurgaon", "noida", "kolkata",
+    "philippines", "manila",
+    "thailand", "bangkok",
+    "vietnam", "ho chi minh", "hanoi",
+    "indonesia", "jakarta",
+    "pakistan", "lahore", "karachi", "islamabad",
+    "bangladesh", "dhaka",
+    # MEA
+    "united arab emirates", "uae", "dubai", "abu dhabi",
+    "saudi arabia", "riyadh",
+    "qatar", "doha",
+    "israel", "tel aviv",
+    "egypt", "cairo",
+    "south africa", "cape town", "johannesburg",
+    "nigeria", "lagos",
+    "kenya", "nairobi",
+    # Region tags
+    "emea", "apac", "mena", "latam", "europe",
+)
+
+
+def _is_us_location(loc_lower: str) -> bool:
+    """True if the given (already-lowercased) location string looks US-ish.
+
+    Three-tier check:
+      1. Explicit US tokens ("united states", "usa", etc.) → yes.
+      2. "Remote" (US-based ATSes default to US-only unless tagged "global"/
+         a region) → yes.
+      3. State-code pattern (", CA" etc.) → yes.
+      4. Bare city ("San Francisco") — permissive: accept UNLESS the string
+         contains a foreign token (see _FOREIGN_TOKENS). Avoids having to
+         enumerate US cities.
+
+    Empty string is rejected; callers short-circuit on blank locations.
+    """
+    if not loc_lower:
+        return False
+    # Fast accept: explicit US tokens
+    if any(tok in loc_lower for tok in _US_TOKENS):
+        return True
+    # Fast reject: explicit foreign tokens
+    if any(tok in loc_lower for tok in _FOREIGN_TOKENS):
+        return False
+    # Accept "remote" unless already flagged foreign
+    if "remote" in loc_lower:
+        return True
+    # Accept state-code pattern
+    if _US_STATE_CODE_RE.search(loc_lower):
+        return True
+    # Permissive default — no foreign token found, assume US.
+    # Coded appliers will refuse a non-US address if it slips through.
+    return True

@@ -15,8 +15,9 @@ async def terminal_websocket(ws: WebSocket):
     """Stream worker stdout to the connected WebSocket client."""
     await ws.accept()
 
-    # Send buffer backfill
-    for line in worker.output_buffer:
+    # Send buffer backfill — snapshot first; writer thread appends
+    # concurrently and iterating the live deque races.
+    for line in list(worker.output_buffer):
         await ws.send_json({"type": "line", "data": line})
 
     # Subscribe to live output
