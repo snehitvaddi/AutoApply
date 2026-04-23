@@ -36,32 +36,8 @@ class SmartRecruitersApplier(BaseApplier):
     def apply(self, apply_url: str) -> ApplyResult:
         os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
-        # Claude-first path.
-        import re as _re
-        _m = _re.search(r"smartrecruiters\.com/([^/?]+)", apply_url or "")
-        _slug = _m.group(1) if _m else ""
-        from applier.llm_fill import llm_first_apply, claude_available
-        if claude_available():
-            res = llm_first_apply(
-                apply_url=apply_url, company_hint=_slug,
-                profile_summary=self.profile_summary(),
-                answer_key=self.answer_key, resume_path=self.resume_path,
-                browser_fns={
-                    "navigate_url": navigate_url, "wait_load": wait_load,
-                    "snapshot": snapshot, "parse_snapshot": parse_snapshot,
-                    "fill_fields": fill_fields, "click_ref": click_ref,
-                    "select_option": select_option, "upload_file": upload_file,
-                    "take_screenshot": take_screenshot, "evaluate_js": evaluate_js,
-                },
-                ats_name="smartrecruiters", max_steps=3,
-            )
-            if res is not None:
-                return ApplyResult(
-                    success=bool(res.get("success")),
-                    screenshot=res.get("screenshot"),
-                    error=res.get("error"),
-                    retriable=bool(res.get("retriable")),
-                )
+        # The Claude-brain is the primary path. This legacy class
+        # runs only under APPLYLOOP_BRAIN_DISABLED=1.
 
         try:
             # 1. Navigate (legacy path)

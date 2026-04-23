@@ -22,7 +22,6 @@ from applier.greenhouse import (
     upload_file, take_screenshot, wait_load, navigate_url,
     parse_snapshot, match_text_field, match_dropdown, evaluate_js,
 )
-from applier.llm_fill import llm_first_apply, claude_available
 from config import SCREENSHOT_DIR
 
 logger = logging.getLogger(__name__)
@@ -36,37 +35,13 @@ def _slug_from_url(url: str) -> str:
 
 
 class LeverApplier(BaseApplier):
-    """Applies to Lever jobs. Claude-first with legacy regex fallback."""
+    """Legacy regex-based Lever applier. The Claude-brain (Agent-SDK)
+    is the primary path now — this class is reached only when the brain
+    is disabled (APPLYLOOP_BRAIN_DISABLED=1 / worker.py --mode=legacy)."""
 
     def apply(self, apply_url: str) -> ApplyResult:
         os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-
-        # Claude-first path. Python just drives the browser.
-        if claude_available():
-            res = llm_first_apply(
-                apply_url=apply_url,
-                company_hint=_slug_from_url(apply_url),
-                profile_summary=self.profile_summary(),
-                answer_key=self.answer_key,
-                resume_path=self.resume_path,
-                browser_fns={
-                    "navigate_url": navigate_url, "wait_load": wait_load,
-                    "snapshot": snapshot, "parse_snapshot": parse_snapshot,
-                    "fill_fields": fill_fields, "click_ref": click_ref,
-                    "select_option": select_option, "upload_file": upload_file,
-                    "take_screenshot": take_screenshot, "evaluate_js": evaluate_js,
-                },
-                ats_name="lever",
-                max_steps=2,
-            )
-            if res is not None:
-                return ApplyResult(
-                    success=bool(res.get("success")),
-                    screenshot=res.get("screenshot"),
-                    error=res.get("error"),
-                    retriable=bool(res.get("retriable")),
-                )
-            # else Claude unavailable — fall through to legacy
+        _ = _slug_from_url  # keep helper reachable for dev debugging
 
         try:
             # 1. Open the application form (legacy regex path)

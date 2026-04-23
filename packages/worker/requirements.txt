@@ -13,3 +13,8 @@ scrapling>=0.2.0
 curl_cffi>=0.7.0
 python-jobspy>=1.1.0
 beautifulsoup4>=4.12.0
+# Claude-Agent-SDK powers packages/worker/brain/. It wraps the local
+# `claude` CLI as a subprocess — auth comes from the user's Claude
+# subscription (`claude login`), not ANTHROPIC_API_KEY. Requires Python
+# >=3.10, which the installer provisions via homebrew python@3.11.
+claude-agent-sdk>=0.1.60

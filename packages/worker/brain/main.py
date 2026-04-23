@@ -5,17 +5,20 @@ server + the scout-agent / apply-agent subagents. Drives a loop of
 "check pipeline → scout if needed → apply one job → sleep" by
 re-prompting the client each tick.
 
+Authentication: the SDK launches the `claude` CLI as a subprocess, so
+it reuses whatever login the user already has on their machine
+(Claude.ai subscription via `claude login`). No ANTHROPIC_API_KEY is
+required as long as the `claude` CLI is installed and signed in.
+
 Flags:
-  --dry-run   List the tools that would be registered and exit. Doesn't
-              require ANTHROPIC_API_KEY or any network. Used to
-              sanity-check the tool surface.
+  --dry-run   List the tools that would be registered and exit. No
+              network calls, no CLI spawn.
   --once      Run exactly one scout+apply cycle and exit. For smoke
               testing on a seeded queue row.
   (default)   Run forever; sleep between cycles.
 
 Env vars:
   APPLYLOOP_USER_ID         — required. Which tenant's queue we serve.
-  ANTHROPIC_API_KEY         — required for anything but --dry-run.
   APPLYLOOP_BRAIN_DISABLED  — if set, refuse to start (kill switch).
   APPLYLOOP_BRAIN_MODEL     — override the default Sonnet 4.6 model.
   APPLYLOOP_BRAIN_LOG       — override ~/.applyloop/brain.log path.

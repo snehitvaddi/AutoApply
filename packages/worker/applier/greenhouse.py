@@ -294,36 +294,10 @@ class GreenhouseApplier(BaseApplier):
         slug_match = re.search(r'[?&]for=([^&]+)', embed_url)
         company_slug = slug_match.group(1) if slug_match else ""
 
-        # Claude-first path. Python just drives the browser; Claude writes
-        # every field value + company-specific free-text, picks the submit
-        # button, handles multi-step forms. Falls back to the legacy regex
-        # path below if Claude binary isn't on PATH (WORKER_NO_LLM_FILL=1
-        # also disables).
-        from applier.llm_fill import llm_first_apply, claude_available
-        if claude_available():
-            res = llm_first_apply(
-                apply_url=embed_url,
-                company_hint=company_slug,
-                profile_summary=self.profile_summary(),
-                answer_key=self.answer_key,
-                resume_path=self.resume_path,
-                browser_fns={
-                    "navigate_url": navigate_url, "wait_load": wait_load,
-                    "snapshot": snapshot, "parse_snapshot": parse_snapshot,
-                    "fill_fields": fill_fields, "click_ref": click_ref,
-                    "select_option": select_option, "upload_file": upload_file,
-                    "take_screenshot": take_screenshot, "evaluate_js": evaluate_js,
-                },
-                ats_name="greenhouse",
-                max_steps=3,
-            )
-            if res is not None:
-                return ApplyResult(
-                    success=bool(res.get("success")),
-                    screenshot=res.get("screenshot"),
-                    error=res.get("error"),
-                    retriable=bool(res.get("retriable")),
-                )
+        # The Claude-brain (Agent-SDK) now owns the Claude-driven apply
+        # flow. This class stays for legacy fallback when the brain is
+        # disabled (APPLYLOOP_BRAIN_DISABLED=1 → worker.py --mode=legacy),
+        # in which case we run the regex-based path below.
 
         try:
             # 0. reCAPTCHA detection: warn/flag if company is in RECAPTCHA list

@@ -1140,7 +1140,9 @@ job application engine that runs locally on this Mac.
 - **Python venv**: \`$APPLYLOOP_HOME/venv/bin/python3\`
 - **Profile**: \`$APPLYLOOP_HOME/profile.json\` — read this FIRST (the user you're applying for)
 - **Playbook**: \`$APPLYLOOP_HOME/packages/worker/SOUL.md\` — the full scout→apply rules
-- **Worker code**: \`$APPLYLOOP_HOME/packages/worker/worker.py\`
+- **Brain entry**: \`$APPLYLOOP_HOME/packages/worker/bin/applyloop-brain\` — launches the Claude-Agent-SDK orchestrator
+- **Brain log**: \`$APPLYLOOP_HOME/brain.log\` — tail this to watch what the brain is doing
+- **Legacy worker** (fallback): \`$APPLYLOOP_HOME/packages/worker/worker.py\`
 - **Config env**: \`$APPLYLOOP_HOME/.env\` — sourced by launcher (worker inherits it)
 - **Desktop log**: \`$HOME/.autoapply/desktop.log\`
 - **User**: ${ACTIVATION_NAME:-$ACTIVATION_EMAIL}
@@ -1150,7 +1152,7 @@ job application engine that runs locally on this Mac.
 
 1. **Read \`profile.json\` first.** That's the user you're applying for — every field (experience, education, skills, answer_key_json, preferences) is the source of truth for form-filling.
 2. **Read \`SOUL.md\`** for the full playbook: scanning strategy, filters, form-filling rules, rate limits, Telegram notifications, critical do-nots.
-3. **Greet the user by name** (\`$ACTIVATION_NAME\`) in ONE line, then **IMMEDIATELY start the scout→filter→apply loop**. Do NOT wait for a "start" command — this is a 24/7 autonomous session. Run: \`cd $APPLYLOOP_HOME/packages/worker && python3 worker.py\`
+3. **Greet the user by name** (\`$ACTIVATION_NAME\`) in ONE line, then **IMMEDIATELY start the scout→filter→apply loop**. Do NOT wait for a "start" command — this is a 24/7 autonomous session. Run: \`cd $APPLYLOOP_HOME/packages/worker && bin/applyloop-brain\`. (If the brain fails to start for any reason — missing \`claude\` CLI auth, SDK import error — fall back to the legacy path with \`APPLYLOOP_BRAIN_DISABLED=1 python3 worker.py\`.)
 4. On "status": show profile summary + last scout/apply stats + configured services (below).
 5. On "apply to [URL]": run the applier directly on that URL.
 6. On "stop": kill the worker subprocess.

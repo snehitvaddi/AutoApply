@@ -9,12 +9,12 @@ This scout drives the real OpenClaw headful browser: navigate to the
 guest job search URL, scroll a few times to trigger lazy-loaded cards,
 then extract title/company/location/job URL via a single JS snippet.
 
-Card URLs are LinkedIn `/jobs/view/<slug>-<jobId>` links. The downstream
-llm_first_apply loop handles LinkedIn sign-in walls by running a Google
-search for the company + title and auto-navigating to the first ATS
-result (greenhouse/lever/ashby/workday/smartrecruiters). So we do NOT
-need to resolve to a real ATS URL here — just surface the LinkedIn card
-and let Claude drive the rest.
+Card URLs are LinkedIn `/jobs/view/<slug>-<jobId>` links. The Claude
+brain (packages/worker/brain/) handles LinkedIn sign-in walls at apply
+time by running a Google search for the company + title and
+auto-navigating to the first ATS result (greenhouse / lever / ashby /
+workday / smartrecruiters). So we do NOT need to resolve to a real ATS
+URL here — just surface the LinkedIn card and let the brain drive.
 
 Two LinkedIn URL shapes are supported via the same builder:
   - /jobs/search?keywords=...&location=...&f_TPR=r86400
