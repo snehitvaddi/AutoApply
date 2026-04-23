@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Entry-point script for the ApplyLoop Claude brain.
+# Resolves the worker package dir so `python -m brain.main` can find
+# the brain + scout + applier modules. Keep this script dumb — any
+# real logic belongs in brain/main.py.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$WORKER_DIR"
+# Prefer the applyloop venv if the installer created one; otherwise
+# fall back to whatever `python3` is on PATH.
+if [[ -x "$HOME/.applyloop/venv/bin/python" ]]; then
+  PY="$HOME/.applyloop/venv/bin/python"
+else
+  PY="python3"
+fi
+exec "$PY" -m brain.main "$@"
