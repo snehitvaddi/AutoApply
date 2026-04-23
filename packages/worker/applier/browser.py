@@ -88,6 +88,92 @@ def type_into(ref: str, text: str) -> str:
     return browser(f'type {ref} "{escaped}"', timeout=5)
 
 
+def list_tabs() -> list[dict]:
+    """Return the list of open browser tabs.
+
+    Each tab is a dict with at least `targetId`, `url`, `title`. We ask
+    OpenClaw for JSON so the shape is stable. Returns [] on any failure
+    — callers use this as a pre-submit sanity check, not a load-bearing
+    query, so swallowing errors is safe.
+    """
+    import json as _json
+    # OpenClaw logs a config-version banner to stdout on every call. Ask
+    # for JSON and grep out the first `{`...`}` block so the banner is
+    # tolerated.
+    raw = browser("tabs --json", timeout=5)
+    if not raw:
+        return []
+    start = raw.find("{")
+    if start < 0:
+        return []
+    try:
+        data = _json.loads(raw[start:])
+    except Exception as e:
+        logger.debug(f"tabs --json parse failed: {e}; raw={raw[:200]!r}")
+        return []
+    tabs = data.get("tabs") or []
+    return tabs if isinstance(tabs, list) else []
+
+
+def close_tab(target_id: str) -> str:
+    """Close one tab by OpenClaw targetId (or unique prefix)."""
+    return browser(f"close {target_id}", timeout=5)
+
+
+def focus_tab(target_id: str) -> str:
+    """Bring one tab to the foreground by targetId."""
+    return browser(f"focus {target_id}", timeout=5)
+
+
+def dismiss_stray_tabs(keep_url_substring: str | None = None) -> int:
+    """Close every tab that is NOT the apply tab.
+
+    The apply flow occasionally triggers privacy-policy / terms-of-use
+    links that open a new tab and steal focus. OpenClaw's next snapshot
+    then targets the popup, the agent fills the wrong page, and the
+    original form stalls. Call this between apply steps to keep the
+    session single-tabbed.
+
+    Args:
+        keep_url_substring: if given, keep tabs whose URL contains this
+            substring (use the apply ATS hostname). If None, keep only
+            the first tab in the list.
+
+    Returns:
+        Number of tabs closed. 0 means nothing to do.
+    """
+    tabs = list_tabs()
+    if len(tabs) <= 1:
+        return 0
+
+    closed = 0
+    if keep_url_substring:
+        keeper_ids: set[str] = set()
+        for t in tabs:
+            url = (t.get("url") or "").lower()
+            if keep_url_substring.lower() in url and not keeper_ids:
+                keeper_ids.add(str(t.get("targetId") or ""))
+        # No tab matched the filter? Fall back to keeping the first.
+        if not keeper_ids:
+            keeper_ids = {str(tabs[0].get("targetId") or "")}
+    else:
+        keeper_ids = {str(tabs[0].get("targetId") or "")}
+
+    for t in tabs:
+        tid = str(t.get("targetId") or "")
+        if not tid or tid in keeper_ids:
+            continue
+        close_tab(tid)
+        closed += 1
+
+    # Make sure the keeper is foregrounded — popups often steal focus
+    # and OpenClaw's next snapshot targets the focused tab.
+    if keeper_ids:
+        focus_tab(next(iter(keeper_ids)))
+
+    return closed
+
+
 def parse_snapshot(raw: str) -> list[dict]:
     """Parse snapshot output into a list of {ref, type, label} dicts."""
     fields: list[dict] = []
