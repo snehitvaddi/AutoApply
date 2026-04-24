@@ -591,12 +591,34 @@ def tenant_reload_loop(user_id: str) -> None:
             logger.warning(f"Tenant reload failed (keeping previous): {e}")
 
 
+def is_manual_mode() -> bool:
+    """Return True when APPLYLOOP_MANUAL_MODE=1 is set in the environment.
+
+    Manual mode suspends all automated browser activity (scout + apply)
+    so a human operator can drive the OpenClaw browser without the worker
+    racing against it. Set the flag before doing any manual session;
+    unset it (or kill + restart the worker) to resume automation.
+
+    Previously the only workaround was `kill -9 <pid>`. This flag lets
+    the worker pause gracefully and resume on its own.
+    """
+    return os.environ.get("APPLYLOOP_MANUAL_MODE", "").lower() in ("1", "true", "yes")
+
+
 def scout_loop(_initial_tenant: TenantConfig) -> None:
     """Background thread: runs scout cycle every SCOUT_INTERVAL_MINUTES.
     Reads the live tenant from `_current_tenant` at each cycle so bundle
     additions propagate without worker restart. The initial arg is kept
     only so the thread signature stays backward compatible for callers."""
     while running:
+        if is_manual_mode():
+            logger.info("Manual mode active — scout paused. Unset APPLYLOOP_MANUAL_MODE to resume.")
+            for _ in range(60):
+                if not running:
+                    return
+                time.sleep(1)
+            continue
+
         try:
             tenant = get_current_tenant()
             run_scout_cycle(tenant)
@@ -1007,6 +1029,13 @@ def main():
         )
 
     while running:
+        # Manual mode: operator has taken control of the browser.
+        # Pause the entire apply loop so we don't race against them.
+        if is_manual_mode():
+            update_heartbeat(tenant.user_id, "paused", "APPLYLOOP_MANUAL_MODE set — browser released to operator")
+            time.sleep(30)
+            continue
+
         # Planner dispatch — runs at the top of every iteration. Non-apply
         # actions (scout, idle) are handled here and the iteration skips.
         # apply_next falls through to the claim+apply code below; outcome
