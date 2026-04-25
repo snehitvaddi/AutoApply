@@ -4,9 +4,9 @@
 
 # ApplyLoop
 
-### Your AI job-application assistant that never sleeps.
+### Powered by OpenClaw MCP. Applies to jobs while you sleep.
 
-**You build the profile once. ApplyLoop applies to matching jobs every 30 minutes — automatically, on your Mac — while you live your life.**
+**You build the profile once. ApplyLoop's AI agent scouts job boards, fills every form, and submits real applications on your Mac around the clock — so you wake up to a full application history, not an empty inbox.**
 
 <br/>
 
@@ -27,9 +27,11 @@
 
 ## What is ApplyLoop?
 
-> **Think of it like autopilot for your job search.**
+> **Think of it like autopilot for your job search — powered by an AI agent that runs on your Mac.**
 
-You fill in your resume and preferences **once**. ApplyLoop reads thousands of job listings every day, picks the ones that actually match you, and submits real applications — filling out every field, answering every question — in a real browser, just like you would.
+You fill in your resume and preferences **once**. Under the hood, ApplyLoop uses **[OpenClaw MCP](https://github.com/snehitvaddi/AutoApply)** — a browser-control agent — to open real job application pages, fill every field, answer every question, and hit Submit, exactly the way a human would. No APIs, no shortcuts, no scraping. Real applications, real browsers.
+
+Every 30 minutes it scouts thousands of job boards, matches them to your profile, and queues the best ones. While you sleep, it works.
 
 You get a **Telegram photo** of every submitted application. You watch a live dashboard on your Mac. You type questions like *"what did you apply to today?"* and it answers.
 
