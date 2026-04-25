@@ -1550,8 +1550,15 @@ exec /bin/zsh -l
         self._current_record = SessionRecord(child_pid)
         self.session_id = self._current_record.session_id
 
-        # Set terminal size (80x24 default, will be resized by client)
-        self._pty.resize(80, 24)
+        # Start wide so Claude Code's initial prompt render is close to what
+        # the browser xterm.js will request after fitAddon.fit(). The browser
+        # sends a resize event within ~100ms of mounting, but Claude Code's Ink
+        # TUI has already rendered the initial prompt by then. A large mismatch
+        # (80 → 180+) triggers a full re-render that makes the prompt appear
+        # twice with garbled line-wrap artifacts. 220×50 is wider than any
+        # typical browser terminal, so the post-fit resize is a minor shrink
+        # rather than a dramatic reflow.
+        self._pty.resize(220, 50)
 
         # Brief post-spawn death check
         exit_code = self._pty.wait_brief_death_check()
