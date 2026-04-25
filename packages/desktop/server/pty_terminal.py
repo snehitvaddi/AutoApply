@@ -1252,6 +1252,25 @@ class PTYSession:
         lines.append("If profile.json is missing entirely (not just incomplete), tell the user the install is")
         lines.append("broken and to run `applyloop update`. Otherwise proceed through the steps above in order.")
 
+        # CLIENT.md — client-specific overrides that survive `applyloop update`.
+        # Layered on top of all admin-controlled instructions above so individual
+        # preferences (exclusion lists, tone notes, title blacklists, etc.) always
+        # take precedence without touching any versioned file.
+        client_md_path = os.path.join(cwd, "CLIENT.md")
+        if os.path.isfile(client_md_path):
+            try:
+                with open(client_md_path, encoding="utf-8") as _f:
+                    _client = _f.read().strip()
+                if _client:
+                    lines.append("")
+                    lines.append("=" * 60)
+                    lines.append("CLIENT-SPECIFIC OVERRIDES (CLIENT.md) — highest priority:")
+                    lines.append("These rules override any conflicting instruction above.")
+                    lines.append("=" * 60)
+                    lines.append(_client)
+            except OSError:
+                pass
+
         return "\n".join(lines)
 
     @staticmethod

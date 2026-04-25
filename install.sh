@@ -1108,6 +1108,40 @@ HIMALAYA_EOF
   log_ok "Himalaya config written for $GMAIL_EMAIL_VAL"
 fi
 
+# Create CLIENT.md only if it does not already exist — never overwrite
+# client customisations on reinstall/update. applyloop update uses
+# `git reset --hard` which only touches tracked files, so this file
+# survives all future updates naturally.
+_CLIENT_MD="$APPLYLOOP_HOME/CLIENT.md"
+if [[ ! -f "$_CLIENT_MD" ]]; then
+  cat > "$_CLIENT_MD" <<'CLIENT_EOF'
+# CLIENT.md — Your personal overrides
+#
+# This file is NEVER overwritten by `applyloop update`.
+# Add anything here that should take precedence over the global rules.
+#
+# Examples:
+#   - Companies to exclude (beyond what your online preferences block):
+#       Never apply to: Acme Corp, Example Inc
+#
+#   - Title preferences / blacklist:
+#       Skip any role with "Manager" in the title — I only want IC roles.
+#
+#   - Location notes:
+#       Remote-only. Reject anything requiring relocation to TX or FL.
+#
+#   - Cover letter tone / style notes:
+#       Keep the cover letter to 3 short paragraphs. No buzzwords.
+#
+#   - Any one-off instruction that doesn't belong in the shared profile:
+#       If a form asks for expected salary, enter 120000.
+#
+# Lines starting with # are comments and are ignored by Claude.
+# Delete the example lines and replace with your own instructions.
+CLIENT_EOF
+  log_ok "Created $APPLYLOOP_HOME/CLIENT.md (edit this for personal overrides)"
+fi
+
 # Also create the worker's runtime dirs so it doesn't crash on first write
 mkdir -p "$HOME/.autoapply/workspace/resumes" "$HOME/.autoapply/workspace/screenshots"
 

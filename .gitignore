@@ -55,3 +55,6 @@ supabase/.temp/
 
 # Stray screenshots
 /image.png
+
+# Client-specific overrides (never committed — survives applyloop update)
+CLIENT.md
