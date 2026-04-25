@@ -254,6 +254,56 @@ def notify_telegram(
     return "ok"
 
 
+# ── email (OTP + link reading via Himalaya CLI) ───────────────────────────
+
+@mcp.tool()
+def email_read_otp(
+    sender_pattern: str,
+    subject_pattern: str = "",
+    timeout: int = 60,
+) -> str:
+    """Read an OTP/verification code from Gmail via Himalaya CLI.
+
+    sender_pattern: substring of the sender address to match (e.g. 'greenhouse-mail.io').
+    subject_pattern: optional substring to also match in subject.
+    timeout: max seconds to poll before giving up.
+    Returns the code string, or 'error: ...' on failure.
+    """
+    from himalaya_reader import ensure_configured, find_otp
+    email = os.environ.get("GMAIL_EMAIL", "")
+    app_pw = os.environ.get("GMAIL_APP_PASSWORD", "")
+    if not email or not app_pw:
+        return "error: GMAIL_EMAIL or GMAIL_APP_PASSWORD not set in environment"
+    if not ensure_configured(email, app_pw):
+        return "error: himalaya not installed or config write failed — run: brew install himalaya"
+    code = find_otp(sender_pattern, subject_pattern, timeout=timeout)
+    return code or f"error: no OTP found from '{sender_pattern}' within {timeout}s"
+
+
+@mcp.tool()
+def email_read_link(
+    sender_pattern: str,
+    link_regex: str,
+    timeout: int = 60,
+) -> str:
+    """Read a verification/reset link from Gmail via Himalaya CLI.
+
+    sender_pattern: substring of the sender address to match (e.g. 'workday').
+    link_regex: regex pattern the URL must match (e.g. 'passwordreset').
+    timeout: max seconds to poll before giving up.
+    Returns the URL string, or 'error: ...' on failure.
+    """
+    from himalaya_reader import ensure_configured, find_link
+    email = os.environ.get("GMAIL_EMAIL", "")
+    app_pw = os.environ.get("GMAIL_APP_PASSWORD", "")
+    if not email or not app_pw:
+        return "error: GMAIL_EMAIL or GMAIL_APP_PASSWORD not set in environment"
+    if not ensure_configured(email, app_pw):
+        return "error: himalaya not installed or config write failed — run: brew install himalaya"
+    link = find_link(sender_pattern, link_regex, timeout=timeout)
+    return link or f"error: no link matching '{link_regex}' from '{sender_pattern}' within {timeout}s"
+
+
 # ── knowledge ─────────────────────────────────────────────────────────────
 
 @mcp.tool()

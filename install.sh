@@ -1080,6 +1080,34 @@ GMAIL_APP_PASSWORD=${GMAIL_APP_PW_VAL}
 ENVEOF
 chmod 600 "$ENV_FILE" 2>/dev/null || true
 
+# Write himalaya IMAP config from Gmail creds (if both are set).
+# himalaya_reader.py also calls ensure_configured() at apply time so
+# users who update creds via Settings don't need to reinstall.
+if [[ -n "$GMAIL_EMAIL_VAL" && -n "$GMAIL_APP_PW_VAL" ]]; then
+  if [[ "$(uname)" == "Darwin" ]]; then
+    _HIM_CFG_DIR="$HOME/Library/Application Support/himalaya"
+  else
+    _HIM_CFG_DIR="$HOME/.config/himalaya"
+  fi
+  mkdir -p "$_HIM_CFG_DIR"
+  cat > "$_HIM_CFG_DIR/config.toml" <<HIMALAYA_EOF
+[accounts.gmail]
+email = "$GMAIL_EMAIL_VAL"
+backend.type = "imap"
+backend.host = "imap.gmail.com"
+backend.port = 993
+backend.login = "$GMAIL_EMAIL_VAL"
+backend.auth.type = "password"
+backend.auth.raw = "$GMAIL_APP_PW_VAL"
+folder.aliases.inbox = "INBOX"
+folder.aliases.sent = "[Gmail]/Sent Mail"
+folder.aliases.drafts = "[Gmail]/Drafts"
+folder.aliases.trash = "[Gmail]/Trash"
+HIMALAYA_EOF
+  chmod 600 "$_HIM_CFG_DIR/config.toml" 2>/dev/null || true
+  log_ok "Himalaya config written for $GMAIL_EMAIL_VAL"
+fi
+
 # Also create the worker's runtime dirs so it doesn't crash on first write
 mkdir -p "$HOME/.autoapply/workspace/resumes" "$HOME/.autoapply/workspace/screenshots"
 

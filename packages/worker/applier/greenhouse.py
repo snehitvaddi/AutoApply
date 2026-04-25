@@ -689,23 +689,24 @@ class GreenhouseApplier(BaseApplier):
 
     def _handle_email_security_code(self, snapshot_raw: str) -> bool:
         """Handle Greenhouse email security code verification (8-char code)."""
-        try:
-            from gmail_reader import get_latest_verification_code
-        except ImportError:
-            logger.warning("gmail_reader not available — cannot handle security code")
+        import os as _os
+        from himalaya_reader import ensure_configured, find_otp
+        email = getattr(self, "profile_email", None) or _os.environ.get("GMAIL_EMAIL", "")
+        app_pw = getattr(self, "profile_app_password", None) or _os.environ.get("GMAIL_APP_PASSWORD", "")
+        if not email or not app_pw:
+            logger.warning("Greenhouse security code: no Gmail credentials — skipping")
             return False
-
-        user_id = self.profile.get("user", {}).get("id", "")
-        if not user_id:
+        if not ensure_configured(email, app_pw):
+            logger.warning("Greenhouse security code: himalaya not available — skipping")
             return False
 
         logger.info("Waiting 15s for security code email to arrive...")
         time.sleep(15)
 
-        code = get_latest_verification_code(
-            user_id,
-            sender_filter="greenhouse-mail.io",
-            subject_filter="security code",
+        code = find_otp(
+            sender_pattern="greenhouse-mail.io",
+            subject_pattern="security code",
+            timeout=45,
         )
         if not code or len(code) < 8:
             logger.error(f"Could not retrieve security code (got: {code})")

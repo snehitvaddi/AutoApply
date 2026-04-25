@@ -551,32 +551,32 @@ This is how we expand coverage automatically — every dead link is a lead to th
 
 ---
 
-## Gmail / Email Verification (SETUP COMPLETE)
+## Gmail / Email Verification
 
-**Gmail IMAP is connected via `himalaya` CLI.**
-- Account: `{email}`
-- Config: `{HOME}/Library/Application Support/himalaya/config.toml`
+Gmail IMAP is accessed via `himalaya_reader.py` which wraps the Himalaya CLI.
+**No manual config needed** — `ensure_configured(email, app_password)` auto-writes
+the TOML from the profile's `gmail_email` + `gmail_app_password` fields.
 
-**Read recent emails:**
+**Use the MCP tools (PTY Claude):**
 ```
-exec himalaya envelope list --account gmail --folder INBOX --page-size 5 -o json
-```
-
-**Read email body by ID:**
-```
-exec himalaya message read --account gmail --folder INBOX {id}
+email_read_otp("greenhouse-mail.io", subject_pattern="security code", timeout=60)
+email_read_link("workday", "passwordreset", timeout=30)
 ```
 
-**Check spam folder:**
-```
-exec himalaya envelope list --account gmail --folder "[Gmail]/Spam" --page-size 5
+**Python API (applier code):**
+```python
+from himalaya_reader import ensure_configured, find_otp, find_link
+ensure_configured(self.profile_email, self.profile_app_password)
+code = find_otp("greenhouse-mail.io", "security code", timeout=60)
+link = find_link("workday", r"passwordreset", timeout=30)
 ```
 
-**Use case:** When Workday/iCIMS/Taleo requires account creation + email verification:
-1. Create account on ATS → they send verification email
-2. Wait 10-15s → list recent emails → find the one from the ATS
-3. Read the email body → extract OTP code or verification link
-4. Enter OTP or open verification link in browser
+**Use case:** When ATS requires email verification:
+1. Submit application / create ATS account → ATS sends email
+2. Call `find_otp()` or `find_link()` — polls himalaya every 5s up to timeout
+3. Enter OTP into form or navigate browser to the reset/verification link
+
+See `knowledge/email-services.md` for full CLI command reference and config paths.
 5. Continue application
 
 ---
