@@ -6,12 +6,19 @@
 const API_BASE = "/api";
 
 async function apiFetch<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...opts?.headers },
-    ...opts,
-  });
-  if (!res.ok) throw new Error(`API ${path}: ${res.status}`);
-  return res.json();
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5000)
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { "Content-Type": "application/json", ...opts?.headers },
+      signal: controller.signal,
+      ...opts,
+    })
+    if (!res.ok) throw new Error(`API ${path}: ${res.status}`)
+    return res.json()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // ── Auth ────────────────────────────────────────────────────────────────────

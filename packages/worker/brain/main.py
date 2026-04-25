@@ -87,6 +87,14 @@ async def _run_brain(once: bool) -> None:
         max_budget_usd=float(os.environ.get("APPLYLOOP_BRAIN_MAX_USD", "25")),
     )
 
+    # Autonomous loop guard — must be before the SDK client is created so no
+    # Claude tokens are spent when the loop is disabled. --once bypasses this
+    # and runs exactly one cycle (used for smoke testing or manual delegation).
+    if not once and os.environ.get("APPLYLOOP_BRAIN_LOOP_DISABLED", "1") != "0":
+        logger.info("brain autonomous loop disabled (PTY Claude is the orchestrator). Use --once for a single cycle.")
+        session_log.log_event("cycle_end", once=False, loop_disabled=True)
+        return
+
     session_log.log_event("cycle_start", once=once, model=model, user_id=user_id)
 
     async with ClaudeSDKClient(options=options) as client:

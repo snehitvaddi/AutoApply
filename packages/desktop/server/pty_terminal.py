@@ -80,9 +80,9 @@ class PTYSession:
     """
 
     # Tick intervals
-    # WATCHDOG_INTERVAL / IDLE_THRESHOLD / SCOUT_STALE_MULTIPLIER /
-    # NUDGE_COOLDOWN / STUCK_APPLIED_CYCLES removed in Phase 1.3 —
-    # the watchdog they tuned is gone. Heartbeat cadence stays.
+    HEARTBEAT_INTERVAL = 900   # 15 min — context refresh, always fires
+    WATCHDOG_INTERVAL  = 1800  # 30 min — nudge if Claude is idle
+    IDLE_THRESHOLD_S   = 1500  # 25 min — idle longer than this triggers nudge
 
     def __init__(self):
         self._pty: PlatformPTY | None = None  # platform-aware PTY backend
@@ -91,22 +91,19 @@ class PTYSession:
         self.output_buffer: deque[bytes] = deque(maxlen=MAX_BUFFER)
         self._subscribers: list[asyncio.Queue] = []
         self._read_task: asyncio.Task | None = None
-        # _watchdog_task removed in Phase 1.3 — the watchdog loop went
-        # away when decision-making moved to the cloud planner. Nothing
-        # writes text nudges into the PTY anymore.
+        self._heartbeat_task: asyncio.Task | None = None
+        self._watchdog_task: asyncio.Task | None = None
         self._alive = False
         self.session_id: str | None = None
         self.last_output_at: float = 0
         self.started_at: float = 0
+        self._last_nudge_at: float = 0.0
 
         # Mission/tenant state — populated lazily at session start via
         # _refresh_tenant_context(). May be None if the cloud is unreachable
         # or the user hasn't finished setup; in that case the heartbeat
         # loop still fires with a "finish setup" message instead of crashing.
         self._tenant_snapshot: dict | None = None
-        # _last_nudge_at / _last_applied_count / _stuck_cycles /
-        # _consecutive_empty_queue_ticks removed in Phase 1.3 alongside
-        # the watchdog. The cloud planner owns all that state now.
 
     @property
     def is_alive(self) -> bool:
@@ -1077,13 +1074,23 @@ class PTYSession:
             "cache of their cloud profile."
         )
         lines.append(
-            "  The worker.py process does the mechanical scouting and "
-            "applying. Your job is to keep it alive: start it, restart it "
-            "when it dies, respond to user messages, and always keep the "
-            "loop moving. A watchdog checks every 5 min if progress has "
-            "stalled — if the worker dies, scout is overdue, or applied "
-            "count stops growing with jobs in queue, it will nudge you "
-            "with the exact next action to take. Act on those nudges."
+            "  You are the single orchestrator. Own the full pipeline end-to-end:\n"
+            "  SCOUT → FILTER → ENQUEUE → APPLY → CONFIRM → SCREENSHOT → LOG → TELEGRAM\n"
+            "  Every step runs via MCP tool calls — no external processes needed.\n"
+            "\n"
+            "  KEY RULES:\n"
+            "  • Call tenant_load at the START of each apply cycle — profile data (passwords,\n"
+            "    answer_key, email creds) syncs from cloud every 5 min. Always use fresh values.\n"
+            "  • NEVER skip a job mid-apply due to a transient error. Retry 3 times with different\n"
+            "    approaches (re-navigate, refresh, re-snapshot) before marking failed.\n"
+            "  • NEVER assume failure from a single error or unexpected page. Scroll, re-snapshot,\n"
+            "    look for alternative paths. Only give up on: unsolvable CAPTCHA, hard login wall.\n"
+            "  • Always take a screenshot AFTER submission (positive confirmation page only).\n"
+            "  • A watchdog will inject nudges every ~30 min when idle. Act on them immediately.\n"
+            "  • Nudge format: [applyloop-watchdog HH:MM] queue=N pending, applied_today=X/Y,\n"
+            "    scout_last=Zmin ago, idle=Wmin. <recommended action>.\n"
+            "  • Daily limit from queue_get_pipeline — stop and send session summary when reached.\n"
+            "  • Never spawn a separate Claude process or brain loop."
         )
         lines.append("")
         lines.append("USER MESSAGES from chat UI or Telegram:")
@@ -1230,9 +1237,17 @@ class PTYSession:
             lines.append("")
 
         lines.append("STEP B — greet the user in the terminal in ONE short line (first name only), then immediately")
-        lines.append("begin the scout loop by running: cd ./packages/worker && python3 worker.py")
+        lines.append("begin the pipeline using MCP tool calls:")
+        lines.append("  1. Call scout_list_sources to see available sources.")
+        lines.append("  2. Call scout_run_source for each source to collect raw jobs.")
+        lines.append("  3. Call tenant_load to get filters (target_titles, preferred_locations, daily_limit).")
+        lines.append("  4. Enqueue filtered jobs via queue_update_status(status=pending).")
+        lines.append("  5. Call queue_claim_next → apply one job → browser_navigate/snapshot/fill/click.")
+        lines.append("  6. Confirm success (look for 'thank you' / 'application received' in snapshot).")
+        lines.append("  7. Call browser_screenshot → queue_log_application → notify_telegram.")
+        lines.append("  8. Call queue_get_pipeline — if applied_today < daily_limit, loop to step 5 or 1.")
         lines.append("Do NOT wait for a 'start' or 'scout' command — this is an auto-run session. The user can")
-        lines.append("type 'stop' at any time to halt the loop.")
+        lines.append("type 'stop' at any time to halt the loop. NEVER run python3 worker.py — use MCP tools.")
         lines.append("")
         lines.append("If profile.json is missing entirely (not just incomplete), tell the user the install is")
         lines.append("broken and to run `applyloop update`. Otherwise proceed through the steps above in order.")
@@ -1541,10 +1556,9 @@ exec /bin/zsh -l
             self._pty = None
             return False
 
-        # Start the PTY read loop. The old watchdog/nudge task was removed
-        # in Phase 1.3 of the cloud-planner migration — decisions live in
-        # the cloud, not in text nudges sent to the terminal.
         self._read_task = asyncio.create_task(self._read_loop())
+        self._heartbeat_task = asyncio.create_task(self._mission_heartbeat_loop())
+        self._watchdog_task  = asyncio.create_task(self._watchdog_loop())
 
         logger.info(f"PTY session started: PID {child_pid}, claude at {claude}")
 
@@ -1658,12 +1672,33 @@ exec /bin/zsh -l
             f"keep scout→filter→apply going."
         )
 
-    # _build_mission_nudge removed in Phase 1.3 of the cloud-planner
-    # migration. Decisions now live in the cloud planner (/api/worker/proxy
-    # action=get_next_action) and the worker executes directly — no
-    # text nudges injected into the terminal, no watchdog-driven drift
-    # detection. The PTY is a display + chat surface; it does not decide
-    # what to do next.
+    def _build_mission_nudge(self, stats: dict) -> str:
+        """Context-rich nudge injected into PTY stdin when Claude is idle.
+        Includes recommended next action so Claude can act without re-deriving state."""
+        from datetime import datetime as _dt
+        q       = stats.get("in_queue", 0)
+        applied = stats.get("applied_today", 0)
+        snap    = self._tenant_snapshot or {}
+        limit   = snap.get("daily_apply_limit", 25) if isinstance(snap, dict) else getattr(snap, "daily_apply_limit", 25)
+        scout   = stats.get("scout_age_min") or 0
+        idle    = stats.get("idle_min", 0)
+
+        if applied >= limit:
+            action = "daily limit reached — send session summary and stop"
+        elif q < 5:
+            action = "queue is low — run scout first, then apply from new jobs"
+        elif scout > 60:
+            action = "scout is stale — run scout to refresh, then continue applying"
+        else:
+            action = "apply from queue"
+
+        ts = _dt.now().strftime("%H:%M")
+        return (
+            f"[applyloop-watchdog {ts}] queue={q} pending, "
+            f"applied_today={applied}/{limit}, "
+            f"scout_last={scout}min ago, idle={idle}min. "
+            f"{action}."
+        )
 
     def _submit_to_pty(self, body: str) -> None:
         """Write a normal message to the terminal and press Enter.
@@ -1717,9 +1752,6 @@ exec /bin/zsh -l
         time.sleep(0.05)
         self.write(b"\n")
 
-    # _expected_daily_target and _nudge_cooldown_ok removed in Phase 1.3.
-    # The planner enforces both cap + cadence centrally.
-
     async def _mission_heartbeat_loop(self):
         """Informational status refresh every 15 min. Always fires while
         the session is alive; not rate-limited (heartbeats are context, not
@@ -1741,10 +1773,30 @@ exec /bin/zsh -l
         except Exception as e:
             logger.debug(f"Heartbeat loop ended: {e}")
 
-    # _watchdog_loop removed in Phase 1.3. The decision-making it tried to
-    # do (detect drift → nudge Claude) is now the cloud planner's job.
-    # Worker executes what the planner decides; the PTY doesn't drive the
-    # agent anymore.
+    async def _watchdog_loop(self) -> None:
+        """Ticks every 30 min. If Claude has been idle >25 min and the daily
+        limit isn't reached, injects a context-rich nudge into PTY stdin so
+        the session can run unattended overnight without token waste."""
+        try:
+            await asyncio.sleep(self.WATCHDOG_INTERVAL)
+            while self.is_alive:
+                try:
+                    stats   = self._read_mission_stats()
+                    applied = stats.get("applied_today", 0)
+                    snap    = self._tenant_snapshot or {}
+                    limit   = snap.get("daily_apply_limit", 25) if isinstance(snap, dict) else getattr(snap, "daily_apply_limit", 25)
+                    idle_s  = time.time() - self.last_output_at if self.last_output_at else 0
+
+                    if applied < limit and idle_s > self.IDLE_THRESHOLD_S:
+                        nudge = self._build_mission_nudge(stats)
+                        logger.info("Watchdog nudge → PTY (idle=%.0fs)", idle_s)
+                        await asyncio.to_thread(self._submit_to_pty, nudge)
+                        self._last_nudge_at = time.time()
+                except Exception as e:
+                    logger.debug(f"Watchdog tick error: {e}")
+                await asyncio.sleep(self.WATCHDOG_INTERVAL)
+        except asyncio.CancelledError:
+            pass
 
     def _broadcast(self, data: bytes):
         """Send data to all WebSocket subscribers."""
@@ -1836,6 +1888,12 @@ exec /bin/zsh -l
         if self._read_task:
             self._read_task.cancel()
             self._read_task = None
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            self._heartbeat_task = None
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
 
     def restart(self):
         """Stop and restart."""

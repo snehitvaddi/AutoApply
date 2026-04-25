@@ -1,0 +1,268 @@
+<mxfile host="app.diagrams.net" modified="2026-04-24T00:00:00.000Z" agent="Claude" version="22.0.0">
+  <diagram name="ApplyLoop-Updated-Architecture" id="applyloop-arch-v2">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1700">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- ══ TITLE ══ -->
+        <mxCell id="title" value="&lt;b&gt;&lt;font size='18'&gt;ApplyLoop — Updated Architecture&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font size='11' color='#616161'&gt;PTY Claude Code owns the full loop · context-rich watchdog nudges keep it alive · brain/main.py autonomous loop removed · worker.py becomes a callable library&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="1860" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- ══ EXTERNAL: USER ══ -->
+        <mxCell id="user" value="User&lt;br&gt;&lt;font size='10'&gt;(awake or sleeping)&lt;/font&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFF8E1;strokeColor=#F57C00;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="90" y="100" width="40" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- ══ EXTERNAL: TELEGRAM ══ -->
+        <mxCell id="telegram" value="&lt;b&gt;Telegram&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;Bot API&lt;br&gt;sendPhoto / sendMessage&lt;br&gt;screenshot proof per job&lt;/font&gt;" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1610" y="80" width="220" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- ══ EXTERNAL: SUPABASE ══ -->
+        <mxCell id="supabase" value="&lt;b&gt;Supabase&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;Postgres + RLS&lt;br&gt;apply_queue · applications&lt;br&gt;worker_tokens · profiles&lt;/font&gt;" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="80" width="200" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             DESKTOP APP CONTAINER
+        ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="desktop-container" value="&lt;b&gt;&lt;font size='13'&gt;/Applications/ApplyLoop.app  —  User's Mac (FastAPI 18790 + pywebview)&lt;/font&gt;&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#455A64;strokeWidth=3;verticalAlign=top;align=left;spacingLeft=14;fontSize=12;fontStyle=1;fontColor=#37474F;" vertex="1" parent="1">
+          <mxGeometry x="20" y="200" width="1840" height="540" as="geometry"/>
+        </mxCell>
+
+        <!-- WATCHDOG (orange) -->
+        <mxCell id="watchdog" value="&lt;b&gt;Nudge Watchdog&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;pty_terminal.py&lt;br&gt;_watchdog_loop()&lt;br&gt;&lt;br&gt;ticks every 30 min&lt;br&gt;reads: queue depth,&lt;br&gt;idle_min, applied_today,&lt;br&gt;scout_age_min&lt;br&gt;&lt;br&gt;fires nudge when idle &gt;25 min&lt;br&gt;&lt;font color='#E65100'&gt;[RESTORE — removed Phase 1.3]&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F57C00;strokeWidth=2;arcSize=8;align=center;" vertex="1" parent="1">
+          <mxGeometry x="60" y="280" width="210" height="200" as="geometry"/>
+        </mxCell>
+
+        <!-- HEARTBEAT (light orange) -->
+        <mxCell id="heartbeat" value="&lt;b&gt;Context Heartbeat&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;_mission_heartbeat_loop()&lt;br&gt;every 15 min&lt;br&gt;&lt;br&gt;sends: queue=X applied=Y&lt;br&gt;worker=ok/dead&lt;br&gt;&lt;font color='#2E7D32'&gt;[already exists]&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#EF6C00;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="510" width="210" height="130" as="geometry"/>
+        </mxCell>
+
+        <!-- PTY CLAUDE — THE BRAIN (blue, large, center) -->
+        <mxCell id="pty-claude" value="&lt;b&gt;&lt;font size='15'&gt;Claude Code PTY&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;b&gt;&lt;font size='12' color='#0D47A1'&gt;THE ONLY BRAIN&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;font size='10'&gt;Decides: scout now vs apply now vs sleep&lt;br&gt;Reads: ATS playbooks via knowledge tool&lt;br&gt;Writes: tailored answers, free-text fields&lt;br&gt;Owns: queue lifecycle, daily cap enforcement&lt;br&gt;Sends: Telegram + DB update per outcome&lt;br&gt;Enforces: role filter, dedup, company cap&lt;br&gt;&lt;br&gt;Runs until: user says stop, daily limit hit,&lt;br&gt;or nudge watchdog decides queue is full&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font size='9' color='#546E7A'&gt;Auth: claude login (~/.claude/) — user's own account&lt;br&gt;No ANTHROPIC_API_KEY embedded anywhere&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F4FD;strokeColor=#1565C0;strokeWidth=3;arcSize=8;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="340" y="250" width="420" height="440" as="geometry"/>
+        </mxCell>
+
+        <!-- FASTAPI SERVER -->
+        <mxCell id="fastapi" value="&lt;b&gt;FastAPI Server&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;launch.py · localhost:18790&lt;br&gt;lifespan: auto-starts PTY&lt;br&gt;(not the brain loop)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#546E7A;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="850" y="270" width="230" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- DASHBOARD UI -->
+        <mxCell id="dashboard-ui" value="&lt;b&gt;Desktop UI (Next.js)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;/terminal · /pipeline · /jobs&lt;br&gt;/chat · /settings · /setup&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="850" y="400" width="230" height="90" as="geometry"/>
+        </mxCell>
+
+        <!-- QA AGENT (one-shot chat) -->
+        <mxCell id="qa-agent" value="&lt;b&gt;Chat (qa_agent.py)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;one-shot claude --print&lt;br&gt;per user message&lt;br&gt;separate from PTY&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#546E7A;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="850" y="520" width="230" height="90" as="geometry"/>
+        </mxCell>
+
+        <!-- LOCAL SQLITE -->
+        <mxCell id="sqlite" value="&lt;b&gt;applications.db&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;SQLite — local mirror&lt;br&gt;apply_queue · applications&lt;br&gt;~/.autoapply/workspace/&lt;/font&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#E0F2F1;strokeColor=#00796B;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="270" width="170" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- PROFILE JSON -->
+        <mxCell id="profile-json" value="&lt;b&gt;profile.json&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;user data + answer key&lt;br&gt;~/.applyloop/&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#00796B;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="410" width="170" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- RESUME -->
+        <mxCell id="resume" value="&lt;b&gt;resume.pdf&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;~/.applyloop/&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#00796B;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="520" width="170" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- AGENTS.MD / SOUL.MD -->
+        <mxCell id="agents-md" value="&lt;b&gt;AGENTS.md / SOUL.md&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;Claude's system context&lt;br&gt;owns loop, watchdog aware,&lt;br&gt;nudge response rules&lt;br&gt;&lt;font color='#E65100'&gt;[UPDATE needed]&lt;/font&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F57C00;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="270" width="210" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- TELEGRAM GATEWAY (desktop) -->
+        <mxCell id="tg-gateway" value="&lt;b&gt;Telegram Gateway&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;telegram_gateway.py&lt;br&gt;long-poll bot&lt;br&gt;routes to chat feed&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#546E7A;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="420" width="210" height="90" as="geometry"/>
+        </mxCell>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             MCP TOOL SERVER
+        ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="mcp-container" value="&lt;b&gt;&lt;font size='12'&gt;MCP Tool Server  —  brain/tools.py  (24 tools exposed to PTY Claude via .claude/settings.json)&lt;/font&gt;&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F1F8E9;strokeColor=#558B2F;strokeWidth=2;verticalAlign=top;align=left;spacingLeft=14;fontColor=#33691E;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="790" width="1840" height="210" as="geometry"/>
+        </mxCell>
+
+        <!-- SCOUT SOURCES -->
+        <mxCell id="scout-tools" value="&lt;b&gt;Scout (7 sources)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;scout_list_sources&lt;br&gt;scout_run_source(name)&lt;br&gt;———&lt;br&gt;linkedin_scroll · ashby&lt;br&gt;greenhouse · lever&lt;br&gt;himalayas · indeed&lt;br&gt;linkedin_public&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="840" width="200" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- APPLIER TOOLS -->
+        <mxCell id="applier-tools" value="&lt;b&gt;ATS Appliers (5)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;Called by apply-agent&lt;br&gt;via browser_* tools&lt;br&gt;———&lt;br&gt;greenhouse · lever&lt;br&gt;ashby · workday&lt;br&gt;smartrecruiters&lt;br&gt;+ universal fallback&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="290" y="840" width="200" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- BROWSER TOOLS -->
+        <mxCell id="browser-tool-group" value="&lt;b&gt;Browser Tools (13)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;browser_navigate&lt;br&gt;browser_snapshot&lt;br&gt;browser_fill / click&lt;br&gt;browser_type / select&lt;br&gt;browser_evaluate_js&lt;br&gt;browser_screenshot&lt;br&gt;browser_upload&lt;br&gt;browser_dismiss_stray_tabs&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#7B1FA2;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="530" y="840" width="200" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- QUEUE TOOLS -->
+        <mxCell id="queue-tool-group" value="&lt;b&gt;Queue Tools (4)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;queue_claim_next&lt;br&gt;queue_update_status&lt;br&gt;queue_log_application&lt;br&gt;queue_get_pipeline&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#7B1FA2;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="770" y="840" width="200" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- NOTIFY TOOLS -->
+        <mxCell id="notify-tool-group" value="&lt;b&gt;Notify Tools (3)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;notify_telegram&lt;br&gt;notify_heartbeat&lt;br&gt;notify_upload_screenshot&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F57C00;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="840" width="200" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- TENANT + KNOWLEDGE TOOLS -->
+        <mxCell id="tenant-tool-group" value="&lt;b&gt;Tenant + Knowledge (3)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;tenant_load&lt;br&gt;knowledge_get_ats_playbook&lt;br&gt;notify_heartbeat (DB)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F57C00;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1250" y="840" width="210" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- SUBAGENTS NOTE -->
+        <mxCell id="subagents-note" value="&lt;b&gt;Subagents (optional)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;scout-agent&lt;br&gt;apply-agent&lt;br&gt;(brain/subagents.py)&lt;br&gt;used in --once mode&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#546E7A;strokeWidth=1;arcSize=8;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="1510" y="840" width="180" height="140" as="geometry"/>
+        </mxCell>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             BROWSER EXECUTION LAYER
+        ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="browser-exec-container" value="&lt;b&gt;&lt;font size='12'&gt;Browser Execution Layer&lt;/font&gt;&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#7B1FA2;strokeWidth=2;verticalAlign=top;align=left;spacingLeft=14;fontColor=#4A148C;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="1050" width="760" height="160" as="geometry"/>
+        </mxCell>
+
+        <!-- OPENCLAW -->
+        <mxCell id="openclaw" value="&lt;b&gt;OpenClaw CLI&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;applier/browser.py wrapper&lt;br&gt;openclaw browser &lt;verb&gt;&lt;br&gt;navigate · snapshot · fill&lt;br&gt;click · evaluate · screenshot&lt;br&gt;upload · tabs · dismiss_stray&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#512BD4;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1090" width="260" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- CHROMIUM -->
+        <mxCell id="chromium" value="&lt;b&gt;Chromium (CDP 18800)&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;live browser&lt;br&gt;renders ATS job forms&lt;br&gt;accessibility tree snapshots&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="400" y="1090" width="260" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             NOTIFICATIONS / OUTPUTS
+        ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="outputs-container" value="&lt;b&gt;&lt;font size='12'&gt;Outputs&lt;/font&gt;&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F57C00;strokeWidth=2;verticalAlign=top;align=left;spacingLeft=14;fontColor=#E65100;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="820" y="1050" width="520" height="160" as="geometry"/>
+        </mxCell>
+
+        <!-- GMAIL READER -->
+        <mxCell id="gmail" value="&lt;b&gt;Gmail / Himalaya&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;gmail_reader.py&lt;br&gt;IMAP OTP verification&lt;br&gt;email-gated ATS flows&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFEBEE;strokeColor=#C62828;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="860" y="1090" width="190" height="90" as="geometry"/>
+        </mxCell>
+
+        <!-- NOTIFIER -->
+        <mxCell id="notifier" value="&lt;b&gt;notifier.py&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;send_application_result&lt;br&gt;send_failure&lt;br&gt;send_scout_summary&lt;br&gt;send_session_event&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#F57C00;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="1090" width="200" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             REMOVED / DISABLED SECTION
+        ══════════════════════════════════════════════════════════════════ -->
+        <mxCell id="removed-container" value="&lt;b&gt;&lt;font size='12' color='#9E9E9E'&gt;REMOVED / DISABLED  —  token-burning autonomous processes&lt;/font&gt;&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#BDBDBD;strokeWidth=2;verticalAlign=top;align=left;spacingLeft=14;fontColor=#9E9E9E;fontStyle=1;dashed=1;dashPattern=8 4;" vertex="1" parent="1">
+          <mxGeometry x="20" y="1270" width="1840" height="170" as="geometry"/>
+        </mxCell>
+
+        <!-- BRAIN AUTONOMOUS LOOP (removed) -->
+        <mxCell id="brain-removed" value="&lt;s&gt;&lt;b&gt;brain/main.py autonomous loop&lt;/b&gt;&lt;/s&gt;&lt;br&gt;&lt;font size='10' color='#9E9E9E'&gt;while True: sleep(300); send('continue')&lt;br&gt;ClaudeSDKClient — headless, invisible&lt;br&gt;loops forever, burns $25 budget cap&lt;br&gt;no user can see or stop it easily&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#BDBDBD;strokeWidth=1;arcSize=8;fontColor=#9E9E9E;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1310" width="380" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- WORKER.PY STANDALONE (removed) -->
+        <mxCell id="worker-removed" value="&lt;s&gt;&lt;b&gt;worker.py as standalone auto-process&lt;/b&gt;&lt;/s&gt;&lt;br&gt;&lt;font size='10' color='#9E9E9E'&gt;parallel loop with no PTY coordination&lt;br&gt;runs even when Claude PTY is dead&lt;br&gt;process_manager.py keeps it alive&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#BDBDBD;strokeWidth=1;arcSize=8;fontColor=#9E9E9E;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="490" y="1310" width="380" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- WORKER.PY KEPT AS LIBRARY -->
+        <mxCell id="worker-kept" value="&lt;b&gt;worker.py coded appliers — KEPT as callable library&lt;/b&gt;&lt;br&gt;&lt;font size='10'&gt;GreenhouseApplier · LeverApplier · AshbyApplier · SmartRecruitersApplier · WorkdayApplier&lt;br&gt;Called by brain's apply-agent via MCP browser tools — NOT spawned as autonomous process&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="930" y="1310" width="620" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- ══ CONNECTIONS ══ -->
+
+        <!-- User → PTY Claude (initial command) -->
+        <mxCell id="c-user-pty" value="&lt;font size='9'&gt;&quot;go, I'm sleeping&quot;&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#F57C00;labelBackgroundColor=#ffffff;dashed=1;dashPattern=6 3;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="user" target="pty-claude">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Watchdog → PTY stdin (nudge) -->
+        <mxCell id="c-watchdog-pty" value="&lt;b&gt;&lt;font size='9'&gt;nudge to PTY stdin&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font size='8'&gt;queue=3 idle=31min&lt;br&gt;applied=8/25 today&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#F57C00;labelBackgroundColor=#ffffff;dashed=1;dashPattern=6 3;" edge="1" parent="1" source="watchdog" target="pty-claude">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Heartbeat → PTY stdin -->
+        <mxCell id="c-heartbeat-pty" value="&lt;font size='8'&gt;context&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;strokeColor=#EF6C00;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="heartbeat" target="pty-claude">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- PTY Claude → MCP Tool Server -->
+        <mxCell id="c-pty-mcp" value="&lt;b&gt;tool calls&lt;/b&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=3;strokeColor=#1565C0;labelBackgroundColor=#ffffff;fontSize=11;" edge="1" parent="1" source="pty-claude" target="mcp-container">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- PTY Claude → SQLite (read mission stats) -->
+        <mxCell id="c-pty-sqlite" value="&lt;font size='8'&gt;read stats&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;strokeColor=#00796B;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="pty-claude" target="sqlite">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- PTY Claude reads AGENTS.MD -->
+        <mxCell id="c-pty-agents" value="&lt;font size='8'&gt;reads on start&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;strokeColor=#F57C00;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="pty-claude" target="agents-md">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Browser tools → OpenClaw -->
+        <mxCell id="c-browser-openclaw" value="&lt;font size='8'&gt;subprocess&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#7B1FA2;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="browser-tool-group" target="openclaw">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- OpenClaw → Chromium -->
+        <mxCell id="c-openclaw-chrome" value="&lt;font size='8'&gt;CDP 18800&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#512BD4;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="openclaw" target="chromium">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Notify tools → Notifier.py -->
+        <mxCell id="c-notify-notifier" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;strokeColor=#F57C00;" edge="1" parent="1" source="notify-tool-group" target="notifier">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Notifier → Telegram cloud -->
+        <mxCell id="c-notifier-telegram" value="&lt;font size='8'&gt;sendPhoto + caption&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#1565C0;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="notifier" target="telegram">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Telegram → User phone -->
+        <mxCell id="c-telegram-user" value="&lt;font size='8'&gt;job applied / fail&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#1565C0;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="telegram" target="user">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Queue tools → Supabase -->
+        <mxCell id="c-queue-supabase" value="&lt;font size='8'&gt;/api/worker/proxy&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;strokeColor=#2E7D32;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="queue-tool-group" target="supabase">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Dashboard reads SQLite -->
+        <mxCell id="c-dashboard-sqlite" value="&lt;font size='8'&gt;reads&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;strokeColor=#1565C0;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="dashboard-ui" target="sqlite">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- TG Gateway → Telegram cloud -->
+        <mxCell id="c-tg-gateway-cloud" value="&lt;font size='8'&gt;long-poll&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;strokeColor=#546E7A;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="tg-gateway" target="telegram">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Watchdog reads SQLite for mission stats -->
+        <mxCell id="c-watchdog-sqlite" value="&lt;font size='8'&gt;reads stats&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1;strokeColor=#F57C00;labelBackgroundColor=#ffffff;dashed=1;" edge="1" parent="1" source="watchdog" target="sqlite">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

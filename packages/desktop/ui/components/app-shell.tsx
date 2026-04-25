@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { Sidebar } from "./sidebar"
@@ -48,6 +48,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
     return false
   })
+  // Track consecutive fetch failures so we don't spin forever when the
+  // server is slow to start (pywebview opens before FastAPI is ready).
+  const failCountRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
@@ -55,6 +58,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       getSetupStatus()
         .then((res) => {
           if (cancelled) return
+          failCountRef.current = 0
           if (res.setup_complete) {
             setSetupState("ok")
             if (!everSetupOk) {
@@ -74,7 +78,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           }
         })
         .catch(() => {
-          // On transient errors, don't flip state — just skip this tick.
+          if (cancelled) return
+          failCountRef.current += 1
+          // After 2 consecutive failures (server not ready / timeout):
+          // - Previously activated → trust localStorage, show UI; server will catch up
+          // - Never activated → route to /setup so user can activate
+          // This prevents the spinner hanging forever when pywebview opens
+          // before the FastAPI server has finished starting (~6s).
+          if (failCountRef.current >= 2) {
+            if (everSetupOk) {
+              setSetupState("ok")
+            } else {
+              setSetupState("needed")
+              if (!isAllowedDuringSetup) router.replace("/setup")
+            }
+          }
         })
     }
     check()

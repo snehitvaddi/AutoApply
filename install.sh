@@ -1140,23 +1140,49 @@ job application engine that runs locally on this Mac.
 - **Python venv**: \`$APPLYLOOP_HOME/venv/bin/python3\`
 - **Profile**: \`$APPLYLOOP_HOME/profile.json\` — read this FIRST (the user you're applying for)
 - **Playbook**: \`$APPLYLOOP_HOME/packages/worker/SOUL.md\` — the full scout→apply rules
-- **Brain entry**: \`$APPLYLOOP_HOME/packages/worker/bin/applyloop-brain\` — launches the Claude-Agent-SDK orchestrator
-- **Brain log**: \`$APPLYLOOP_HOME/brain.log\` — tail this to watch what the brain is doing
-- **Legacy worker** (fallback): \`$APPLYLOOP_HOME/packages/worker/worker.py\`
-- **Config env**: \`$APPLYLOOP_HOME/.env\` — sourced by launcher (worker inherits it)
+- **Config env**: \`$APPLYLOOP_HOME/.env\` — sourced by launcher
 - **Desktop log**: \`$HOME/.autoapply/desktop.log\`
 - **User**: ${ACTIVATION_NAME:-$ACTIVATION_EMAIL}
 - **User email**: ${ACTIVATION_EMAIL}
 
-## Your role
+## Your role — YOU are the single orchestrator
 
-1. **Read \`profile.json\` first.** That's the user you're applying for — every field (experience, education, skills, answer_key_json, preferences) is the source of truth for form-filling.
-2. **Read \`SOUL.md\`** for the full playbook: scanning strategy, filters, form-filling rules, rate limits, Telegram notifications, critical do-nots.
-3. **Greet the user by name** (\`$ACTIVATION_NAME\`) in ONE line, then **IMMEDIATELY start the scout→filter→apply loop**. Do NOT wait for a "start" command — this is a 24/7 autonomous session. Run: \`cd $APPLYLOOP_HOME/packages/worker && bin/applyloop-brain\`. (If the brain fails to start for any reason — missing \`claude\` CLI auth, SDK import error — fall back to the legacy path with \`APPLYLOOP_BRAIN_DISABLED=1 python3 worker.py\`.)
+You own the complete pipeline end-to-end via MCP tool calls:
+
+  **SCOUT → FILTER → ENQUEUE → APPLY → CONFIRM → SCREENSHOT → LOG → TELEGRAM**
+
+1. **Read \`profile.json\` first.** Every field (experience, education, skills, answer_key_json, preferences) is the source of truth for form-filling.
+2. **Read \`SOUL.md\`** for the full playbook: scanning strategy, filters, form-filling rules, rate limits, critical do-nots.
+3. **Greet the user by name** (\`$ACTIVATION_NAME\`) in ONE line, then **IMMEDIATELY start the pipeline**. Do NOT wait for a "start" command.
 4. On "status": show profile summary + last scout/apply stats + configured services (below).
-5. On "apply to [URL]": run the applier directly on that URL.
-6. On "stop": kill the worker subprocess.
-7. **Never stop and wait for user input** unless explicitly told to stop. The loop runs autonomously. If something fails, log it, skip it, move to the next job. Only pause for rate limits or auth errors — and even then, surface the error via Telegram/chat and retry after the cooldown.
+5. On "apply to [URL]": apply directly to that URL using browser MCP tools.
+6. On "stop": stop the loop, send a session summary via Telegram.
+
+## Watchdog nudges
+
+A background watchdog will inject status messages into this terminal every ~30 minutes when you are idle. Nudge format:
+
+  \`[applyloop-watchdog HH:MM] queue=N pending, applied_today=X/Y, scout_last=Zmin ago, idle=Wmin. <recommended action>.\`
+
+**Act on nudges immediately.** The nudge tells you exactly what to do next — no need to re-derive state.
+
+## Pipeline steps (MCP tools)
+
+- **Scout**: \`scout_list_sources\` → \`scout_run_source(name)\` for each source
+- **Filter**: \`tenant_load\` → apply role/location/blocklist/dedup filters
+- **Enqueue**: \`queue_update_status\` for each filtered job → status=pending
+- **Apply**: \`queue_claim_next\` → \`knowledge_get_ats_playbook\` → browser_navigate/snapshot/fill/click
+- **Confirm**: snapshot again → look for "thank you" / "application received" (positive only)
+- **Screenshot**: \`browser_screenshot\` → local PNG saved to \`~/.autoapply/workspace/screenshots/\`
+- **Log**: \`queue_log_application(job_id, status=submitted, screenshot_path=local_path)\`
+- **Telegram**: \`notify_telegram(kind=application_result, screenshot_path=local_path)\` → sendPhoto binary
+
+## Daily limit
+
+Check \`queue_get_pipeline\` for \`applied_today\` vs \`daily_limit\`. When limit is reached:
+- Stop applying
+- Send a session summary via \`notify_telegram\`
+- Wait for the next session
 
 ## Configured services
 
@@ -1167,12 +1193,14 @@ job application engine that runs locally on this Mac.
 
 ## Critical rules
 
-- NEVER run the worker without \`profile.json\` loaded.
-- NEVER apply to a company more than 5 times per 15 days.
 - NEVER skip required form fields.
-- ALWAYS screenshot after submission + Telegram notify (if configured).
-- If OpenClaw gateway crashes: \`openclaw gateway restart\` and continue.
-- If you hit a Claude Code rate limit or auth error: **pause the loop**, surface the error to the user in chat + Telegram, wait for them to fix it. DO NOT silently retry.
+- NEVER apply to a company more than 5 times per 15 days.
+- ALWAYS take a screenshot after submission and log it + Telegram notify.
+- ALWAYS use \`queue_claim_next\` (row-lock) — never pull from queue without claiming.
+- Call \`browser_dismiss_stray_tabs\` between every apply step.
+- If OpenClaw gateway crashes: run \`openclaw gateway restart\` and continue.
+- **NEVER spawn a separate Claude process or brain loop** — you are the only brain.
+- If you hit a rate limit or auth error: surface it to the user in chat + Telegram, wait for fix.
 
 ## Handy commands the user might ask for
 
@@ -1180,6 +1208,33 @@ job application engine that runs locally on this Mac.
 - \`applyloop update\` — git pull + rebuild
 - \`applyloop uninstall\` — wipe everything except \`~/.autoapply/\` workspace
 AGENTSEOF
+
+# ------------------------------------------------------------------ .claude/settings.json (MCP tools for PTY Claude)
+# PTY Claude Code reads $APPLYLOOP_HOME/.claude/settings.json on startup.
+# We register brain/mcp_server.py so the PTY session has direct access to
+# all 24 applyloop tools (browser_*, queue_*, scout_*, tenant_*, notify_*,
+# knowledge_*) without spawning brain/main.py.
+
+CLAUDE_SETTINGS_FILE="$APPLYLOOP_HOME/.claude/settings.json"
+log "Writing $CLAUDE_SETTINGS_FILE"
+mkdir -p "$APPLYLOOP_HOME/.claude"
+
+cat > "$CLAUDE_SETTINGS_FILE" <<SETTINGSEOF
+{
+  "mcpServers": {
+    "applyloop": {
+      "command": "$APPLYLOOP_HOME/venv/bin/python3",
+      "args": ["-m", "brain.mcp_server"],
+      "env": {
+        "PYTHONPATH": "$APPLYLOOP_HOME/packages/worker",
+        "APPLYLOOP_USER_ID": "${APPLYLOOP_USER_ID:-}",
+        "APPLYLOOP_HOME": "$APPLYLOOP_HOME"
+      },
+      "cwd": "$APPLYLOOP_HOME/packages/worker"
+    }
+  }
+}
+SETTINGSEOF
 
 # ------------------------------------------------------------------ .app bundle
 
