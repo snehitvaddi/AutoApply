@@ -4,29 +4,26 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // ApplyLoop brand blue. Anchored on the desktop app's primary
-        // accent (#3b82f6 → #1e40af gradient), so every surface — web
-        // landing, dashboard, desktop app, favicon, OG card, Dock icon —
-        // pulls from the same palette. Every existing `bg-brand-*` /
-        // `text-brand-*` class across the web instantly flips to blue
-        // when this file changes; no component edits required.
+        // ApplyLoop brand indigo — matches the desktop app's primary accent
+        // (#6366f1). Every bg-brand-* / text-brand-* class across web, dashboard,
+        // and sidebar pulls from the same indigo palette as the desktop app.
         brand: {
-          50: "#eff6ff",
-          100: "#dbeafe",
-          200: "#bfdbfe",
-          300: "#93c5fd",
-          400: "#60a5fa",
-          500: "#3b82f6",  // desktop UI --primary
-          600: "#2563eb",
-          700: "#1d4ed8",
-          800: "#1e40af",  // desktop icon.svg gradient endpoint
-          900: "#1e3a8a",
-          950: "#172554",
+          50: "#eef2ff",
+          100: "#e0e7ff",
+          200: "#c7d2fe",
+          300: "#a5b4fc",
+          400: "#818cf8",
+          500: "#6366f1",  // desktop UI --primary
+          600: "#4f46e5",
+          700: "#4338ca",
+          800: "#3730a3",
+          900: "#312e81",
+          950: "#1e1b4b",
         },
       },
       fontFamily: {
-        display: ['Sora', 'system-ui', '-apple-system', 'sans-serif'],
-        body: ['DM Sans', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        body: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
       },
     },
   },

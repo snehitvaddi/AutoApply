@@ -68,7 +68,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Link href="/dashboard" className="flex items-center gap-2.5 group">
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow"
-              style={{ background: "linear-gradient(135deg, #3b82f6 0%, #1e40af 100%)" }}
+              style={{ background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)" }}
             >
               <span className="text-white font-bold text-[12px] tracking-tight">AL</span>
             </div>
@@ -129,7 +129,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </button>
           <div
             className="w-7 h-7 rounded-lg flex items-center justify-center"
-            style={{ background: "linear-gradient(135deg, #3b82f6 0%, #1e40af 100%)" }}
+            style={{ background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)" }}
           >
             <span className="text-white font-bold text-[10px] tracking-tight">AL</span>
           </div>

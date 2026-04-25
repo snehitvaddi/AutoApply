@@ -229,7 +229,7 @@ export default function LandingPage() {
                 identity everywhere across web + desktop surfaces. */}
             <div
               className="w-8 h-8 rounded-lg flex items-center justify-center shadow-sm"
-              style={{ background: "linear-gradient(135deg, #3b82f6 0%, #1e40af 100%)" }}
+              style={{ background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)" }}
             >
               <span className="text-white font-bold text-[11px] font-display tracking-tight">AL</span>
             </div>
@@ -244,7 +244,7 @@ export default function LandingPage() {
             <Link href="/auth/login" className="text-[13px] font-medium text-gray-500 hover:text-gray-900 transition-colors">
               Sign In
             </Link>
-            <Link href="/auth/login" className="text-[13px] font-semibold px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-black transition-colors">
+            <Link href="/auth/login" className="text-[13px] font-semibold px-4 py-2 bg-[#6366f1] text-white rounded-lg hover:bg-[#4f46e5] transition-colors">
               Get Started
             </Link>
           </div>
@@ -280,10 +280,10 @@ export default function LandingPage() {
           </div>
 
           <div className="fade-in fade-in-delay-3 mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Link href="/auth/login" className="px-7 py-3 bg-gray-900 text-white font-semibold rounded-lg text-sm hover:bg-black transition-colors">
+            <Link href="/auth/login" className="px-7 py-3 bg-[#6366f1] text-white font-semibold rounded-lg text-sm hover:bg-[#4f46e5] transition-colors">
               Get Started
             </Link>
-            <a href="#pricing" className="px-7 py-3 bg-purple-600 text-white font-semibold rounded-lg text-sm hover:bg-purple-700 transition-colors">
+            <a href="#pricing" className="px-7 py-3 bg-white text-[#6366f1] font-semibold rounded-lg text-sm border border-[#6366f1] hover:bg-[#eef2ff] transition-colors">
               DM for End-to-End Setup
             </a>
           </div>
@@ -383,7 +383,7 @@ export default function LandingPage() {
       </section>
 
       {/* Features */}
-      <section id="features" className="py-20 px-6 bg-gray-900">
+      <section id="features" className="py-20 px-6 bg-[#1e1b4b]">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-14 animate-on-scroll">
             <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.25em] mb-3">Features</p>
@@ -397,8 +397,8 @@ export default function LandingPage() {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
             {FEATURES.map((f, i) => (
-              <div key={f.title} className="animate-on-scroll bg-gray-800 rounded-2xl p-6 hover:bg-gray-750 transition-colors" style={{ transitionDelay: `${i * 80}ms` }}>
-                <div className="w-9 h-9 bg-gray-700 rounded-lg flex items-center justify-center mb-4">
+              <div key={f.title} className="animate-on-scroll bg-indigo-900/50 rounded-2xl p-6 hover:bg-indigo-900/70 transition-colors" style={{ transitionDelay: `${i * 80}ms` }}>
+                <div className="w-9 h-9 bg-indigo-800/60 rounded-lg flex items-center justify-center mb-4">
                   <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                   </svg>
@@ -427,7 +427,7 @@ export default function LandingPage() {
                 key={plan.name}
                 className={`rounded-2xl p-7 flex flex-col ${
                   plan.dark
-                    ? "bg-gray-900 text-white"
+                    ? "bg-[#1e1b4b] text-white"
                     : "card"
                 }`}
               >
@@ -448,8 +448,8 @@ export default function LandingPage() {
                   href="/auth/login"
                   className={`mt-6 block text-center py-2.5 rounded-lg font-semibold text-sm transition-colors ${
                     plan.dark
-                      ? "bg-white text-gray-900 hover:bg-gray-100"
-                      : "bg-gray-900 text-white hover:bg-black"
+                      ? "bg-white text-[#6366f1] hover:bg-[#eef2ff]"
+                      : "bg-[#6366f1] text-white hover:bg-[#4f46e5]"
                   }`}
                 >
                   {plan.cta}
@@ -469,7 +469,7 @@ export default function LandingPage() {
           <p className="mt-4 text-base text-gray-400">
             Join job seekers who went from 200 applications with 3 responses to 80 applications with 12 interviews.
           </p>
-          <Link href="/auth/login" className="mt-8 inline-block px-8 py-3.5 bg-gray-900 text-white font-semibold rounded-lg text-sm hover:bg-black transition-colors">
+          <Link href="/auth/login" className="mt-8 inline-block px-8 py-3.5 bg-[#6366f1] text-white font-semibold rounded-lg text-sm hover:bg-[#4f46e5] transition-colors">
             Get Started
           </Link>
         </div>
@@ -479,7 +479,7 @@ export default function LandingPage() {
       <footer className="py-10 px-6 border-t border-gray-200">
         <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-gray-900 rounded flex items-center justify-center">
+            <div className="w-6 h-6 bg-[#6366f1] rounded flex items-center justify-center">
               <span className="text-white font-bold text-[10px] font-display">A</span>
             </div>
             <span className="font-display font-bold text-sm text-gray-900">ApplyLoop</span>
