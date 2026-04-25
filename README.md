@@ -1,270 +1,250 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/desktop/icon.svg" alt="ApplyLoop" width="80" height="80" />
+
 # ApplyLoop
 
-Automated job applications for AI/ML engineers — a hybrid SaaS that runs locally on your Mac and syncs to the cloud. Supports Greenhouse, Ashby, Lever, SmartRecruiters, and Workday.
+### Your AI job-application assistant that never sleeps.
 
-**Status:** private beta, invite-only. Install via the curl one-liner below — no .dmg download, no Gatekeeper popup.
+**You build the profile once. ApplyLoop applies to matching jobs every 30 minutes — automatically, on your Mac — while you live your life.**
+
+<br/>
+
+[![Status](https://img.shields.io/badge/status-private%20beta-blueviolet?style=for-the-badge)](https://applyloop.vercel.app)
+[![Platform](https://img.shields.io/badge/platform-macOS-black?style=for-the-badge&logo=apple)](https://applyloop.vercel.app)
+[![AI Powered](https://img.shields.io/badge/AI-Claude%20Code-orange?style=for-the-badge)](https://claude.ai/claude-code)
+[![License](https://img.shields.io/badge/license-private-red?style=for-the-badge)](#)
+
+<br/>
+
+[**→ Request Access**](https://applyloop.vercel.app) &nbsp;·&nbsp; [**View Demo**](#-how-it-works) &nbsp;·&nbsp; [**Quick Install**](#-install-in-60-seconds)
+
+<br/>
 
 ---
 
-## What it does
+</div>
 
-You sign in once at [applyloop.vercel.app](https://applyloop.vercel.app), build your profile, upload a resume, and wait for admin approval. When approved you get an activation code (`AL-XXXX-XXXX`) on Telegram or email. You paste that into the ApplyLoop desktop app on your Mac. The app then:
+## What is ApplyLoop?
 
-- Scouts jobs every 30 minutes from Greenhouse, Ashby, Lever, SmartRecruiters, Workday APIs + LinkedIn Voyager
-- Filters against your preferences, deduplicates, queues the promising ones
-- Applies to them in a real browser (Playwright) using an LLM to map your profile onto unfamiliar form fields
-- Sends you a Telegram screenshot of every submitted application
-- Streams everything into a local Kanban dashboard so you can watch and steer
+> **Think of it like autopilot for your job search.**
 
-You chat with it from either the desktop window or your phone (Telegram) — both channels pipe into the same Claude Code session, so it's one brain with two keyboards.
+You fill in your resume and preferences **once**. ApplyLoop reads thousands of job listings every day, picks the ones that actually match you, and submits real applications — filling out every field, answering every question — in a real browser, just like you would.
+
+You get a **Telegram photo** of every submitted application. You watch a live dashboard on your Mac. You type questions like *"what did you apply to today?"* and it answers.
+
+**No more copy-pasting resumes. No more filling the same form for the 40th time.**
 
 ---
 
-## How it's built
+## It's as simple as 3 steps
+
+```
+1. Sign up → build your profile → upload your resume
+          ↓
+2. Get your activation code → paste one command in Terminal
+          ↓
+3. Double-click ApplyLoop.app → press Start
+```
+
+That's it. From here your Mac applies to jobs in the background, every 30 minutes, 24/7.
+
+---
+
+## What you'll see
+
+<div align="center">
+
+### Sign in with Google — takes 30 seconds
+
+<img src="https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/docs/images/01-login-page.png" alt="ApplyLoop login screen" width="480" />
+
+<br/><br/>
+
+### Your live dashboard — track every application in real time
+
+| Stat Card | What it shows |
+|---|---|
+| **Applied Today** | Applications submitted in the last 24 hours |
+| **Total Applied** | All-time applications |
+| **In Queue** | Jobs discovered, waiting to be applied to |
+| **Success Rate** | % that went through without errors |
+
+The **Pipeline** view shows a Kanban board: `Queued → Applying → Submitted → Failed`.
+Every card is a real job. Click any card to see the company, role, and ATS platform.
+
+<br/>
+
+### Chat with it — from your Mac or your phone
+
+Type in the desktop window **or** send a Telegram message:
+
+> *"What companies did you apply to today?"*
+> *"Skip anything with 'manager' in the title for the next week."*
+> *"Apply only to remote roles for now."*
+
+Same brain, two keyboards.
+
+</div>
+
+---
+
+## Key features
+
+| Feature | What it means for you |
+|---|---|
+| **Scouts 1,200+ jobs / scan** | Greenhouse, Ashby, Lever, LinkedIn, Workday, SmartRecruiters |
+| **Fills every form field** | AI maps your profile to any unfamiliar question format |
+| **Telegram screenshots** | Get a photo of every submitted application to your phone |
+| **Live Kanban dashboard** | Watch jobs move from queued → submitted in real time |
+| **Chat control** | Ask questions or give instructions in plain English |
+| **Auto-dedup** | Never applies to the same job twice |
+| **ATS support** | Greenhouse · Ashby · Lever · SmartRecruiters · Workday |
+| **Auto-updates** | Pulls latest version every night at 3 AM — no manual updates |
+| **Your data stays local** | Applications stored on your Mac in SQLite, not in the cloud |
+
+---
+
+## Install in 60 seconds
+
+**Step 1** — Go to [applyloop.vercel.app](https://applyloop.vercel.app), sign in, fill your profile, and wait for approval. You'll receive an activation code that looks like `AL-XXXX-XXXX`.
+
+**Step 2** — Open **Terminal** on your Mac and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh \
+  | bash -s -- AL-XXXX-XXXX
+```
+
+*(The [setup page](https://applyloop.vercel.app/setup-complete) generates this command with your code already filled in — just copy and paste.)*
+
+**Step 3** — When the install finishes, double-click **ApplyLoop** in `/Applications` and press **Start ApplyLoop**.
+
+> The first scouting run starts within 30 seconds. You'll see jobs flowing into the Queued column almost immediately.
+
+---
+
+## Requirements
+
+- **macOS** (Intel or Apple Silicon) — Windows coming soon
+- **Claude Code CLI** — [get it here](https://claude.ai/claude-code), free to install
+- **Telegram account** — optional but strongly recommended for notifications
+
+---
+
+## Supported job platforms
+
+### Where it finds jobs
+
+| Platform | Jobs available |
+|---|---|
+| Greenhouse API | 271+ company boards |
+| Ashby API | 102+ company boards |
+| LinkedIn | 1,200+ jobs per scan |
+| Lever | ~7 active companies |
+| Himalayas / Indeed / ZipRecruiter | Supplemental feed |
+
+### Where it submits applications
+
+| Platform | Status |
+|---|---|
+| Greenhouse | Full support |
+| Ashby | Full support |
+| Lever | Full support |
+| SmartRecruiters | Full support |
+| Workday | Partial (account creation required) |
+
+---
+
+## Daily use
+
+Just leave the app running in the background. It will:
+
+- Scout matching jobs every 30 minutes
+- Submit applications one at a time with a short cooldown between each
+- Send a Telegram photo of every submitted form
+- Flag anything unusual (CAPTCHAs, login prompts, stuck jobs) as a card on the dashboard
+
+**You control it by chatting.** Examples:
+
+```
+"What companies did you apply to today?"
+"Pause applying for 2 hours"
+"Scout now"
+"Don't apply to any companies with fewer than 100 employees"
+"Show me what's in the queue"
+```
+
+---
+
+## Roadmap
+
+- [x] Greenhouse, Ashby, Lever, SmartRecruiters appliers
+- [x] LinkedIn scouting (Voyager API)
+- [x] Telegram integration (notifications + chat control)
+- [x] Live Kanban dashboard
+- [x] CLIENT.md personal overrides (survive updates)
+- [ ] Windows installer
+- [ ] Apple code signing (no right-click needed)
+- [ ] Stripe auto-activation on payment
+- [ ] Mobile-friendly web dashboard
+
+---
+
+<details>
+<summary><strong>🏗️ How it's built (for developers)</strong></summary>
+
+<br/>
 
 Three processes, one cloud store, one local cache:
 
 ```
                    ┌─────────────────────────────────┐
-                   │        applyloop.vercel.app     │
-                   │         (Next.js 14, SSR)       │
-                   │                                 │
-                   │  • Landing, signup, onboarding  │
-                   │  • /admin (activation codes,    │
-                   │     approvals, user management) │
-                   │  • /api/activate (public)       │
-                   │  • /api/worker/proxy (X-Token)  │
-                   │  • /api/me/activation-code      │
-                   └────────┬───────────┬────────────┘
+                   │      applyloop.vercel.app        │
+                   │      (Next.js 14, SSR)           │
+                   │  Signup · Onboarding · Admin     │
+                   └────────┬───────────┬─────────────┘
                             │           │
                     Google  │           │ service-role
-                    OAuth   │           │ (never sees user)
+                    OAuth   │           │
                             ▼           ▼
                    ┌─────────────────────────────────┐
-                   │          Supabase               │
-                   │  Postgres + Auth + Storage      │
-                   │                                 │
-                   │  users, user_profiles,          │
-                   │  user_job_preferences,          │
-                   │  user_resumes,                  │
-                   │  activation_codes,              │
-                   │  worker_tokens, applications,   │
-                   │  discovered_jobs, ...           │
+                   │           Supabase              │
+                   │  Postgres · Auth · Storage      │
                    └────────────────┬────────────────┘
                                     │
-                                    │  all traffic via
-                                    │  /api/worker/proxy
-                                    │  with X-Worker-Token
-                                    │
-       ┌────────────────────────────┴─────────────────────────────┐
-       │                                                          │
-┌──────▼─────────────────────────────────┐      ┌─────────────────▼───────────────────┐
-│     User's Mac — ApplyLoop.app         │      │    User's Mac — worker (subprocess) │
-│     (FastAPI + Next static + pywebview)│      │                                     │
-│                                        │      │    worker.py (long-running)         │
-│  localhost:18790                       │      │      ├─ scanner/ (6 sources)        │
-│                                        │      │      ├─ applier/ (5 ATS platforms)  │
-│  ┌─────────────────────────────────┐   │      │      ├─ db.py (dual-write)          │
-│  │  Setup wizard → activate code   │   │      │      └─ notifier.py (Telegram)      │
-│  │  Dashboard (stats, daily, ATS)  │   │      │                                     │
-│  │  Kanban pipeline                │   │      │    pipeline.py (CLI)                │
-│  │  Chat (+ Telegram mirror)       │   │      │                                     │
-│  │  Terminal (Claude Code PTY)     │   │      └────────────────┬────────────────────┘
-│  │  Settings                       │   │                       │
-│  └─────────────────────────────────┘   │                       │
-│                                        │   dual-write          │
-│           ┌──────────┐                 │   via packages/       │
-│           │ QA agent │────────┐        │   worker/db.py        │
-│           │(Telegram)│        │        │                       │
-│           └──────────┘        │        │                       │
-└────────────────┬──────────────┼────────┘                       │
-                 │              │                                │
-                 │              ▼                                ▼
-                 │      ┌──────────────────────────────────────────┐
-                 │      │  ~/.autoapply/workspace/applications.db  │
-                 │      │  (SQLite, WAL, per-workspace isolated)   │
-                 │      └──────────────────────────────────────────┘
-                 │
-                 └──→ Telegram Bot API (long-poll)
+                                    │ /api/worker/proxy
+                                    │ (X-Worker-Token)
+       ┌────────────────────────────┴────────────────────────┐
+       │                                                     │
+┌──────▼──────────────────────────────┐   ┌─────────────────▼───────────────┐
+│   ApplyLoop.app (FastAPI + pywebview│   │   Worker (subprocess)           │
+│   localhost:18790)                  │   │                                 │
+│                                     │   │   scanner/ (8 sources)          │
+│   Dashboard · Pipeline · Chat       │   │   applier/ (5 ATS platforms)    │
+│   Terminal · Settings               │   │   db.py (SQLite dual-write)     │
+└────────────────┬────────────────────┘   └────────────────┬────────────────┘
+                 │                                         │
+                 └──────────────┬──────────────────────────┘
+                                ▼
+                   ~/.autoapply/workspace/applications.db
+                   (SQLite WAL — local source of truth)
 ```
-
-### Key design choices
-
-- **Users never hold Supabase keys.** The desktop app only ever has an activation-minted worker token, stored at `~/.autoapply/workspace/.api-token` (0600 perms). Every cloud operation is a POST to `/api/worker/proxy` with `X-Worker-Token`, which the Next.js API validates by SHA256 lookup against `worker_tokens.token_hash` and then executes with service-role under the derived `user_id`.
-- **Local SQLite is the hot cache.** The desktop dashboard reads from `applications.db` directly — no round-trips. The worker dual-writes to both the local DB and Supabase so the cloud stays in sync for multi-device and admin visibility.
-- **Multi-tenant isolation via `APPLYLOOP_WORKSPACE`.** Every file (DB, token, profile, Telegram offset, install id) is scoped to the workspace directory. Two concurrent desktop instances on one machine (tested) don't collide.
-- **One brain, two keyboards.** Chat UI and Telegram both route into the same `claude --print` Q&A subprocess with a SQLite context snapshot. The apply-loop PTY is separate from the Q&A pipeline so terminal noise can't contaminate replies.
-
----
-
-## Install (macOS)
-
-First, get your activation code from [applyloop.vercel.app/setup-complete](https://applyloop.vercel.app/setup-complete) after admin approval — it's `AL-XXXX-XXXX`. Then paste this in Terminal (replace with your code):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash -s -- AL-XXXX-XXXX
-```
-
-The setup-complete page on the web already generates this command with your code baked in — just copy from there.
-
-The installer takes ~3-5 minutes on a fresh Mac and:
-
-- **Validates your activation code FIRST** (`POST /api/activate`) — invalid code = abort before any machine changes
-- Installs Homebrew, Python 3.11, Node.js, Claude Code, and OpenClaw if you don't have them
-- Clones AutoApply to `~/.applyloop` with an isolated Python venv + isolated npm cache
-- Writes `~/.openclaw/openclaw.json` directly (gateway + browser profile, no auth profile, no model backend — OpenClaw is just the browser executor)
-- Fetches your profile from the cloud, writes `~/.applyloop/profile.json` pre-populated
-- Writes `~/.applyloop/.env` with worker token + Telegram + optional integrations
-- Prompts for optional integrations: Telegram chat ID, AgentMail API key, Finetune Resume API key, Gmail app password (Enter to skip any)
-- Writes `~/.applyloop/AGENTS.md` — the system context Claude Code reads on first launch (greets you by name, lists configured services, rules)
-- Generates `/Applications/ApplyLoop.app` directly on your machine — no Gatekeeper popup, no codesigning, no `xattr -cr` workaround
-- Registers a launchd plist for daily auto-updates at 3 AM
-
-Then double-click **ApplyLoop** in `/Applications`. The wizard is already activated (your worker token is on disk from install), profile is synced, OpenClaw gateway is running — just click **Start ApplyLoop**.
-
-### Non-interactive install (CI / scripted)
-
-Skip all prompts and provide integrations via env vars:
-
-```bash
-APPLYLOOP_CODE=AL-X1Y2-Z3W4 \
-APPLYLOOP_TELEGRAM_CHAT_ID=123456789 \
-APPLYLOOP_AGENTMAIL_KEY=am_... \
-APPLYLOOP_FINETUNE_RESUME_KEY=... \
-APPLYLOOP_SKIP_PROMPTS=1 \
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh)"
-```
-
-### Updating
-
-```bash
-applyloop update
-```
-
-Pulls latest from `main`, reinstalls Python deps if `requirements.txt` changed, rebuilds the UI, regenerates the `.app` bundle. Also runs daily at 3 AM via launchd.
-
-### Uninstalling
-
-```bash
-applyloop uninstall
-```
-
-Tears down the launchd plist, removes `~/.applyloop`, `/Applications/ApplyLoop.app`, and the `~/.local/bin/applyloop` shim. Your runtime workspace at `~/.autoapply` is preserved — delete manually for a clean wipe.
-
-### Why the code-gated install?
-
-The activation code is validated against `applyloop.vercel.app/api/activate` before any machine changes. Stranger with the curl URL but no code = immediate abort, zero machine impact. Code verification also seeds the install with your profile + worker token + Telegram config in one call, so the desktop wizard opens green instead of empty.
-
-### Why the local-build approach?
-
-Earlier releases (v1.0.4 → v1.0.7) shipped as a downloadable `.dmg`. Each release hit a new variant of the same problem: macOS Gatekeeper attaching a quarantine bit on the bundled venv's Python symlinks, App Translocation moving the app to a random temp folder, hardened runtime requirements, etc. The "real" fix is paying Apple $99/year for a Developer ID + notarization, which also requires re-signing every binary in the bundle.
-
-The local-build approach sidesteps this entirely: macOS only quarantines files **downloaded** via the browser. Files created locally by a script never get a quarantine bit. So the `.app` generated on your machine works on first double-click — no Gatekeeper popup, no fees, no friction.
-
-### Daily use
-
-Just leave the desktop app running. It will:
-- Scout jobs every 30 minutes in the background
-- Apply to matches one at a time with a 30-second cooldown between submissions
-- Send Telegram screenshots of each submission
-- Surface anything weird (Workday captchas, login prompts, stuck jobs) as cards on the dashboard
-
-Chat with it in the app window or on Telegram — both work, both talk to the same LLM. Ask things like *"what companies did you apply to today?"*, *"pause for an hour"*, *"scout now"*.
-
-### Requirements
-
-- macOS (Intel or Apple Silicon). Windows installer coming.
-- [Claude Code CLI](https://claude.com/product/claude-code) installed and logged in (needed for the Q&A + apply loop)
-- Telegram account (optional but recommended for notifications + remote control)
-
----
-
-## For admins
-
-Log in as yourself at `applyloop.vercel.app`, then go to `/admin`. You need `users.is_admin = true` in Supabase — set it manually the first time via SQL:
-
-```sql
-UPDATE users SET is_admin = true WHERE email = 'you@yourdomain.com';
-```
-
-From `/admin` you can:
-- See pending signups → click **Approve** → sets `approval_status='approved'`
-- Click **Generate Activation Code** → mints an `AL-XXXX-XXXX` with a 7-day TTL and 5 uses, auto-DMs the user if they have `telegram_chat_id` set
-- View live worker heartbeats, worker logs, stats per user
-- Manage legacy invite codes and worker tokens (behind a "Show legacy tools" toggle)
-
-The activation code flow is intentionally decoupled from payment — you verify payment manually (Stripe is a placeholder at `/api/webhooks/stripe`, wired up in Phase 5) and then generate a code. Each code is single-user + usage-limited, so stolen codes have a limited blast radius.
-
----
-
-## For developers
 
 ### Repo layout
 
 ```
 AutoApply/
 ├── packages/
-│   ├── web/               Next.js 14 App Router → Vercel (applyloop.vercel.app)
-│   │   ├── src/app/
-│   │   │   ├── auth/              login, callback, pending, rejected
-│   │   │   ├── onboarding/        5-step wizard (profile, work, prefs, resume)
-│   │   │   ├── dashboard/         user's cloud dashboard
-│   │   │   ├── setup-complete/    post-onboarding download + activation code page
-│   │   │   ├── admin/             admin control plane
-│   │   │   └── api/
-│   │   │       ├── activate/              public — redeem AL-XXXX-XXXX
-│   │   │       ├── admin/activation-code/ mint codes, auto-Telegram DM
-│   │   │       ├── me/activation-code/    self-serve code lookup
-│   │   │       ├── worker/proxy/          worker's only DB path
-│   │   │       ├── onboarding/*/          profile, preferences, resume upload
-│   │   │       ├── auth/*/                session status, callbacks
-│   │   │       ├── updates/check/         desktop auto-update metadata
-│   │   │       └── webhooks/stripe/       placeholder for Phase 5
-│   │   ├── scripts/
-│   │   │   ├── migrate.mjs                runs SQL migrations during Vercel build
-│   │   │   └── compute-setup-checksums.mjs  generates src/generated/setup-checksums.ts
-│   │   └── src/lib/                auth, admin, rate-limit, telegram, supabase, api-response
-│   │
-│   ├── desktop/           ApplyLoop.app — FastAPI + Next static + pywebview
-│   │   ├── launch.py             entry point (spawns uvicorn + pywebview window)
-│   │   ├── build.py              .app + .dmg packager (arch-aware)
-│   │   ├── server/
-│   │   │   ├── app.py                    FastAPI routes (health, stats, pipeline,
-│   │   │   │                             setup, pty, worker, profile, activity)
-│   │   │   ├── config.py                 APPLYLOOP_WORKSPACE, TOKEN_FILE, APP_URL
-│   │   │   ├── local_data.py             SQLite reader (auto-bootstraps schema)
-│   │   │   ├── stats.py                  cloud proxy (with 401 detection)
-│   │   │   ├── process_manager.py        worker subprocess lifecycle
-│   │   │   ├── pty_terminal.py           Claude Code PTY + session manager
-│   │   │   ├── chat_bridge.py            WebSocket fanout (chat + Telegram mirror)
-│   │   │   ├── qa_agent.py               fire-and-forget `claude --print` Q&A
-│   │   │   ├── message_router.py         legacy /btw serializer (rollback path)
-│   │   │   ├── telegram_gateway.py       long-poll Telegram, admin allowlist
-│   │   │   └── terminal_stream.py        raw terminal WS
-│   │   └── ui/             Next.js 14 (static export)
-│   │       ├── app/        dashboard / pipeline / chat / terminal / jobs /
-│   │       │               settings / setup (wizard)
-│   │       ├── components/ app-shell (SetupGuard), sidebar, session-dropdown,
-│   │       │               pipeline/kanban-*, dashboard/stat-card, etc.
-│   │       └── lib/api.ts  typed fetch wrappers
-│   │
-│   └── worker/            Python applier + scanner (subprocess of desktop or standalone)
-│       ├── worker.py              main loop (claim → apply → dual-write)
-│       ├── pipeline.py            SQLite pipeline CLI (scout/next/start/done/...)
-│       ├── db.py                  worker-proxy wrapper + local SQLite dual-write
-│       ├── applier/               base + greenhouse, ashby, lever, smartrecruiters, workday
-│       ├── scanner/               greenhouse, ashby, lever, himalayas, indeed, jsearch, linkedin, ziprecruiter
-│       ├── notifier.py            Telegram screenshot sender
-│       ├── gmail_reader.py        verification code reader
-│       ├── resume_tailor.py       per-company resume rewriting (optional, LLM)
-│       └── knowledge.py           ATS learnings library
-│
+│   ├── web/        Next.js 14 → Vercel (landing, onboarding, admin)
+│   ├── desktop/    FastAPI + Next static + pywebview (.app bundle)
+│   │   ├── server/ FastAPI routes, PTY manager, chat bridge, WebSockets
+│   │   └── ui/     Next.js dashboard (pipeline, jobs, chat, terminal)
+│   └── worker/     Python applier + scanner (runs as subprocess)
 ├── supabase/
-│   └── migrations/        001-009 (schema, oauth, worker config, arrays, heartbeats,
-│                          tokens, expand applications, activation codes)
-├── docs/                  onboarding, subscription, DIY, changelog history
-├── knowledge/             shared ATS patterns, Voyager API guide, email-services notes
-└── .github/workflows/     CI/CD (future)
+│   └── migrations/ 001–009 schema files
+├── knowledge/      ATS patterns, Voyager guide, email-services notes
+└── install.sh      One-liner installer (validates code, installs deps, builds .app)
 ```
 
 ### Dev setup
@@ -274,186 +254,131 @@ git clone https://github.com/snehitvaddi/AutoApply.git
 cd AutoApply
 
 # Web
-cd packages/web
-npm install
+cd packages/web && npm install
 cp .env.example .env.local   # fill in Supabase + Google OAuth keys
 npm run dev                  # → http://localhost:3000
 
-# Desktop (in another terminal)
-cd ../../packages/desktop
-pip install -r requirements.txt
-APPLYLOOP_WORKSPACE=/tmp/applyloop-dev python3 launch.py
-# → http://localhost:18790 (or the pywebview window)
+# Desktop
+cd packages/desktop && pip install -r requirements.txt
+APPLYLOOP_WORKSPACE=/tmp/dev python3 launch.py
+# → http://localhost:18790
 
-# Worker (optional — you usually run it as a subprocess of the desktop app)
-cd ../worker
-pip install -r requirements.txt
-export WORKER_TOKEN="al_xxx_yyy"   # mint via /admin
-export APPLYLOOP_WORKSPACE=/tmp/applyloop-dev
-python3 worker.py
+# Worker (optional)
+cd packages/worker && pip install -r requirements.txt
+WORKER_TOKEN=al_xxx_yyy python3 worker.py
 ```
 
 ### Environment variables
 
-#### Vercel (packages/web)
+<details>
+<summary>Vercel (packages/web)</summary>
 
 | Var | Purpose |
 |---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key (client) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role (server-only) |
-| `NEXT_PUBLIC_APP_URL` | `https://applyloop.vercel.app` (production) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role (server-only) |
 | `ENCRYPTION_KEY` | `openssl rand -hex 32` |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth credentials (Gmail IMAP reader). See **Gmail OAuth setup** below. |
-| `TELEGRAM_BOT_TOKEN` | For admin-side activation-code DMs |
-| `GITHUB_PERSONAL_TOKEN` | Optional — auto-add approved users as collaborators |
-| `GITHUB_COLLABORATOR_REPO` | Optional — the `owner/repo` to add collaborators to. Leave unset to no-op. |
-| `SUPABASE_DB_URL` | Optional — Postgres pooler URI for `migrate.mjs` to run migrations during build |
-| `STRIPE_*` | Optional — Phase 5 |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth credentials |
+| `TELEGRAM_BOT_TOKEN` | Admin activation-code DMs |
+| `NEXT_PUBLIC_APP_URL` | `https://applyloop.vercel.app` |
 
-#### Desktop / Worker
+</details>
+
+<details>
+<summary>Desktop / Worker</summary>
 
 | Var | Purpose |
 |---|---|
-| `APPLYLOOP_WORKSPACE` | Directory for per-user state (default `~/.autoapply/workspace`). **Set this to isolate multiple instances on one Mac.** |
+| `APPLYLOOP_WORKSPACE` | Per-user state dir (default `~/.autoapply/workspace`) |
 | `APPLYLOOP_PORT` | FastAPI port (default 18790) |
-| `APPLYLOOP_HEADLESS` | `1` to skip pywebview (useful for CI / dev) |
-| `APPLYLOOP_DB` | Override SQLite path (default `$APPLYLOOP_WORKSPACE/applications.db`) |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Opt-in Telegram gateway (leave unset to disable) |
-| `WORKER_TOKEN` | Worker's API token (written by the setup wizard, or set manually) |
-| `NEXT_PUBLIC_APP_URL` | Cloud endpoint (default `https://applyloop.vercel.app`) |
+| `WORKER_TOKEN` | API token (written by setup wizard) |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Opt-in Telegram gateway |
+| `GMAIL_EMAIL` / `GMAIL_APP_PASSWORD` | OTP reading via Himalaya CLI |
 
-### Gmail OAuth setup
+</details>
 
-The Email tab in Settings uses Google OAuth 2.0 to read verification
-emails from Gmail. If you see **"Access blocked: this app's request
-is invalid"** when you click "Connect Gmail", the root cause is
-almost always a misconfiguration in Google Cloud Console, not the
-app code.
+### Security model
 
-To set up a working OAuth client:
+- Users **never hold Supabase keys** — only a worker token hashed server-side
+- Activation codes are **time-limited (7 days) and use-limited (5 uses)**
+- Desktop app **creates no quarantine bits** (built locally by the install script, not downloaded as a binary)
+- All job details **stay on your Mac** in SQLite — cloud only gets aggregate counts
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
-2. Create OAuth 2.0 Client ID, type "Web application"
-3. Under **Authorized redirect URIs**, add **exactly**:
-   - `https://applyloop.vercel.app/api/settings/gmail/callback`
-   - `http://localhost:3000/api/settings/gmail/callback` (for local dev)
-4. Copy the Client ID + Secret into `GOOGLE_CLIENT_ID` and
-   `GOOGLE_CLIENT_SECRET` on Vercel
-5. Go to **APIs & Services → OAuth consent screen**
-6. Add the scopes:
-   - `https://www.googleapis.com/auth/gmail.readonly`
-   - `https://www.googleapis.com/auth/gmail.send`
-7. While the consent screen is in **Testing** mode, add each user's
-   email address to the "Test users" list. Users not on this list
-   will get "Access blocked: this app's request is invalid" even
-   when the redirect URI is correct.
-8. Once the list of test users outgrows 100, publish the consent
-   screen. `gmail.send` is a sensitive scope and will require
-   Google verification at publish time.
+</details>
 
-If the callback route fails (e.g. user denied consent, scope not
-approved), it now redirects to `/dashboard/settings?gmail=error&reason=<code>&detail=<msg>`
-instead of swallowing the error — check the URL query string to
-see exactly what Google reported.
+<details>
+<summary><strong>🔧 Update, uninstall, and advanced install</strong></summary>
+
+<br/>
+
+### Updating
+
+```bash
+applyloop update
+```
+
+Pulls latest from `main`, rebuilds the UI, and regenerates the `.app`. Also runs nightly at 3 AM automatically.
+
+### Uninstalling
+
+```bash
+applyloop uninstall
+```
+
+Removes `~/.applyloop`, `/Applications/ApplyLoop.app`, the launchd plist, and the CLI shim. Your workspace at `~/.autoapply` is preserved — delete it manually for a complete wipe.
+
+### Non-interactive install (CI / scripted)
+
+```bash
+APPLYLOOP_CODE=AL-X1Y2-Z3W4 \
+APPLYLOOP_TELEGRAM_CHAT_ID=123456789 \
+APPLYLOOP_SKIP_PROMPTS=1 \
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh)"
+```
+
+### CLIENT.md — your personal overrides
+
+After install, edit `~/.applyloop/CLIENT.md` to add instructions that apply only to you and survive all updates:
+
+```markdown
+# My personal rules
+Never apply to: Acme Corp, Boring Inc
+Skip any role with "Manager" in the title — IC roles only.
+Remote-only. Reject anything requiring relocation.
+If a form asks for expected salary, enter 130000.
+```
+
+</details>
+
+<details>
+<summary><strong>👤 For admins</strong></summary>
+
+<br/>
+
+Log in at [applyloop.vercel.app](https://applyloop.vercel.app) and navigate to `/admin`. You need `users.is_admin = true` set in Supabase (set it once via SQL).
+
+From `/admin` you can:
+- Approve pending signups
+- Generate activation codes (`AL-XXXX-XXXX`) — auto-DMs the user on Telegram
+- View live worker heartbeats and per-user stats
+- Revoke worker tokens instantly
 
 ### Migrations
 
 ```bash
-# SQL files live at supabase/migrations/
-# They're run automatically during Vercel build by packages/web/scripts/migrate.mjs,
-# which tracks applied names in public._migrations to stay idempotent.
-# If SUPABASE_DB_URL isn't set, the build skips migrations (local dev is fine).
-
-# To run them from your dev machine:
 export SUPABASE_DB_URL="postgresql://postgres.PROJECT_REF:PASSWORD@..."
 cd packages/web && node scripts/migrate.mjs
 ```
 
-### Cutting a desktop release
-
-```bash
-# Bump version in packages/desktop/build.py (VERSION constant)
-cd packages/desktop
-python3 build.py --mac
-# Output: dist/ApplyLoop-<version>.dmg
-
-# Upload to GitHub Releases
-shasum -a 256 dist/ApplyLoop-<version>.dmg > dist/ApplyLoop-<version>.dmg.sha256
-gh release create v<version> dist/ApplyLoop-<version>.dmg dist/ApplyLoop-<version>.dmg.sha256 \
-  --title "v<version>" --notes "..." --target main
-
-# Update RELEASE_TAG and DMG_NAME in packages/web/src/app/setup-complete/page.tsx
-# Commit + push → Vercel redeploys → new download link is live
-```
+</details>
 
 ---
 
-## Supported platforms
+<div align="center">
 
-### ATS appliers (packages/worker/applier/)
+**Built with [Claude Code](https://claude.ai/claude-code)**
 
-| Platform | Status | Notes |
-|---|---|---|
-| Greenhouse | Full | Embed URL bypass, email security codes, reCAPTCHA detection |
-| Ashby | Full | 45s upload wait, Enter for location, type (not fill) |
-| Lever | Full | Single-page, full name field, radio buttons |
-| SmartRecruiters | Full | Confirm email, multi-page flow |
-| Workday | Partial | Account creation required, 7-step wizard |
+[Request Access](https://applyloop.vercel.app) &nbsp;·&nbsp; [Report a Bug](https://github.com/snehitvaddi/AutoApply/issues) &nbsp;·&nbsp; Private beta — invite only
 
-### Job scanners (packages/worker/scanner/)
-
-| Source | Auth | Typical yield |
-|---|---|---|
-| Greenhouse API | None | 271+ company boards |
-| Ashby API | None | 102+ company boards |
-| Lever API | None | ~7 active companies |
-| LinkedIn Voyager | Session cookie | 1200+ jobs per scrape |
-| Himalayas / Indeed / JSearch / ZipRecruiter | Varies | Supplemental |
-
----
-
-## Security model
-
-Short version:
-
-- **Users never hold Supabase keys.** They hold a worker token that's minted by the activation flow and hashed server-side.
-- **The desktop app doesn't bundle secrets.** After the v1.0.0 audit (see Appendix), no Telegram bot tokens, Claude CLI paths, or `.openclaw` legacy paths are baked in.
-- **Worker tokens are per-user and revocable.** Admin can revoke from `/admin`. The desktop surfaces `token_revoked` state and bounces to the setup wizard.
-- **Activation codes are time- and use-limited.** 7-day TTL, 5 uses by default. Race-safe atomic decrement prevents double-redemption. IP-based rate limit prevents brute force.
-- **Resumes are validated.** 10MB cap, PDF magic-byte sniff, filename sanitization before Storage write.
-- **GitHub Releases distributes the `.dmg`.** Public binary, useless without a valid activation code. SHA256 sidecar published alongside for verification.
-
-Longer version: see the [April 2026 QA audit plan](./docs/CHANGELOG-2026-04-09.md) and the commit log from `9c04935` onward — 33 commits of hardening, including a cross-tenant PII leak fix (`d7f84f4`), atomic activation-code decrement (`61b8690`), rate limiting, MIME validation, arch detection, and token-revocation propagation.
-
----
-
-## Known limitations
-
-- **macOS only** — Windows build is pending
-- **Not Apple-signed** — users see Gatekeeper warning on first launch, must right-click → Open
-- **`SUPABASE_DB_URL` currently unset in production** — migrations are pre-applied via the Supabase MCP, so not blocking. Set this before cutting the next migration so `migrate.mjs` can run during Vercel build.
-- **Rate limit is in-process Map** (per serverless container) — distributed attackers could brute-force across containers. Upgrade to Upstash Redis or Vercel KV when needed. `packages/web/src/lib/rate-limit.ts` is already written for Upstash.
-- **Telegram integration requires manual `telegram_chat_id` setup per user** — no auto-linking via bot `/start` yet.
-- **Stripe webhook is a placeholder** — payment verification is currently manual (Phase 5 on the roadmap).
-
----
-
-## Roadmap
-
-- **Phase 2 (in progress)** — Retire the legacy OpenClaw Telegram path; full Telegram-first chat via desktop gateway (already landed in `cf2f404`, needs cleanup)
-- **Phase 3** — Telegram niceties: YOLO mode toggle, message splitting for long replies, `/status` shortcut, permission whitelist for Telegram-originated tool calls
-- **Phase 4** — Windows `.exe` installer; `.dmg` Apple code signing
-- **Phase 5** — Stripe webhook auto-generates activation codes on successful payment; tiered daily limits enforced
-
----
-
-## License
-
-Private, invite-only beta. Contact the admin for access.
-
----
-
-## Credits
-
-Built with [Claude Code](https://claude.com/product/claude-code). Architected through multi-agent audit sessions — see the [plan file](https://github.com/snehitvaddi/AutoApply/blob/main/docs/CHANGELOG-2026-04-09.md) for the audit methodology.
+</div>
