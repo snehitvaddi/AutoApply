@@ -23,6 +23,12 @@
 
 ---
 
+<img src="https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/docs/images/dashboard.png" alt="ApplyLoop dashboard" width="860" />
+
+<br/>
+
+---
+
 </div>
 
 ## What is ApplyLoop?
@@ -64,16 +70,6 @@ That's it. From here your Mac applies to jobs in the background, every 30 minute
 ---
 
 ## What you'll see
-
-<div align="center">
-
-### Your live dashboard — 26 applications submitted today, 212 total
-
-<img src="https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/docs/images/dashboard.png" alt="ApplyLoop dashboard showing 26 applications today, 212 total, 65% success rate, applications chart, and recent submissions to Deepgram and LlamaIndex" width="860" />
-
-<br/><br/>
-
-</div>
 
 Every number on that screen is real. ApplyLoop submitted those applications automatically — to Deepgram, LlamaIndex, Norm AI and 200+ others — without the user touching a single form.
 
