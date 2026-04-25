@@ -123,7 +123,7 @@ Go to console.cloud.google.com → New Project → Name it "ApplyLoop"
 
 ### Step 15: Fork/clone the repository
 ```bash
-git clone https://github.com/snehitvaddi/AutoApply.git
+git clone https://github.com/snehitvaddi/ApplyLoop.git
 cd AutoApply
 ```
 

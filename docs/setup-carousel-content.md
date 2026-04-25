@@ -131,7 +131,7 @@ OPENAI_API_KEY (or ANTHROPIC_API_KEY)
 - Step 28: SSH into VPS (or open local terminal)
 - Step 29: Clone the repo
   ```bash
-  git clone https://github.com/snehitvaddi/AutoApply.git
+  git clone https://github.com/snehitvaddi/ApplyLoop.git
   ```
 - Step 30: Install Python dependencies
   ```bash

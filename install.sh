@@ -2,14 +2,14 @@
 # ApplyLoop installer — curl-able, local-build, no Gatekeeper pain.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash
 #
 # Env vars (all optional):
 #   APPLYLOOP_CODE    activation code AL-XXXX-XXXX (REQUIRED — gate, can also be
 #                     passed as positional arg: `bash -s -- AL-XXXX-XXXX`, or
 #                     prompted interactively from /dev/tty if neither)
 #   APPLYLOOP_HOME    install dir (default $HOME/.applyloop)
-#   APPLYLOOP_REPO    git URL or local path (default https://github.com/snehitvaddi/AutoApply.git)
+#   APPLYLOOP_REPO    git URL or local path (default https://github.com/snehitvaddi/ApplyLoop.git)
 #   APPLYLOOP_BRANCH  branch to clone/update (default main)
 #   APPLYLOOP_APP     .app bundle path (default /Applications/ApplyLoop.app — passed through to build_local_app.sh)
 #   APPLYLOOP_APP_URL cloud API URL (default https://applyloop.vercel.app)
@@ -37,7 +37,7 @@
 # env var breaks the loop on the second pass. Pujith hit this on his
 # Mac during v1.0.8.
 if [[ -z "${APPLYLOOP_REEXEC:-}" ]] && [[ ! -t 0 ]]; then
-  REEXEC_URL="${APPLYLOOP_INSTALL_URL:-https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh}"
+  REEXEC_URL="${APPLYLOOP_INSTALL_URL:-https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh}"
   REEXEC_TMP="$(mktemp -t applyloop-install.XXXXXX)" || REEXEC_TMP="/tmp/applyloop-install.$$.sh"
   if curl -fsSL "$REEXEC_URL" -o "$REEXEC_TMP" 2>/dev/null && [[ -s "$REEXEC_TMP" ]]; then
     chmod +x "$REEXEC_TMP"
@@ -56,7 +56,7 @@ fi
 set -euo pipefail
 
 APPLYLOOP_HOME="${APPLYLOOP_HOME:-$HOME/.applyloop}"
-REPO_URL="${APPLYLOOP_REPO:-https://github.com/snehitvaddi/AutoApply.git}"
+REPO_URL="${APPLYLOOP_REPO:-https://github.com/snehitvaddi/ApplyLoop.git}"
 BRANCH="${APPLYLOOP_BRANCH:-main}"
 
 # Pin npm's download cache to a directory inside $APPLYLOOP_HOME so we
@@ -210,7 +210,7 @@ reuse_or_prompt() {
 # ------------------------------------------------------------------ guards
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  die "Only macOS is supported right now. Linux + Windows support is tracked at https://github.com/snehitvaddi/AutoApply/issues - open or comment on an issue to request it."
+  die "Only macOS is supported right now. Linux + Windows support is tracked at https://github.com/snehitvaddi/ApplyLoop/issues - open or comment on an issue to request it."
 fi
 
 ARCH="$(uname -m)"

@@ -14,9 +14,9 @@ type ActivationCode = {
 const FALLBACK_TAG = "v1.0.4";
 const FALLBACK_DMG = "ApplyLoop-1.0.4.dmg";
 const GH_LATEST_API =
-  "https://api.github.com/repos/snehitvaddi/AutoApply/releases/latest";
+  "https://api.github.com/repos/snehitvaddi/ApplyLoop/releases/latest";
 const releaseBase = (tag: string) =>
-  `https://github.com/snehitvaddi/AutoApply/releases/download/${tag}`;
+  `https://github.com/snehitvaddi/ApplyLoop/releases/download/${tag}`;
 
 /**
  * SetupCard
@@ -113,7 +113,7 @@ export function SetupCard({ variant = "inline" }: { variant?: "standalone" | "in
   // install.sh v1.0.9+ requires the activation code up front
   const userCode = activation?.code || "AL-XXXX-XXXX";
   const installCmd =
-    `curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash -s -- ${userCode}`;
+    `curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash -s -- ${userCode}`;
 
   return (
     <div className="space-y-6">

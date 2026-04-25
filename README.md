@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/desktop/icon.svg" alt="ApplyLoop" width="80" height="80" />
+<img src="https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/packages/desktop/icon.svg" alt="ApplyLoop" width="80" height="80" />
 
 # ApplyLoop
 
@@ -23,7 +23,7 @@
 
 ---
 
-<img src="https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/docs/images/dashboard.png" alt="ApplyLoop dashboard" width="860" />
+<img src="https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/docs/images/dashboard.png" alt="ApplyLoop dashboard" width="860" />
 
 <br/>
 
@@ -35,7 +35,7 @@
 
 > **Think of it like autopilot for your job search — powered by an AI agent that runs on your Mac.**
 
-You fill in your resume and preferences **once**. Under the hood, ApplyLoop uses **[OpenClaw MCP](https://github.com/snehitvaddi/AutoApply)** — a browser-control agent — to open real job application pages, fill every field, answer every question, and hit Submit, exactly the way a human would. No APIs, no shortcuts, no scraping. Real applications, real browsers.
+You fill in your resume and preferences **once**. Under the hood, ApplyLoop uses **[OpenClaw MCP](https://github.com/snehitvaddi/ApplyLoop)** — a browser-control agent — to open real job application pages, fill every field, answer every question, and hit Submit, exactly the way a human would. No APIs, no shortcuts, no scraping. Real applications, real browsers.
 
 Every 30 minutes it scouts thousands of job boards, matches them to your profile, and queues the best ones. While you sleep, it works.
 
@@ -121,7 +121,7 @@ Same brain, two keyboards.
 **Step 2** — Open **Terminal** on your Mac and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh \
+curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh \
   | bash -s -- AL-XXXX-XXXX
 ```
 
@@ -247,7 +247,7 @@ AutoApply/
 ### Dev setup
 
 ```bash
-git clone https://github.com/snehitvaddi/AutoApply.git
+git clone https://github.com/snehitvaddi/ApplyLoop.git
 cd AutoApply
 
 # Web
@@ -331,7 +331,7 @@ Removes `~/.applyloop`, `/Applications/ApplyLoop.app`, the launchd plist, and th
 APPLYLOOP_CODE=AL-X1Y2-Z3W4 \
 APPLYLOOP_TELEGRAM_CHAT_ID=123456789 \
 APPLYLOOP_SKIP_PROMPTS=1 \
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh)"
 ```
 
 ### CLIENT.md — your personal overrides
@@ -376,6 +376,6 @@ cd packages/web && node scripts/migrate.mjs
 
 **Built with [Claude Code](https://claude.ai/claude-code)**
 
-[Request Access](https://applyloop.vercel.app) &nbsp;·&nbsp; [Report a Bug](https://github.com/snehitvaddi/AutoApply/issues) &nbsp;·&nbsp; Private beta — invite only
+[Request Access](https://applyloop.vercel.app) &nbsp;·&nbsp; [Report a Bug](https://github.com/snehitvaddi/ApplyLoop/issues) &nbsp;·&nbsp; Private beta — invite only
 
 </div>

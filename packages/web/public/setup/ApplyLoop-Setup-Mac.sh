@@ -471,14 +471,14 @@ if [[ -d "$INSTALL_DIR" ]]; then
 else
   log_info "Cloning ApplyLoop..."
   if check_command git; then
-    git clone https://github.com/snehitvaddi/AutoApply.git "$INSTALL_DIR" 2>/dev/null || {
+    git clone https://github.com/snehitvaddi/ApplyLoop.git "$INSTALL_DIR" 2>/dev/null || {
       log_warn "Git clone failed (repo may be private). Creating directory..."
       mkdir -p "$INSTALL_DIR"
     }
   else
     log_info "Installing git..."
     brew install git
-    git clone https://github.com/snehitvaddi/AutoApply.git "$INSTALL_DIR" 2>/dev/null || {
+    git clone https://github.com/snehitvaddi/ApplyLoop.git "$INSTALL_DIR" 2>/dev/null || {
       log_warn "Git clone failed. Creating directory..."
       mkdir -p "$INSTALL_DIR"
     }
@@ -1109,7 +1109,7 @@ elif ! (openclaw status 2>&1 | grep -qi "pro\|active\|licensed" 2>/dev/null); th
 fi
 
 if ! [[ -f "$INSTALL_DIR/packages/worker/worker.py" ]]; then
-  add_todo "(required) Clone the repo: git clone https://github.com/snehitvaddi/AutoApply.git $INSTALL_DIR/repo && cp -r $INSTALL_DIR/repo/* $INSTALL_DIR/"
+  add_todo "(required) Clone the repo: git clone https://github.com/snehitvaddi/ApplyLoop.git $INSTALL_DIR/repo && cp -r $INSTALL_DIR/repo/* $INSTALL_DIR/"
 fi
 
 if [[ "$LLM_PROVIDER" == "none" && "$LLM_BACKEND_PROVIDER" == "none" ]]; then
@@ -1269,7 +1269,7 @@ AGENTSCMDS
 # Append SOUL.md content to AGENTS.md so Codex auto-reads it
 SOUL_PATH="$INSTALL_DIR/packages/worker/SOUL.md"
 [[ ! -f "$SOUL_PATH" ]] && SOUL_PATH="$INSTALL_DIR/repo/packages/worker/SOUL.md"
-[[ ! -f "$SOUL_PATH" ]] && curl -s "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/worker/SOUL.md" -o "$INSTALL_DIR/SOUL.md" 2>/dev/null && SOUL_PATH="$INSTALL_DIR/SOUL.md"
+[[ ! -f "$SOUL_PATH" ]] && curl -s "https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/packages/worker/SOUL.md" -o "$INSTALL_DIR/SOUL.md" 2>/dev/null && SOUL_PATH="$INSTALL_DIR/SOUL.md"
 
 if [[ -f "$SOUL_PATH" ]]; then
   echo -e "\n\n---\n" >> "$AGENTS_FILE"
@@ -1279,7 +1279,7 @@ fi
 # Append ARCHITECTURE.md (3-layer architecture doc)
 ARCH_PATH="$INSTALL_DIR/packages/worker/ARCHITECTURE.md"
 [[ ! -f "$ARCH_PATH" ]] && ARCH_PATH="$INSTALL_DIR/repo/packages/worker/ARCHITECTURE.md"
-[[ ! -f "$ARCH_PATH" ]] && curl -s "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/worker/ARCHITECTURE.md" -o "$INSTALL_DIR/ARCHITECTURE.md" 2>/dev/null && ARCH_PATH="$INSTALL_DIR/ARCHITECTURE.md"
+[[ ! -f "$ARCH_PATH" ]] && curl -s "https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/packages/worker/ARCHITECTURE.md" -o "$INSTALL_DIR/ARCHITECTURE.md" 2>/dev/null && ARCH_PATH="$INSTALL_DIR/ARCHITECTURE.md"
 
 if [[ -f "$ARCH_PATH" ]]; then
   echo -e "\n\n---\n" >> "$AGENTS_FILE"
@@ -1430,7 +1430,7 @@ elif ! (openclaw status 2>&1 | grep -qi "pro\|active\|licensed" 2>/dev/null); th
 fi
 
 if ! [[ -f "$INSTALL_DIR/packages/worker/worker.py" ]]; then
-  print_todo "(required) Clone the repo: git clone https://github.com/snehitvaddi/AutoApply.git $INSTALL_DIR/repo"
+  print_todo "(required) Clone the repo: git clone https://github.com/snehitvaddi/ApplyLoop.git $INSTALL_DIR/repo"
 fi
 
 if [[ "$LLM_PROVIDER" == "none" && "$LLM_BACKEND_PROVIDER" == "none" ]]; then
@@ -1479,7 +1479,7 @@ if [[ -f "$SOUL_SOURCE" ]]; then
   cp "$SOUL_SOURCE" "$INSTALL_DIR/SOUL.md"
   log_ok "SOUL.md copied to $INSTALL_DIR"
 else
-  curl -s "https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/packages/worker/SOUL.md" -o "$INSTALL_DIR/SOUL.md" 2>/dev/null
+  curl -s "https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/packages/worker/SOUL.md" -o "$INSTALL_DIR/SOUL.md" 2>/dev/null
   [[ -f "$INSTALL_DIR/SOUL.md" ]] && log_ok "SOUL.md downloaded" || log_warn "Could not get SOUL.md"
 fi
 
@@ -1532,7 +1532,7 @@ Would you like me to start scouting for jobs now?\"
 
 ## SETUP CHECK (do this silently before introducing yourself)
 1. Check if packages/worker/worker.py exists. If not:
-   git clone https://github.com/snehitvaddi/AutoApply.git $INSTALL_DIR/repo
+   git clone https://github.com/snehitvaddi/ApplyLoop.git $INSTALL_DIR/repo
    cp -r $INSTALL_DIR/repo/* $INSTALL_DIR/
 2. Check .env has WORKER_TOKEN set
 3. Check profile.json has user data (if empty, fetch via: curl -s -H \"X-Worker-Token: TOKEN\" https://applyloop.vercel.app/api/settings/cli-config)

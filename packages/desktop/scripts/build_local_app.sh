@@ -109,7 +109,7 @@ fi
 } >> "$LOG" 2>&1
 
 if [[ ! -x "$APPLYLOOP_HOME/venv/bin/python3" ]]; then
-  osascript -e 'display alert "ApplyLoop not installed" message "Run the curl installer first:\n\ncurl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash"' >/dev/null 2>&1 || true
+  osascript -e 'display alert "ApplyLoop not installed" message "Run the curl installer first:\n\ncurl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash"' >/dev/null 2>&1 || true
   echo "[launcher] venv missing at $APPLYLOOP_HOME/venv/bin/python3 — aborting" >> "$LOG"
   exit 1
 fi

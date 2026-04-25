@@ -213,7 +213,7 @@ def check_deps():
             print(
                 f"[ApplyLoop] FATAL: bundled venv is missing '{exc.name}'. "
                 f"This is a build bug — please reinstall the latest .dmg from "
-                f"https://github.com/snehitvaddi/AutoApply/releases",
+                f"https://github.com/snehitvaddi/ApplyLoop/releases",
                 file=sys.stderr,
             )
             sys.exit(2)

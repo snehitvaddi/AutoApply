@@ -77,7 +77,7 @@ The cloud **never** runs apply logic. All browser automation, form filling, and 
    - **macOS install command**: a single `curl` one-liner with the code already embedded
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash -s -- AL-X1Y2-Z3W4
+curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash -s -- AL-X1Y2-Z3W4
 ```
 
 3. User copies the command and pastes into Terminal.app. **This is the last thing they manually type for the entire install.**
@@ -381,7 +381,7 @@ So the only way to get a working install is to be a user that an admin explicitl
 
 ```bash
 # Install (first time)
-curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh | bash -s -- AL-XXXX-XXXX
+curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash -s -- AL-XXXX-XXXX
 
 # Update
 applyloop update
@@ -409,7 +409,7 @@ APPLYLOOP_FINETUNE_RESUME_KEY=... \
 APPLYLOOP_GMAIL_EMAIL=you@example.com \
 APPLYLOOP_GMAIL_APP_PASSWORD=abcdefghijklmnop \
 APPLYLOOP_SKIP_PROMPTS=1 \
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh)"
 ```
 
 ---
@@ -425,4 +425,4 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/snehitvaddi/AutoApply/ma
 
 ## 14. Contact
 
-Issues: flag in Telegram DM or open a GitHub issue. The installer URL is `https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/install.sh` and is updated continuously — there's no "old version" to downgrade to.
+Issues: flag in Telegram DM or open a GitHub issue. The installer URL is `https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh` and is updated continuously — there's no "old version" to downgrade to.

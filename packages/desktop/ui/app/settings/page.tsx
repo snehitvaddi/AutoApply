@@ -1276,7 +1276,7 @@ export default function SettingsPage() {
               <div className="rounded-lg bg-muted/50 p-4">
                 <p className="text-xs text-muted-foreground">
                   Questions? Message the admin via Telegram, or open an issue at{" "}
-                  <code>github.com/snehitvaddi/AutoApply/issues</code>.
+                  <code>github.com/snehitvaddi/ApplyLoop/issues</code>.
                 </p>
               </div>
             </div>
