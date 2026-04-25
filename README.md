@@ -67,25 +67,26 @@ That's it. From here your Mac applies to jobs in the background, every 30 minute
 
 <div align="center">
 
-### Sign in with Google — takes 30 seconds
+### Your live dashboard — 26 applications submitted today, 212 total
 
-<img src="https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/docs/images/01-login-page.png" alt="ApplyLoop login screen" width="480" />
+<img src="https://raw.githubusercontent.com/snehitvaddi/AutoApply/main/docs/images/dashboard.png" alt="ApplyLoop dashboard showing 26 applications today, 212 total, 65% success rate, applications chart, and recent submissions to Deepgram and LlamaIndex" width="860" />
 
 <br/><br/>
 
-### Your live dashboard — track every application in real time
+</div>
 
-| Stat Card | What it shows |
+Every number on that screen is real. ApplyLoop submitted those applications automatically — to Deepgram, LlamaIndex, Norm AI and 200+ others — without the user touching a single form.
+
+**Four numbers that matter:**
+
+| | |
 |---|---|
-| **Applied Today** | Applications submitted in the last 24 hours |
-| **Total Applied** | All-time applications |
-| **In Queue** | Jobs discovered, waiting to be applied to |
-| **Success Rate** | % that went through without errors |
+| **26** applied today | Jobs submitted while you were living your life |
+| **212** total | Your running application count across all time |
+| **65%** success rate | Forms that went through cleanly on first try |
+| **By Platform** | Breakdown by ATS so you know where your applications land |
 
-The **Pipeline** view shows a Kanban board: `Queued → Applying → Submitted → Failed`.
-Every card is a real job. Click any card to see the company, role, and ATS platform.
-
-<br/>
+<div align="center">
 
 ### Chat with it — from your Mac or your phone
 
