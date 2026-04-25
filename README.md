@@ -37,14 +37,24 @@ You get a **Telegram photo** of every submitted application. You watch a live da
 
 ---
 
-## It's as simple as 3 steps
+## How it works
 
-```
-1. Sign up → build your profile → upload your resume
-          ↓
-2. Get your activation code → paste one command in Terminal
-          ↓
-3. Double-click ApplyLoop.app → press Start
+```mermaid
+flowchart LR
+    A("🌐 Sign Up\napplyloop.vercel.app") --> B("📝 Build Profile\nResume · Experience\nJob Preferences")
+    B --> C("✅ Get Approved\nActivation Code\nAL-XXXX-XXXX")
+    C --> D("💻 One-Line Install\ncurl ... | bash\n~3 minutes")
+    D --> E("🚀 Press Start\nApplyLoop.app")
+    E --> F("🤖 AI Applies\nEvery 30 min\n24 / 7")
+    F --> G("📱 Telegram Alert\nScreenshot of\nevery application")
+
+    style A fill:#6366f1,color:#fff,stroke:none
+    style B fill:#8b5cf6,color:#fff,stroke:none
+    style C fill:#06b6d4,color:#fff,stroke:none
+    style D fill:#0ea5e9,color:#fff,stroke:none
+    style E fill:#10b981,color:#fff,stroke:none
+    style F fill:#f59e0b,color:#fff,stroke:none
+    style G fill:#ef4444,color:#fff,stroke:none
 ```
 
 That's it. From here your Mac applies to jobs in the background, every 30 minutes, 24/7.
@@ -198,37 +208,25 @@ Just leave the app running in the background. It will:
 
 Three processes, one cloud store, one local cache:
 
-```
-                   ┌─────────────────────────────────┐
-                   │      applyloop.vercel.app        │
-                   │      (Next.js 14, SSR)           │
-                   │  Signup · Onboarding · Admin     │
-                   └────────┬───────────┬─────────────┘
-                            │           │
-                    Google  │           │ service-role
-                    OAuth   │           │
-                            ▼           ▼
-                   ┌─────────────────────────────────┐
-                   │           Supabase              │
-                   │  Postgres · Auth · Storage      │
-                   └────────────────┬────────────────┘
-                                    │
-                                    │ /api/worker/proxy
-                                    │ (X-Worker-Token)
-       ┌────────────────────────────┴────────────────────────┐
-       │                                                     │
-┌──────▼──────────────────────────────┐   ┌─────────────────▼───────────────┐
-│   ApplyLoop.app (FastAPI + pywebview│   │   Worker (subprocess)           │
-│   localhost:18790)                  │   │                                 │
-│                                     │   │   scanner/ (8 sources)          │
-│   Dashboard · Pipeline · Chat       │   │   applier/ (5 ATS platforms)    │
-│   Terminal · Settings               │   │   db.py (SQLite dual-write)     │
-└────────────────┬────────────────────┘   └────────────────┬────────────────┘
-                 │                                         │
-                 └──────────────┬──────────────────────────┘
-                                ▼
-                   ~/.autoapply/workspace/applications.db
-                   (SQLite WAL — local source of truth)
+```mermaid
+flowchart TD
+    WEB("🌐 applyloop.vercel.app\nNext.js · Vercel\nSignup · Onboarding · Admin")
+    SUP("🗄️ Supabase\nPostgres · Auth · Storage\nProfiles · Tokens · Resumes")
+    APP("🖥️ ApplyLoop.app\nFastAPI + pywebview\nDashboard · Pipeline · Chat")
+    WRK("⚙️ Worker subprocess\nScanner × 8 sources\nApplier × 5 ATS platforms")
+    DB("💾 applications.db\nSQLite WAL — your Mac\nLocal source of truth")
+
+    WEB -- "Google OAuth" --> SUP
+    SUP -- "X-Worker-Token\n/api/worker/proxy" --> APP
+    APP -- "spawns" --> WRK
+    APP -- "reads" --> DB
+    WRK -- "writes" --> DB
+
+    style WEB fill:#6366f1,color:#fff,stroke:none
+    style SUP fill:#3ecf8e,color:#fff,stroke:none
+    style APP fill:#0ea5e9,color:#fff,stroke:none
+    style WRK fill:#f59e0b,color:#fff,stroke:none
+    style DB  fill:#64748b,color:#fff,stroke:none
 ```
 
 ### Repo layout
