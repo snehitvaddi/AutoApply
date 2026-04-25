@@ -135,8 +135,12 @@ export default function JobsListPage() {
 
   useEffect(() => {
     refresh()
+    // Quick retries in case the FastAPI backend isn't up yet on mount.
+    // Without these, a failed initial call waits the full 15s interval.
+    const r1 = setTimeout(refresh, 2000)
+    const r2 = setTimeout(refresh, 4000)
     const interval = setInterval(refresh, 15000)
-    return () => clearInterval(interval)
+    return () => { clearInterval(interval); clearTimeout(r1); clearTimeout(r2) }
   }, [refresh])
 
   // WhatsApp/Slack auto-scroll via ResizeObserver — snaps to bottom on

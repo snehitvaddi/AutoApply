@@ -25,6 +25,20 @@ _ANSI_RE = re.compile(
     r'|\x1b'
 )
 
+# Claude Code TUI chrome patterns. The Claude Code terminal renders live
+# thinking/streaming progress as plain text after ANSI stripping. These
+# must be dropped before returning the response to the chat UI or they
+# appear as gibberish (token counts, progress bars, spinner lines).
+_CLAUDE_CHROME_RE = re.compile(
+    r'thinkingwith\w+'              # thinkingwithmediumeffort / thinkingwithhigheffort
+    r'|◆+[─—\-]+'                  # progress bar  ◆◆——————
+    r'|^\s*>\s*\[\s*\d+[smh]'      # > [ 7m  thinking spinner
+    r'|\btokens?\s*[·.]\s*thought'  # tokens · thought for Xs
+    r'|^\s*\(\d+s[·.]'             # (3s·thinking…)
+    r'|[✱✦∗]\d+\s+\d+\s+\d+'      # ✱38 50 63  token-count rows
+    , re.IGNORECASE | re.MULTILINE
+)
+
 
 async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
     """
@@ -112,10 +126,9 @@ async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
     full = "\n".join(response_chunks)
     lines = full.split("\n")
     clean_lines: list[str] = []
-    # The first ~3 lines are typically Claude echoing what we typed (xterm
-    # display echo). Skip those so the returned text is Claude's response,
-    # not the user's own message bounced back.
-    echo_line = flat[:60].lower()
+    # The terminal echoes keystrokes without spaces (e.g. "[viachat]Arey
+    # oufollowingall...") so we compare space-stripped versions.
+    echo_nospace = re.sub(r'\s+', '', flat[:60]).lower()
     for line in lines:
         stripped = line.strip()
         if not stripped or len(stripped) < 2:
@@ -128,8 +141,13 @@ async def capture_btw_response(text: str, timeout: float = 30.0) -> str:
             continue
         if "esc to" in stripped.lower():
             continue
-        # Drop lines that are substring-echoes of our typed message
-        if echo_line and echo_line[:30] in stripped.lower():
+        # Echo detection: strip spaces before comparing because the terminal
+        # collapses whitespace when echoing keystrokes back to the screen.
+        stripped_nospace = re.sub(r'\s+', '', stripped).lower()
+        if echo_nospace and echo_nospace[:25] in stripped_nospace:
+            continue
+        # Claude Code TUI chrome: thinking progress, token counts, progress bars.
+        if _CLAUDE_CHROME_RE.search(stripped):
             continue
         clean_lines.append(line)
 

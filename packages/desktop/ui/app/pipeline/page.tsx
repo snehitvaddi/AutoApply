@@ -52,7 +52,7 @@ export default function PipelinePage() {
   const [stuckJobs, setStuckJobs] = useState<PipelineJob[]>([])
   const [loading, setLoading] = useState(true)
   const [resetting, setResetting] = useState(false)
-  const { stats, loading: statsLoading } = useStats()
+  const { stats, loading: statsLoading, refresh: refreshStats } = useStats()
 
   const refresh = useCallback(async () => {
     try {
@@ -67,13 +67,15 @@ export default function PipelinePage() {
         setCurrent(currentRes.value.data)
       if (stuckRes.status === "fulfilled" && stuckRes.value.ok)
         setStuckJobs(stuckRes.value.data)
+      // Keep stat cards in sync with the kanban on every poll cycle.
+      refreshStats()
     } catch { /* ignore */ }
     finally { setLoading(false) }
-  }, [])
+  }, [refreshStats])
 
   useEffect(() => {
     refresh()
-    const interval = setInterval(refresh, 10000)
+    const interval = setInterval(refresh, 5000)
     return () => clearInterval(interval)
   }, [refresh])
 

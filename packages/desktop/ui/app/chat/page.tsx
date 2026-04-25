@@ -250,16 +250,23 @@ export default function ChatPage() {
 
   // First-load force-snap: once history arrives, override any prior scroll
   // state and land at bottom. Runs once per mount.
+  // Uses scrollIntoView on the bottomRef sentinel in addition to scrollTop
+  // because flex-1 containers may not have their final clientHeight when
+  // the effect fires — scrollIntoView targets the DOM element directly and
+  // works regardless of the container's computed height at that moment.
   useEffect(() => {
     if (!historyLoaded) return
     const c = scrollContainerRef.current
     if (!c) return
     anchoredToBottom.current = true
-    c.scrollTop = c.scrollHeight
-    // Re-snap a few times as markdown/code blocks settle.
-    const t1 = setTimeout(() => { if (anchoredToBottom.current) c.scrollTop = c.scrollHeight }, 50)
-    const t2 = setTimeout(() => { if (anchoredToBottom.current) c.scrollTop = c.scrollHeight }, 200)
-    const t3 = setTimeout(() => { if (anchoredToBottom.current) c.scrollTop = c.scrollHeight }, 500)
+    const snapToBottom = () => {
+      c.scrollTop = c.scrollHeight
+      bottomRef.current?.scrollIntoView({ behavior: "instant", block: "end" })
+    }
+    snapToBottom()
+    const t1 = setTimeout(snapToBottom, 50)
+    const t2 = setTimeout(snapToBottom, 200)
+    const t3 = setTimeout(snapToBottom, 500)
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
   }, [historyLoaded])
 

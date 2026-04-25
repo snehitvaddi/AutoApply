@@ -11,7 +11,7 @@ import {
   type Application,
 } from "@/lib/api"
 
-export function useStats(pollInterval = 10000) {
+export function useStats(pollInterval = 5000) {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [daily, setDaily] = useState<{ date: string; submitted: number; failed: number }[]>([])
   const [platforms, setPlatforms] = useState<{ name: string; value: number }[]>([])
