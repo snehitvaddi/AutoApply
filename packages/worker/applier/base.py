@@ -130,7 +130,7 @@ class BaseApplier(ABC):
                 f"| {exp.get('start','')} - {exp.get('end','')} | {exp.get('location','')}"
             )
             for ach in exp.get("achievements", []):
-                lines.append(f"     - {ach[:150]}")
+                lines.append(f"     - {ach}")
 
         lines.append("")
         lines.append(f"EDUCATION (CRITICAL: fill ALL {len(edu_entries)} entries below):")
@@ -167,6 +167,6 @@ class BaseApplier(ABC):
         for key in ("cover_letter_template", "additional_info", "strengths", "why_leaving"):
             val = ak.get("textarea_fields", {}).get(key) or _f(key, "")
             if val:
-                lines.append(f"  {key}: {val[:250]}")
+                lines.append(f"  {key}: {val}")
 
         return "\n".join(lines)

@@ -33,6 +33,8 @@ recommended next action. You never need to reason from scratch after an idle per
 1. **Fill ALL fields, then SUBMIT.** Every form, every platform. No skipping fields, no skipping submit.
 2. **ONE job at a time.** Complete or skip before opening the next. Never have 2 forms open.
 3. **Fill ALL work experiences + ALL education.** Never truncate, abbreviate, or skip entries.
+   - When a form has a textarea asking for job description, responsibilities, duties, or "what did you do at [company]" — paste the **full achievement bullets** for that position exactly as they appear in the profile. Do not summarize into a one-liner.
+   - Only trim if the field has a visible character counter showing you are over the hard limit. In that case, remove the least important bullets from the bottom until it fits — never rewrite or shorten individual bullets.
 4. **Screenshot EVERY outcome** — success, failure, timeout, CAPTCHA. Send to Telegram with proof.
 5. **Log EVERY application** to both local dedup DB AND remote API. Missing either = invisible.
 6. **2-minute timeout per job — but TRY 3 TIMES before giving up.** If you hit an error, unexpected redirect, or blank page: snapshot again, re-read the form, retry from the top of STEP 4. Only after 3 genuine attempts with different approaches (re-navigate, refresh, re-snapshot) can you mark it failed. Premature skip = invisible lost application.
