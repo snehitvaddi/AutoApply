@@ -1274,6 +1274,60 @@ class PTYSession:
         return "\n".join(lines)
 
     @staticmethod
+    def _ensure_mcp_settings(cwd: str) -> None:
+        """Write/repair $cwd/.claude/settings.json so the applyloop MCP server
+        is always registered when Claude Code opens this workspace.
+
+        Called on every PTY session start so the settings stay in sync with
+        the current venv paths. Writes unconditionally — the entire block is
+        machine-generated and must match the current install layout.
+        """
+        try:
+            applyloop_home = os.path.abspath(cwd)
+            python_bin = os.path.join(applyloop_home, "venv", "bin", "python3")
+            worker_dir = os.path.join(applyloop_home, "packages", "worker")
+
+            # Skip for workspaces that don't look like an applyloop install.
+            if not os.path.isfile(python_bin) or not os.path.isdir(worker_dir):
+                return
+
+            # Read APPLYLOOP_USER_ID from profile.json if available.
+            user_id = ""
+            try:
+                profile_path = os.path.join(applyloop_home, "profile.json")
+                with open(profile_path, encoding="utf-8") as _f:
+                    _profile = json.load(_f)
+                user_id = _profile.get("user_id") or _profile.get("id") or ""
+            except Exception:
+                pass
+
+            settings = {
+                "mcpServers": {
+                    "applyloop": {
+                        "command": python_bin,
+                        "args": ["-m", "brain.mcp_server"],
+                        "env": {
+                            "PYTHONPATH": worker_dir,
+                            "APPLYLOOP_HOME": applyloop_home,
+                            "APPLYLOOP_USER_ID": user_id,
+                        },
+                        "cwd": worker_dir,
+                    }
+                }
+            }
+
+            claude_dir = os.path.join(applyloop_home, ".claude")
+            os.makedirs(claude_dir, exist_ok=True)
+            settings_path = os.path.join(claude_dir, "settings.json")
+            tmp_path = f"{settings_path}.applyloop.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as _f:
+                json.dump(settings, _f, indent=2)
+            os.replace(tmp_path, settings_path)
+            logger.info("Wrote MCP settings: %s", settings_path)
+        except Exception as e:
+            logger.warning("Could not write MCP settings: %s", e)
+
+    @staticmethod
     def _ensure_claude_trust(cwd: str) -> None:
         """Pre-populate ~/.claude.json so Claude Code doesn't ask for
         workspace trust on first spawn. Schema observed from an existing
@@ -1352,6 +1406,7 @@ class PTYSession:
         # bypasses tool-use prompts but NOT the one-time trust dialog;
         # that's stored in ~/.claude.json under projects[<cwd>].
         self._ensure_claude_trust(cwd)
+        self._ensure_mcp_settings(cwd)
 
         # Build the personalized initial prompt from profile.json + .env.
         # This is done in the parent (before fork) so we can log what we
