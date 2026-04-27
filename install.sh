@@ -1105,7 +1105,7 @@ folder.aliases.drafts = "[Gmail]/Drafts"
 folder.aliases.trash = "[Gmail]/Trash"
 HIMALAYA_EOF
   chmod 600 "$_HIM_CFG_DIR/config.toml" 2>/dev/null || true
-  log_ok "Himalaya config written for $GMAIL_EMAIL_VAL"
+  log "Himalaya config written for $GMAIL_EMAIL_VAL"
 fi
 
 # Create CLIENT.md only if it does not already exist — never overwrite
@@ -1139,7 +1139,7 @@ if [[ ! -f "$_CLIENT_MD" ]]; then
 # Lines starting with # are comments and are ignored by Claude.
 # Delete the example lines and replace with your own instructions.
 CLIENT_EOF
-  log_ok "Created $APPLYLOOP_HOME/CLIENT.md (edit this for personal overrides)"
+  log "Created $APPLYLOOP_HOME/CLIENT.md (edit this for personal overrides)"
 fi
 
 # Also create the worker's runtime dirs so it doesn't crash on first write
