@@ -1275,12 +1275,16 @@ class PTYSession:
 
     @staticmethod
     def _ensure_mcp_settings(cwd: str) -> None:
-        """Write/repair $cwd/.claude/settings.json so the applyloop MCP server
-        is always registered when Claude Code opens this workspace.
+        """Register the applyloop MCP server in ~/.claude.json under
+        projects[<cwd>].mcpServers so Claude Code loads `brain.mcp_server`
+        on every PTY spawn for this workspace.
 
-        Called on every PTY session start so the settings stay in sync with
-        the current venv paths. Writes unconditionally — the entire block is
-        machine-generated and must match the current install layout.
+        Why ~/.claude.json and not .claude/settings.json: Claude Code reads
+        MCP server configs from ~/.claude.json (user scope) or .mcp.json
+        (project scope, requires approval). It does NOT read mcpServers
+        from .claude/settings.json — that file is for permissions, hooks,
+        env, and statusLine only. A prior version of this function wrote
+        to the wrong file and the tools silently failed to register.
         """
         try:
             applyloop_home = os.path.abspath(cwd)
@@ -1301,31 +1305,63 @@ class PTYSession:
             except Exception:
                 pass
 
-            settings = {
-                "mcpServers": {
-                    "applyloop": {
-                        "command": python_bin,
-                        "args": ["-m", "brain.mcp_server"],
-                        "env": {
-                            "PYTHONPATH": worker_dir,
-                            "APPLYLOOP_HOME": applyloop_home,
-                            "APPLYLOOP_USER_ID": user_id,
-                        },
-                        "cwd": worker_dir,
-                    }
-                }
+            mcp_server = {
+                "command": python_bin,
+                "args": ["-m", "brain.mcp_server"],
+                "env": {
+                    "PYTHONPATH": worker_dir,
+                    "APPLYLOOP_HOME": applyloop_home,
+                    "APPLYLOOP_USER_ID": user_id,
+                },
+                "cwd": worker_dir,
             }
 
-            claude_dir = os.path.join(applyloop_home, ".claude")
-            os.makedirs(claude_dir, exist_ok=True)
-            settings_path = os.path.join(claude_dir, "settings.json")
-            tmp_path = f"{settings_path}.applyloop.tmp"
-            with open(tmp_path, "w", encoding="utf-8") as _f:
-                json.dump(settings, _f, indent=2)
-            os.replace(tmp_path, settings_path)
-            logger.info("Wrote MCP settings: %s", settings_path)
+            config_path = os.path.expanduser("~/.claude.json")
+            data: dict = {}
+            if os.path.isfile(config_path):
+                try:
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        data = json.load(f) or {}
+                except Exception:
+                    data = {}
+
+            projects = data.setdefault("projects", {})
+            entry = projects.setdefault(applyloop_home, {})
+            existing_servers = entry.setdefault("mcpServers", {})
+            existing_servers["applyloop"] = mcp_server
+
+            tmp_path = f"{config_path}.applyloop.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, config_path)
+            logger.info(
+                "Registered applyloop MCP server in %s under projects[%s]",
+                config_path,
+                applyloop_home,
+            )
+
+            # Strip a stale mcpServers block from .claude/settings.json if a
+            # previous version of this function wrote one there. Leaving it
+            # would not break Claude Code (it ignores the key), but it's
+            # confusing during debugging.
+            settings_path = os.path.join(applyloop_home, ".claude", "settings.json")
+            if os.path.isfile(settings_path):
+                try:
+                    with open(settings_path, "r", encoding="utf-8") as f:
+                        legacy = json.load(f) or {}
+                    if "mcpServers" in legacy:
+                        legacy.pop("mcpServers", None)
+                        tmp_legacy = f"{settings_path}.applyloop.tmp"
+                        with open(tmp_legacy, "w", encoding="utf-8") as f:
+                            json.dump(legacy, f, indent=2)
+                        os.replace(tmp_legacy, settings_path)
+                        logger.info(
+                            "Removed legacy mcpServers block from %s", settings_path
+                        )
+                except Exception:
+                    pass
         except Exception as e:
-            logger.warning("Could not write MCP settings: %s", e)
+            logger.warning("Could not register MCP server: %s", e)
 
     @staticmethod
     def _ensure_claude_trust(cwd: str) -> None:
