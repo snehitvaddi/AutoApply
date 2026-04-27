@@ -74,6 +74,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             if (!everSetupOk) {
               setSetupState("needed")
               if (!isAllowedDuringSetup) router.replace("/setup")
+            } else {
+              // Previously activated → transient failure (e.g. token
+              // briefly revoked, gateway hiccup). Keep the main UI
+              // visible. Without this, setupState stayed at "checking"
+              // forever and the user saw an eternal spinner.
+              setSetupState("ok")
             }
           }
         })
