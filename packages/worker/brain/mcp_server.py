@@ -111,7 +111,15 @@ def browser_type(ref: str, text: str) -> str:
 
 @mcp.tool()
 def browser_upload(path: str, ref: str) -> str:
-    """Upload a local file. `path` is absolute, `ref` is the upload button ref."""
+    """Upload a local file and click the upload button.
+
+    `path` is absolute. Files outside the OpenClaw sandbox
+    (/tmp/openclaw/uploads/) are auto-copied in before arming, so resumes
+    living under ~/.autoapply/workspace/resumes/ work transparently.
+
+    Raises if the source file is missing or openclaw rejects the upload —
+    the agent sees a real tool error instead of a misleading "ok".
+    """
     _browser.upload_file(path, ref)
     return "ok"
 
@@ -164,10 +172,32 @@ def queue_claim_next() -> str:
 
 
 @mcp.tool()
-def queue_update_status(queue_id: str, status: str, error: str = "", attempts: int = 0) -> str:
-    """Update an application_queue row. status in {pending,submitted,failed,cancelled}."""
+def queue_update_status(
+    queue_id: str = "",
+    status: str = "",
+    error: str = "",
+    attempts: int = 0,
+    local_id: str = "",
+) -> str:
+    """Update an application row's status — local-first, then cloud.
+
+    `queue_id` is the cloud UUID (may be empty for jobs claimed via the
+    local-first path). `local_id` is the local SQLite integer id, also
+    optional but RECOMMENDED so the desktop Kanban flips immediately
+    without waiting for cloud round-trip.
+
+    Statuses: queued | applying | submitted | failed | cancelled | skipped.
+    Pass at least one of queue_id or local_id; passing both is the safest
+    pattern when claim_next returned an _local job dict.
+    """
     from db import update_queue_status
-    update_queue_status(queue_id, status, error=error or None, attempts=attempts or None)
+    update_queue_status(
+        queue_id,
+        status,
+        error=error or None,
+        attempts=attempts or None,
+        local_id=local_id or None,
+    )
     return "ok"
 
 
@@ -193,6 +223,133 @@ def queue_get_pipeline() -> str:
     from db import _api_call
     data = _api_call("get_pipeline") or {}
     return json.dumps(data, default=str)
+
+
+@mcp.tool()
+def queue_enqueue_jobs(jobs_json: str) -> str:
+    """Enqueue scouted jobs into the local applications queue.
+
+    `jobs_json` is a JSON array of job dicts in the shape produced by
+    `scout_run_source` (keys: company, title, apply_url, ats, source,
+    location, external_id, posted_at, application_profile_id).
+
+    Persists each row as status='queued' in the local SQLite DB. Returns
+    {"enqueued": N, "submitted": K} so the agent can confirm how many
+    survived dedup.
+    """
+    from db import enqueue_to_local_db
+    try:
+        jobs = json.loads(jobs_json) if isinstance(jobs_json, str) else jobs_json
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"invalid jobs_json: {e}"})
+    if not isinstance(jobs, list):
+        return json.dumps({"error": "jobs_json must be a JSON array of job dicts"})
+    inserted = enqueue_to_local_db(jobs)
+    return json.dumps({"enqueued": inserted, "submitted": len(jobs)}, default=str)
+
+
+@mcp.tool()
+def tenant_filter_jobs(jobs_json: str) -> str:
+    """Apply the tenant's default-profile filter to a list of jobs.
+
+    `jobs_json` is a JSON array of job dicts. Returns the surviving
+    subset plus a per-job verdict so the agent can see why something
+    was rejected without re-implementing tenant rules in-prompt.
+
+    Filter source: ApplyProfile.passes_filter on the default profile
+    (falls back to the first profile if none is marked default).
+    """
+    from tenant import TenantConfig
+    try:
+        jobs = json.loads(jobs_json) if isinstance(jobs_json, str) else jobs_json
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"invalid jobs_json: {e}"})
+    if not isinstance(jobs, list):
+        return json.dumps({"error": "jobs_json must be a JSON array of job dicts"})
+
+    user_id = os.environ.get("APPLYLOOP_USER_ID", "")
+    tenant = TenantConfig.load(user_id)
+    profiles = list(getattr(tenant, "profiles", []) or [])
+    default_profile = next((p for p in profiles if getattr(p, "is_default", False)), None)
+    if default_profile is None and profiles:
+        default_profile = profiles[0]
+    if default_profile is None:
+        return json.dumps({
+            "error": "no apply profile configured for tenant; cannot filter",
+            "user_id": user_id,
+        })
+
+    survivors = []
+    rejected = []
+    for j in jobs:
+        title = j.get("title", "") or ""
+        company = j.get("company", "") or ""
+        location = j.get("location", "") or ""
+        if default_profile.passes_filter(title, company, location):
+            survivors.append(j)
+        else:
+            rejected.append({"company": company, "title": title, "location": location})
+    return json.dumps({
+        "profile_id": getattr(default_profile, "id", ""),
+        "passed": survivors,
+        "rejected": rejected,
+        "passed_count": len(survivors),
+        "rejected_count": len(rejected),
+    }, default=str)
+
+
+@mcp.tool()
+def queue_check_dedup(company: str, title: str = "", ats: str = "") -> str:
+    """Check whether (company, title, ats) was already applied to.
+
+    Hits the local SQLite `applications` table only — the cloud is the
+    aggregate, the local DB is the source of truth for "did we already
+    submit this?". Saves the ~90s round-trip of navigating to a known-
+    duplicate ATS and waiting for "we already received your application."
+
+    Returns a small JSON dict:
+      {found: bool, status: <last status>, applied_at: <iso>, count: <int>}
+    Match is case-insensitive on company; title is optional but if given
+    it's matched as a substring (so "Senior ML Engineer" finds prior
+    "ML Engineer" submissions). ats narrows further when provided.
+    """
+    from contextlib import closing as _closing
+    from db import _get_local_conn
+    where = ["LOWER(company) = LOWER(?)"]
+    params: list = [company.strip()]
+    if title:
+        where.append("LOWER(role) LIKE ?")
+        params.append(f"%{title.strip().lower()}%")
+    if ats:
+        where.append("LOWER(ats) = LOWER(?)")
+        params.append(ats.strip())
+    where.append("status IN ('submitted','applying','failed')")
+    sql = (
+        "SELECT status, applied_at, updated_at FROM applications "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY COALESCE(applied_at, updated_at) DESC LIMIT 1"
+    )
+    count_sql = (
+        "SELECT COUNT(*) FROM applications "
+        f"WHERE {' AND '.join(where)}"
+    )
+    try:
+        with _closing(_get_local_conn()) as conn:
+            row = conn.execute(sql, params).fetchone()
+            count_row = conn.execute(count_sql, params).fetchone()
+    except Exception as e:
+        return json.dumps({"error": str(e), "found": False})
+
+    if not row:
+        return json.dumps({"found": False, "count": 0})
+    status, applied_at, updated_at = row
+    return json.dumps({
+        "found": True,
+        "status": status,
+        "applied_at": applied_at,
+        "updated_at": updated_at,
+        "count": int(count_row[0]) if count_row else 1,
+    }, default=str)
 
 
 # ── scout ─────────────────────────────────────────────────────────────────

@@ -43,6 +43,8 @@ class LeverScout(ScoutSource):
             location = j.get("location", "")
             if not tenant.passes_filter(title, company, location):
                 continue
+            # scanner.lever already converts createdAt → posted_at ISO;
+            # forward it so the freshness rule has a real signal.
             filtered.append({
                 "title": title,
                 "company": company,
@@ -50,5 +52,6 @@ class LeverScout(ScoutSource):
                 "apply_url": j.get("apply_url", "") or j.get("url", ""),
                 "external_id": str(j.get("external_id") or j.get("id") or ""),
                 "ats": "lever",
+                "posted_at": j.get("posted_at") or None,
             })
         return filtered

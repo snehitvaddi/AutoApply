@@ -15,6 +15,7 @@ import time
 import json
 import logging
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 import httpx
 
@@ -128,73 +129,132 @@ def claim_next_job_locally(user_id: str, worker_id: str) -> dict | None:
     Uses SQLite 3.35+ UPDATE ... RETURNING for atomicity. Only one worker
     runs per user on a machine, so row-level contention is effectively zero.
 
-    Returns None when the queue is empty. Returns a job dict when a row
-    was claimed. Any SQLite error is surfaced via logger.warning and the
-    call returns None so the caller sleeps a tick and retries.
+    Error contract:
+      - Returns None when the queue is genuinely empty.
+      - Retries up to 3× on `database is locked` (sqlite3.OperationalError),
+        then re-raises so the MCP tool can surface a real failure to Claude
+        instead of silently masking it as "queue empty".
+      - Any other exception is logged at ERROR and re-raised for the same
+        reason — the caller must distinguish "no work" from "broken DB".
     """
-    try:
-        conn = _get_local_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        row = conn.execute(
-            """
-            UPDATE applications
-            SET status = 'applying', updated_at = ?
-            WHERE id = (
-                SELECT id FROM applications
-                WHERE status = 'queued'
-                ORDER BY scouted_at ASC
-                LIMIT 1
-            )
-            RETURNING id, company, role, url, ats, source, location,
-                      posted_at, scouted_at, dedup_token, application_profile_id
-            """,
-            (now,),
-        ).fetchone()
-        conn.commit()
-        conn.close()
-        if not row:
-            return None
-        (lid, company, role, url, ats, source, location, posted_at,
-         scouted_at, dedup_token, application_profile_id) = row
-        # dedup_token format: "company|external_id". Parse out external_id
-        # so the downstream log path can re-derive the same key.
-        external_id = ""
-        if dedup_token and "|" in dedup_token:
-            external_id = dedup_token.split("|", 1)[1]
-        return {
-            "id": str(lid),            # local integer id, stringified
-            "user_id": user_id,
-            "job_id": None,            # only meaningful for cloud queue rows
-            "company": company or "",
-            "title": role or "",
-            "ats": ats or "",
-            "source": source or "",
-            "apply_url": url or "",
-            "location": location or "",
-            "posted_at": posted_at,
-            "scouted_at": scouted_at,
-            "external_id": external_id,
-            "application_profile_id": application_profile_id,
-            "attempts": 0,             # local schema doesn't track retries yet
-            "max_attempts": 3,
-            "_local": True,            # marker so update_queue_status can route writes
-        }
-    except Exception as e:
-        logger.warning(f"local claim failed: {e}")
-        return None
+    now = datetime.now(timezone.utc).isoformat()
+    last_lock_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            with closing(_get_local_conn()) as conn:
+                row = conn.execute(
+                    """
+                    UPDATE applications
+                    SET status = 'applying', updated_at = ?
+                    WHERE id = (
+                        SELECT id FROM applications
+                        WHERE status = 'queued'
+                        ORDER BY scouted_at ASC
+                        LIMIT 1
+                    )
+                    RETURNING id, company, role, url, ats, source, location,
+                              posted_at, scouted_at, dedup_token, application_profile_id
+                    """,
+                    (now,),
+                ).fetchone()
+                conn.commit()
+            if not row:
+                return None
+            (lid, company, role, url, ats, source, location, posted_at,
+             scouted_at, dedup_token, application_profile_id) = row
+            external_id = ""
+            if dedup_token and "|" in dedup_token:
+                external_id = dedup_token.split("|", 1)[1]
+            return {
+                "id": str(lid),
+                "user_id": user_id,
+                "job_id": None,
+                "company": company or "",
+                "title": role or "",
+                "ats": ats or "",
+                "source": source or "",
+                "apply_url": url or "",
+                "location": location or "",
+                "posted_at": posted_at,
+                "scouted_at": scouted_at,
+                "external_id": external_id,
+                "application_profile_id": application_profile_id,
+                "attempts": 0,
+                "max_attempts": 3,
+                "_local": True,
+            }
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower():
+                last_lock_err = e
+                logger.warning(f"local claim hit DB lock (attempt {attempt + 1}/3): {e}")
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            logger.error(f"local claim sqlite error: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"local claim failed: {e}")
+            raise
+    # Exhausted lock retries — surface the real error.
+    raise sqlite3.OperationalError(
+        f"local claim failed after 3 retries (last: {last_lock_err})"
+    )
 
 
-def update_queue_status(queue_id: str, status: str, error: str | None = None, attempts: int | None = None):
-    """Update application queue row status. `attempts` is optional — only
-    passed when we want the cloud to advance the retry counter (on retriable
-    re-queue). Without this the counter stays at 0 and the retry cap is
-    never enforced, so jobs loop forever."""
+def update_queue_status(
+    queue_id: str,
+    status: str,
+    error: str | None = None,
+    attempts: int | None = None,
+    local_id: str | int | None = None,
+):
+    """Update application queue row status — local-first, then cloud.
+
+    Why local-first: before this change, marking a job failed/cancelled
+    via MCP only hit the cloud `application_queue` table. Local rows
+    stayed `applying` indefinitely, so the desktop Kanban showed jobs
+    stuck in flight that had already been resolved. Mirrors the pattern
+    in `log_application` (local SQLite is the source of truth for the
+    desktop UI, cloud is best-effort aggregate).
+
+    Args:
+        queue_id: Cloud UUID for the application_queue row. May be empty
+            if the job was claimed via the local-first path
+            (claim_next_job_locally returns id-only with no cloud handle).
+        status: New status. Should be one of the values allowed by the
+            local schema's CHECK constraint plus the cloud's contract.
+        error: Optional error string written to local `notes` and cloud.
+        attempts: Optional retry counter for the cloud row.
+        local_id: Local SQLite integer id (or stringified int). When
+            present, the local row is updated first; the cloud call only
+            fires if `queue_id` is also present.
+    """
+    # 1) Local mirror — fastest path, what the desktop UI reads.
+    if local_id is not None and str(local_id).strip():
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            with closing(_get_local_conn()) as conn:
+                conn.execute(
+                    "UPDATE applications SET status = ?, updated_at = ?, notes = COALESCE(?, notes) "
+                    "WHERE id = ?",
+                    (status, now, error, int(local_id)),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"local queue status mirror failed (non-fatal): {e}")
+
+    # 2) Cloud — only when we have a UUID. Skip cleanly for local-only rows
+    #    so the worker proxy doesn't reject malformed UUIDs.
+    if not queue_id or not str(queue_id).strip():
+        return
     params: dict = {"queue_id": queue_id, "status": status}
     if error:
         params["error"] = error
     if attempts is not None:
         params["attempts"] = attempts
-    _api_call("update_queue", **params)
+    try:
+        _api_call("update_queue", **params)
+    except Exception as e:
+        logger.debug(f"cloud queue status update failed (non-fatal, local has truth): {e}")
 
 
 # ── Application logging ───────────────────────────────────────────────────
@@ -288,38 +348,34 @@ def _log_to_local_db(job: dict, result: dict):
     LinkedIn while the chart showed Greenhouse submissions.
     """
     try:
-        conn = _get_local_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        company = job.get("company", "")
-        # MUST mirror enqueue_to_local_db's token scheme (external_id first).
-        # Mismatch here leaves every applied job orphaning a stale 'queued' row
-        # under a different token → `in_queue` stat grows forever.
-        job_id = job.get("external_id") or job.get("job_id") or ""
-        apply_url = job.get("apply_url", "")
-        # Resolve aggregator → real ATS for accurate platform stats
-        raw_ats = job.get("ats", "")
-        resolved_ats = _resolve_ats_for_log(raw_ats, apply_url)
-        if resolved_ats != raw_ats:
-            logger.info(f"Logging ATS resolved: {raw_ats} → {resolved_ats} (from URL)")
-        conn.execute("""
-            INSERT INTO applications (company, role, url, ats, source, location, posted_at, applied_at, updated_at, status, notes, screenshot, dedup_token)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(dedup_token) DO UPDATE SET
-                status=excluded.status, applied_at=excluded.applied_at,
-                updated_at=excluded.updated_at, screenshot=excluded.screenshot,
-                notes=excluded.notes, ats=excluded.ats
-        """, (
-            company, job.get("title", ""), apply_url,
-            resolved_ats, job.get("source", "") or raw_ats, job.get("location", ""),
-            job.get("posted_at"), now, now,
-            result.get("status", "submitted"), result.get("error"),
-            # ApplyResult.screenshot is the source of truth; fall back to
-            # screenshot_url for legacy callers that still use the old key.
-            result.get("screenshot") or result.get("screenshot_url"),
-            f"{company.lower().replace(' ', '-')}|{job_id}",
-        ))
-        conn.commit()
-        conn.close()
+        with closing(_get_local_conn()) as conn:
+            now = datetime.now(timezone.utc).isoformat()
+            company = job.get("company", "")
+            # MUST mirror enqueue_to_local_db's token scheme (external_id first).
+            # Mismatch here leaves every applied job orphaning a stale 'queued' row
+            # under a different token → `in_queue` stat grows forever.
+            job_id = job.get("external_id") or job.get("job_id") or ""
+            apply_url = job.get("apply_url", "")
+            raw_ats = job.get("ats", "")
+            resolved_ats = _resolve_ats_for_log(raw_ats, apply_url)
+            if resolved_ats != raw_ats:
+                logger.info(f"Logging ATS resolved: {raw_ats} → {resolved_ats} (from URL)")
+            conn.execute("""
+                INSERT INTO applications (company, role, url, ats, source, location, posted_at, applied_at, updated_at, status, notes, screenshot, dedup_token)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dedup_token) DO UPDATE SET
+                    status=excluded.status, applied_at=excluded.applied_at,
+                    updated_at=excluded.updated_at, screenshot=excluded.screenshot,
+                    notes=excluded.notes, ats=excluded.ats
+            """, (
+                company, job.get("title", ""), apply_url,
+                resolved_ats, job.get("source", "") or raw_ats, job.get("location", ""),
+                job.get("posted_at"), now, now,
+                result.get("status", "submitted"), result.get("error"),
+                result.get("screenshot") or result.get("screenshot_url"),
+                f"{company.lower().replace(' ', '-')}|{job_id}",
+            ))
+            conn.commit()
     except Exception as e:
         logger.warning(f"Local DB write failed (non-fatal): {e}")
 
@@ -341,46 +397,43 @@ def enqueue_to_local_db(jobs: list[dict]) -> int:
     # a concrete old date.
     from datetime import timedelta as _timedelta
     stale_cutoff = datetime.now(timezone.utc) - _timedelta(hours=24)
+    inserted = 0
+    skipped_stale = 0
     try:
-        conn = _get_local_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        inserted = 0
-        skipped_stale = 0
-        for job in jobs:
-            posted_at_raw = job.get("posted_at")
-            if posted_at_raw:
+        with closing(_get_local_conn()) as conn:
+            now = datetime.now(timezone.utc).isoformat()
+            for job in jobs:
+                posted_at_raw = job.get("posted_at")
+                if posted_at_raw:
+                    try:
+                        posted_dt = datetime.fromisoformat(
+                            str(posted_at_raw).replace("Z", "+00:00")
+                        )
+                        if posted_dt.tzinfo is None:
+                            posted_dt = posted_dt.replace(tzinfo=timezone.utc)
+                        if posted_dt < stale_cutoff:
+                            skipped_stale += 1
+                            continue
+                    except (ValueError, TypeError):
+                        pass  # unparseable date = trust the caller, enqueue
+                company = job.get("company", "")
+                job_id = job.get("external_id") or job.get("job_id") or ""
+                dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else f"{company.lower().replace(' ', '-')}|{(job.get('title', '')).lower().replace(' ', '-')}"
                 try:
-                    posted_dt = datetime.fromisoformat(
-                        str(posted_at_raw).replace("Z", "+00:00")
-                    )
-                    if posted_dt.tzinfo is None:
-                        posted_dt = posted_dt.replace(tzinfo=timezone.utc)
-                    if posted_dt < stale_cutoff:
-                        skipped_stale += 1
-                        continue
-                except (ValueError, TypeError):
-                    pass  # unparseable date = trust the caller, enqueue
-            company = job.get("company", "")
-            job_id = job.get("external_id") or job.get("job_id") or ""
-            dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else f"{company.lower().replace(' ', '-')}|{(job.get('title', '')).lower().replace(' ', '-')}"
-            try:
-                cur = conn.execute("""
-                    INSERT INTO applications (company, role, url, ats, source, location, posted_at, scouted_at, updated_at, status, dedup_token, application_profile_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)
-                    ON CONFLICT(dedup_token) DO NOTHING
-                """, (
-                    company, job.get("title", ""), job.get("apply_url", ""),
-                    job.get("ats", ""), job.get("source", ""), job.get("location", ""),
-                    job.get("posted_at"), now, now, dedup_token,
-                    job.get("application_profile_id"),
-                ))
-                # cur.rowcount is 1 on insert, 0 on conflict. conn.total_changes
-                # is cumulative, which produced triangular counts in the log.
-                inserted += cur.rowcount if cur.rowcount > 0 else 0
-            except sqlite3.IntegrityError:
-                pass  # duplicate, skip
-        conn.commit()
-        conn.close()
+                    cur = conn.execute("""
+                        INSERT INTO applications (company, role, url, ats, source, location, posted_at, scouted_at, updated_at, status, dedup_token, application_profile_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)
+                        ON CONFLICT(dedup_token) DO NOTHING
+                    """, (
+                        company, job.get("title", ""), job.get("apply_url", ""),
+                        job.get("ats", ""), job.get("source", ""), job.get("location", ""),
+                        job.get("posted_at"), now, now, dedup_token,
+                        job.get("application_profile_id"),
+                    ))
+                    inserted += cur.rowcount if cur.rowcount > 0 else 0
+                except sqlite3.IntegrityError:
+                    pass  # duplicate, skip
+            conn.commit()
         if skipped_stale:
             logger.info(f"enqueue_to_local_db: dropped {skipped_stale} stale (>24h) row(s)")
         return inserted
@@ -395,30 +448,29 @@ def update_local_status(job: dict, status: str, error: str | None = None):
     This keeps the desktop Kanban in sync with every status change, not just submit/fail.
     """
     try:
-        conn = _get_local_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        company = job.get("company", "")
-        # Mirror enqueue_to_local_db's token scheme (external_id first).
-        job_id = job.get("external_id") or job.get("job_id") or ""
-        dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else None
+        with closing(_get_local_conn()) as conn:
+            now = datetime.now(timezone.utc).isoformat()
+            company = job.get("company", "")
+            # Mirror enqueue_to_local_db's token scheme (external_id first).
+            job_id = job.get("external_id") or job.get("job_id") or ""
+            dedup_token = f"{company.lower().replace(' ', '-')}|{job_id}" if job_id else None
 
-        if dedup_token:
-            conn.execute("""
-                UPDATE applications SET status = ?, updated_at = ?, notes = ?
-                WHERE dedup_token = ?
-            """, (status, now, error, dedup_token))
-        else:
-            # Fallback: match by company + title (pick most recent non-terminal row)
-            conn.execute("""
-                UPDATE applications SET status = ?, updated_at = ?, notes = ?
-                WHERE id = (
-                    SELECT id FROM applications
-                    WHERE company = ? AND role = ? AND status NOT IN ('submitted', 'failed')
-                    ORDER BY updated_at DESC LIMIT 1
-                )
-            """, (status, now, error, company, job.get("title", "")))
-        conn.commit()
-        conn.close()
+            if dedup_token:
+                conn.execute("""
+                    UPDATE applications SET status = ?, updated_at = ?, notes = ?
+                    WHERE dedup_token = ?
+                """, (status, now, error, dedup_token))
+            else:
+                # Fallback: match by company + title (pick most recent non-terminal row)
+                conn.execute("""
+                    UPDATE applications SET status = ?, updated_at = ?, notes = ?
+                    WHERE id = (
+                        SELECT id FROM applications
+                        WHERE company = ? AND role = ? AND status NOT IN ('submitted', 'failed')
+                        ORDER BY updated_at DESC LIMIT 1
+                    )
+                """, (status, now, error, company, job.get("title", "")))
+            conn.commit()
     except Exception as e:
         logger.warning(f"Local DB status update failed (non-fatal): {e}")
 
@@ -442,21 +494,20 @@ def cleanup_stale_queued_shadows() -> int:
     path but we still LOWER() defensively.
     """
     try:
-        conn = _get_local_conn()
-        cur = conn.execute("""
-            DELETE FROM applications
-            WHERE status IN ('queued','applying')
-              AND EXISTS (
-                SELECT 1 FROM applications t
-                WHERE LOWER(t.company) = LOWER(applications.company)
-                  AND LOWER(t.role) = LOWER(applications.role)
-                  AND t.status IN ('submitted','failed')
-                  AND t.id != applications.id
-              )
-        """)
-        conn.commit()
-        deleted = cur.rowcount or 0
-        conn.close()
+        with closing(_get_local_conn()) as conn:
+            cur = conn.execute("""
+                DELETE FROM applications
+                WHERE status IN ('queued','applying')
+                  AND EXISTS (
+                    SELECT 1 FROM applications t
+                    WHERE LOWER(t.company) = LOWER(applications.company)
+                      AND LOWER(t.role) = LOWER(applications.role)
+                      AND t.status IN ('submitted','failed')
+                      AND t.id != applications.id
+                  )
+            """)
+            conn.commit()
+            deleted = cur.rowcount or 0
         if deleted:
             logger.info(f"Cleaned up {deleted} stale queued/applying shadow rows")
         return deleted
@@ -543,15 +594,14 @@ def check_daily_limit_locally(user_id: str, daily_cap: int | None) -> bool:
     if daily_cap is None or daily_cap <= 0:
         return True
     try:
-        conn = _get_local_conn()
-        row = conn.execute(
-            """
-            SELECT COUNT(*) FROM applications
-            WHERE status='submitted'
-              AND strftime('%Y-%m-%d', applied_at, 'localtime') = date('now', 'localtime')
-            """
-        ).fetchone()
-        conn.close()
+        with closing(_get_local_conn()) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) FROM applications
+                WHERE status='submitted'
+                  AND strftime('%Y-%m-%d', applied_at, 'localtime') = date('now', 'localtime')
+                """
+            ).fetchone()
         return int(row[0]) < daily_cap if row else True
     except Exception as e:
         logger.debug(f"local daily-limit check failed (allowing): {e}")
@@ -564,17 +614,16 @@ def count_profile_applied_today(profile_id: str) -> int:
     per-bundle `max_daily` cap independently of the user-level daily_apply_limit.
     Returns 0 when the table or bundle has nothing to show."""
     try:
-        conn = _get_local_conn()
-        row = conn.execute(
-            """
-            SELECT COUNT(*) FROM applications
-            WHERE status='submitted'
-              AND application_profile_id = ?
-              AND strftime('%Y-%m-%d', applied_at, 'localtime') = date('now', 'localtime')
-            """,
-            (profile_id,),
-        ).fetchone()
-        conn.close()
+        with closing(_get_local_conn()) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) FROM applications
+                WHERE status='submitted'
+                  AND application_profile_id = ?
+                  AND strftime('%Y-%m-%d', applied_at, 'localtime') = date('now', 'localtime')
+                """,
+                (profile_id,),
+            ).fetchone()
         return int(row[0]) if row else 0
     except Exception:
         return 0
@@ -598,17 +647,16 @@ def check_company_rate_locally(user_id: str, company: str) -> bool:
         return True
     try:
         from config import MAX_COMPANY_APPS_PER_7_DAYS
-        conn = _get_local_conn()
-        row = conn.execute(
-            """
-            SELECT COUNT(*) FROM applications
-            WHERE status='submitted'
-              AND LOWER(company) = LOWER(?)
-              AND applied_at >= datetime('now', '-7 days')
-            """,
-            (company.strip(),),
-        ).fetchone()
-        conn.close()
+        with closing(_get_local_conn()) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) FROM applications
+                WHERE status='submitted'
+                  AND LOWER(company) = LOWER(?)
+                  AND applied_at >= datetime('now', '-7 days')
+                """,
+                (company.strip(),),
+            ).fetchone()
         return int(row[0]) < MAX_COMPANY_APPS_PER_7_DAYS if row else True
     except Exception as e:
         logger.debug(f"local company-rate check failed (allowing): {e}")

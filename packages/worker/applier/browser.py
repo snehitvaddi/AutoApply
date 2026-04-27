@@ -12,7 +12,9 @@ starve the apply loop. `browser()` swallows its own errors and returns
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import time
 import logging
 import subprocess
@@ -21,8 +23,34 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+class BrowserError(RuntimeError):
+    """Raised when an openclaw browser command fails in a way the caller
+    must not silently ignore (e.g. resume upload to an unreachable path).
+
+    The wrapper `browser()` keeps its lenient contract — returns "" on
+    timeout/error — for callers that only care about output. Strict
+    helpers (`upload_file`, anything that mutates remote state) use
+    `BrowserError` so the failure is surfaced to the agent instead of
+    being papered over."""
+
+
+# OpenClaw's filesystem sandbox for uploads. Paths outside this dir
+# are silently rejected by the CLI (it returns success, never attaches
+# the file). We auto-copy resumes into the sandbox before invoking the
+# upload verb so the agent doesn't have to think about it.
+_OPENCLAW_UPLOAD_SANDBOX = os.environ.get(
+    "OPENCLAW_UPLOAD_SANDBOX", "/tmp/openclaw/uploads"
+)
+
+
 def browser(cmd: str, timeout: int = 15) -> str:
-    """Run an openclaw browser command, return stdout."""
+    """Run an openclaw browser command, return stdout.
+
+    Lenient: timeout / non-zero / exception all collapse to "". This is
+    intentional for read-only callers (snapshot, screenshot regex parse,
+    tab listing) where empty output is a recoverable signal. For strict
+    callers, use the helpers that raise BrowserError on failure.
+    """
     full_cmd = f"openclaw browser {cmd}"
     try:
         r = subprocess.run(full_cmd, shell=True, capture_output=True, text=True, timeout=timeout)
@@ -33,6 +61,59 @@ def browser(cmd: str, timeout: int = 15) -> str:
     except Exception as e:
         logger.error(f"ERROR: {cmd} -> {e}")
         return ""
+
+
+def _browser_strict(cmd: str, timeout: int = 15) -> str:
+    """Run openclaw and raise BrowserError on timeout / non-zero exit.
+
+    Use this for verbs that mutate remote state (upload, click that
+    triggers navigation). Distinguishing "empty output" from "command
+    failed" is the whole point — the lenient `browser()` collapses both."""
+    full_cmd = f"openclaw browser {cmd}"
+    try:
+        r = subprocess.run(
+            full_cmd, shell=True, capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as e:
+        raise BrowserError(f"openclaw timed out after {timeout}s: {cmd}") from e
+    if r.returncode != 0:
+        raise BrowserError(
+            f"openclaw {cmd!r} failed (rc={r.returncode}): "
+            f"stdout={r.stdout.strip()[:300]!r} stderr={r.stderr.strip()[:300]!r}"
+        )
+    return r.stdout.strip()
+
+
+def _ensure_in_upload_sandbox(path: str) -> str:
+    """Return a path under the OpenClaw upload sandbox.
+
+    If `path` already lives there, return it unchanged. Otherwise copy
+    the file into the sandbox dir and return the copy's path. Raises
+    BrowserError if the source is missing or the copy fails.
+
+    Why: OpenClaw enforces a sandbox on the upload verb. A path outside
+    the sandbox is silently rejected (the CLI returns ok but never
+    attaches the file), which used to burn ~20 minutes of agent time
+    per resume that lived under ~/.autoapply/workspace/resumes/.
+    """
+    if not path:
+        raise BrowserError("upload path is empty")
+    abs_path = os.path.abspath(path)
+    if not os.path.isfile(abs_path):
+        raise BrowserError(f"upload source not found: {abs_path}")
+    sandbox = os.path.abspath(_OPENCLAW_UPLOAD_SANDBOX)
+    try:
+        os.makedirs(sandbox, exist_ok=True)
+    except OSError as e:
+        raise BrowserError(f"could not create upload sandbox {sandbox}: {e}") from e
+    if abs_path.startswith(sandbox + os.sep):
+        return abs_path
+    dest = os.path.join(sandbox, os.path.basename(abs_path))
+    try:
+        shutil.copyfile(abs_path, dest)
+    except OSError as e:
+        raise BrowserError(f"could not copy {abs_path} → {dest}: {e}") from e
+    return dest
 
 
 def snapshot() -> str:
@@ -54,8 +135,15 @@ def select_option(ref: str, value: str) -> str:
 
 
 def upload_file(path: str, ref: str) -> str:
-    """Two-step resume upload: arm the file chooser, then click the button."""
-    browser(f"upload '{path}'", timeout=10)
+    """Two-step resume upload: arm the file chooser, then click the button.
+
+    Auto-copies the source file into the OpenClaw upload sandbox before
+    arming so paths outside `/tmp/openclaw/uploads/` work transparently.
+    Raises BrowserError if the source is missing, the sandbox copy fails,
+    or openclaw signals a non-zero exit. The MCP tool propagates the
+    error back to the agent instead of returning a misleading "ok"."""
+    sandbox_path = _ensure_in_upload_sandbox(path)
+    _browser_strict(f"upload '{sandbox_path}'", timeout=10)
     time.sleep(0.3)
     return click_ref(ref)
 

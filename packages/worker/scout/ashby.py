@@ -44,6 +44,13 @@ def _fetch_ashby_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
                     job.get("applicationUrl")
                     or f"https://jobs.ashbyhq.com/{slug}/application?jobId={job['id']}"
                 )
+                # Ashby exposes publishedAt (ISO timestamp) on every job.
+                # Persisting it lets the freshness rule in memory
+                # ("drop queued jobs >24h old") become enforceable —
+                # without it every row enters local SQLite with
+                # posted_at=NULL and the rule degrades to scouted_at,
+                # which only proves we discovered it recently.
+                posted_at = job.get("publishedAt") or job.get("publishedDate") or None
                 jobs.append({
                     "title": title,
                     "company": slug,
@@ -51,6 +58,7 @@ def _fetch_ashby_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
                     "apply_url": apply_url,
                     "external_id": str(job.get("id", "")),
                     "ats": "ashby",
+                    "posted_at": posted_at,
                 })
     except Exception:
         pass

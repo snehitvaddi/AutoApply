@@ -38,6 +38,10 @@ def _fetch_greenhouse_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
                 if not tenant.passes_filter(title, slug, loc):
                     continue
                 job_id = job.get("id", "")
+                # Greenhouse exposes updated_at and first_published on
+                # each job. Prefer first_published as the canonical
+                # "posted at"; fall back to updated_at.
+                posted_at = job.get("first_published") or job.get("updated_at") or None
                 jobs.append({
                     "title": title,
                     "company": slug,
@@ -45,6 +49,7 @@ def _fetch_greenhouse_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
                     "apply_url": f"https://job-boards.greenhouse.io/embed/job_app?for={slug}&token={job_id}",
                     "external_id": str(job_id),
                     "ats": "greenhouse",
+                    "posted_at": posted_at,
                 })
     except Exception:
         pass
