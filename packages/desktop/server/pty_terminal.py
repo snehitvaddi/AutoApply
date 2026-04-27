@@ -93,6 +93,12 @@ class PTYSession:
         self._read_task: asyncio.Task | None = None
         self._heartbeat_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
+        self._mcp_supervisor_task: asyncio.Task | None = None
+        # Recent output window used by the MCP supervisor to detect
+        # disconnects without scanning the full ring buffer every tick.
+        self._recent_output: bytearray = bytearray()
+        self._mcp_disconnect_seen_at: float = 0.0
+        self._last_auto_restart_at: float = 0.0
         self._alive = False
         self.session_id: str | None = None
         self.last_output_at: float = 0
@@ -1669,6 +1675,7 @@ exec /bin/zsh -l
         self._read_task = asyncio.create_task(self._read_loop())
         self._heartbeat_task = asyncio.create_task(self._mission_heartbeat_loop())
         self._watchdog_task  = asyncio.create_task(self._watchdog_loop())
+        self._mcp_supervisor_task = asyncio.create_task(self._mcp_supervisor_loop())
 
         logger.info(f"PTY session started: PID {child_pid}, claude at {claude}")
 
@@ -1714,6 +1721,15 @@ exec /bin/zsh -l
                     self.output_buffer.append(data)
                     self.last_output_at = time.time()
                     self._broadcast(data)
+                    # Maintain a small rolling window for the MCP supervisor.
+                    # 16 KiB is enough to catch a multi-line disconnect notice
+                    # without burning memory.
+                    self._recent_output.extend(data)
+                    if len(self._recent_output) > 16384:
+                        del self._recent_output[:-16384]
+                    if self._mcp_disconnect_seen_at == 0 and self._scan_for_mcp_disconnect():
+                        self._mcp_disconnect_seen_at = time.time()
+                        logger.warning("MCP disconnect signature detected in PTY output")
                 except (OSError, EOFError):
                     break
         finally:
@@ -1883,6 +1899,62 @@ exec /bin/zsh -l
         except Exception as e:
             logger.debug(f"Heartbeat loop ended: {e}")
 
+    # ── MCP channel supervisor ──────────────────────────────────────────
+    # Claude Code's MCP stdio transport occasionally drops mid-session
+    # (the server process stays alive, but the JSON-RPC channel dies and
+    # all mcp__applyloop__* tools become unreachable). When that happens
+    # the only recovery is a fresh `claude` session. The supervisor below
+    # watches PTY output for the disconnect signature and force-restarts
+    # the session so unattended 24/7 operation is self-healing.
+
+    MCP_DISCONNECT_MARKERS = (
+        b"MCP server disconnected",
+        b"their MCP server disconnected",
+        b"No such tool available: mcp__applyloop__",
+    )
+    MCP_RESTART_COOLDOWN_S = 300  # don't auto-restart more than once / 5 min
+
+    def _scan_for_mcp_disconnect(self) -> bool:
+        buf = bytes(self._recent_output)
+        return any(m in buf for m in self.MCP_DISCONNECT_MARKERS)
+
+    async def _mcp_supervisor_loop(self) -> None:
+        """Watch for MCP-disconnect signatures and auto-restart the PTY
+        session so the apply loop survives 24/7 without human intervention.
+        Cooldown-gated to prevent restart storms if the trigger is sticky."""
+        try:
+            while self.is_alive:
+                await asyncio.sleep(30)
+                if not self.is_alive:
+                    return
+                if self._mcp_disconnect_seen_at == 0:
+                    continue
+                # Wait a few seconds after first sighting to let any
+                # in-flight tool reply drain — avoid restarting mid-action.
+                if time.time() - self._mcp_disconnect_seen_at < 10:
+                    continue
+                if time.time() - self._last_auto_restart_at < self.MCP_RESTART_COOLDOWN_S:
+                    self._mcp_disconnect_seen_at = 0.0
+                    continue
+                logger.warning(
+                    "Auto-restarting PTY session: MCP channel reported disconnected"
+                )
+                self._broadcast(
+                    b"\r\n\x1b[33m[ApplyLoop]\x1b[0m MCP channel dropped -- "
+                    b"restarting Claude session to restore tools...\r\n"
+                )
+                self._last_auto_restart_at = time.time()
+                self._mcp_disconnect_seen_at = 0.0
+                self._recent_output.clear()
+                # restart() cancels this task via stop(); run it on the
+                # threadpool so we don't await our own cancellation.
+                await asyncio.to_thread(self.restart)
+                return
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"MCP supervisor ended: {e}")
+
     async def _watchdog_loop(self) -> None:
         """Ticks every 30 min. If Claude has been idle >25 min and the daily
         limit isn't reached, injects a context-rich nudge into PTY stdin so
@@ -2004,6 +2076,11 @@ exec /bin/zsh -l
         if self._watchdog_task:
             self._watchdog_task.cancel()
             self._watchdog_task = None
+        if self._mcp_supervisor_task:
+            self._mcp_supervisor_task.cancel()
+            self._mcp_supervisor_task = None
+        self._recent_output.clear()
+        self._mcp_disconnect_seen_at = 0.0
 
     def restart(self):
         """Stop and restart."""

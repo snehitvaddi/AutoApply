@@ -17,6 +17,30 @@ import os
 import sys
 import logging
 
+# ── stdio guard ────────────────────────────────────────────────────────────
+# FastMCP's stdio transport uses fd 1 (stdout) for JSON-RPC frames. Any
+# stray write to stdout from an imported module (Playwright CDP chatter,
+# accidental print, dependency warnings written via fd-level write) will
+# corrupt the framing and Claude Code will silently disconnect the server
+# mid-session. We've seen this happen after ~30 successful tool calls.
+#
+# Strategy:
+#   1. Dup real stdout into a saved fd; point fd 1 at fd 2 (stderr) so any
+#      C-level / subprocess write to fd 1 lands harmlessly on stderr.
+#   2. Build _REAL_STDOUT as a TextIOWrapper around the saved fd — this is
+#      what FastMCP will use for JSON-RPC.
+#   3. Set sys.stdout = sys.stderr during imports so accidental prints
+#      from any module loaded below are swallowed safely.
+#   4. Right before mcp.run(), swap sys.stdout to _REAL_STDOUT so the
+#      FastMCP transport finds the JSON-RPC pipe.
+_real_stdout_fd = os.dup(1)
+os.dup2(2, 1)  # accidental fd-1 writes now go to stderr
+_REAL_STDOUT = os.fdopen(_real_stdout_fd, "w", buffering=1, encoding="utf-8")
+sys.stdout = sys.stderr  # python-level prints during import → stderr
+
+# Ensure logging never writes to the JSON-RPC channel
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+
 # Ensure packages/worker is on the path when invoked as __main__
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _HERE not in sys.path:
@@ -318,4 +342,8 @@ def knowledge_get_ats_playbook(name: str) -> str:
 # ── entry point ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Restore real stdout for the JSON-RPC transport. From here on, any
+    # accidental Python print() writes to JSON-RPC — but the imports above
+    # are audited and tool bodies never print, so this window is safe.
+    sys.stdout = _REAL_STDOUT
     mcp.run(transport="stdio")
