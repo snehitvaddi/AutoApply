@@ -1595,7 +1595,30 @@ class PTYSession:
 cd __CWD__
 CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
 printf '%s[ApplyLoop]%s cwd=%s%s%s\r\n' "$CYAN" "$RESET" "$CYAN" "$PWD" "$RESET"
-if [[ -d "$HOME/.claude" ]] && [[ -n "$(ls -A "$HOME/.claude" 2>/dev/null)" ]]; then
+
+is_authed() {
+  [[ -f "$HOME/.claude/.credentials.json" ]] && return 0
+  [[ -f "$HOME/.config/claude/credentials.json" ]] && return 0
+  if [[ -d "$HOME/.claude" ]] && [[ -n "$(ls -A "$HOME/.claude" 2>/dev/null)" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# Run interactive `claude` for first-time login if no creds yet. The
+# user does /login inside the TUI, completes browser auth, exits with
+# /exit or Ctrl-C, and control returns here — same PTY session, no
+# Stop/Start dance. Without this, the wrapper used to drop to zsh on
+# unauthed installs and the watchdog/heartbeat loops never started.
+if ! is_authed; then
+  printf '%s[ApplyLoop]%s First-time login required.\r\n' "$YELLOW" "$RESET"
+  printf '%s[ApplyLoop]%s Type %s/login%s in the Claude prompt below, finish the browser flow,\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
+  printf '%s[ApplyLoop]%s then type %s/exit%s — the apply loop will start automatically.\r\n\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
+  "$APPLYLOOP_CLAUDE_BIN"
+  printf '\r\n'
+fi
+
+if is_authed; then
   printf '%s[ApplyLoop]%s Claude Code is authenticated - starting session...\r\n' "$GREEN" "$RESET"
   "$APPLYLOOP_CLAUDE_BIN" --dangerously-skip-permissions '__PROMPT__'
   CLAUDE_EXIT=$?
@@ -1620,7 +1643,7 @@ if [[ -d "$HOME/.claude" ]] && [[ -n "$(ls -A "$HOME/.claude" 2>/dev/null)" ]]; 
   printf '\r\n%s[ApplyLoop]%s %s%s\r\n' "$YELLOW" "$RESET" "$CLAUDE_REASON" "$RESET"
   printf '%s[ApplyLoop]%s %s\r\n' "$YELLOW" "$RESET" "$CLAUDE_HINT"
 else
-  printf '%s[ApplyLoop]%s Claude not authenticated. Run: %sclaude login%s\r\n\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET"
+  printf '%s[ApplyLoop]%s Login was not completed. Run %sclaude%s, then %s/login%s, then restart this terminal.\r\n\r\n' "$YELLOW" "$RESET" "$CYAN" "$RESET" "$CYAN" "$RESET"
 fi
 exec /bin/zsh -l
 """
