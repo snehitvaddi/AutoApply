@@ -494,6 +494,63 @@ def _install_log_path(tool: str) -> Path:
     return WORKSPACE_DIR / f"install-{tool}.log"
 
 
+# ── Apple Silicon native-arch shim ───────────────────────────────────
+#
+# On M-series Macs, Homebrew refuses to install into /opt/homebrew when
+# the calling process is x86_64 (Rosetta 2) — it bails with:
+#   "Cannot install under Rosetta 2 in ARM default prefix /opt/homebrew"
+#
+# This trips clients whose ApplyLoop.app, Python, or shell happens to be
+# running under Rosetta, even if their Mac is arm64. We don't want to
+# put that burden on the user. So every install subprocess we spawn on
+# Apple Silicon gets wrapped with `arch -arm64` and any `brew`/`npm`
+# leading arg is rewritten to its absolute path under /opt/homebrew/bin
+# (so a stale x86_64 brew at /usr/local can't take precedence).
+
+def _is_apple_silicon() -> bool:
+    """True iff the underlying hardware is Apple Silicon, regardless of
+    whether the current Python process is itself running natively or
+    under Rosetta. The authoritative check is `sysctl hw.optional.arm64`
+    (returns 1 on M-series even when called from a Rosetta-emulated
+    process). `platform.machine()` lies under Rosetta and would say
+    'x86_64' on the same M1 Mac that this returns True for.
+    """
+    if platform.system() != "Darwin":
+        return False
+    try:
+        r = subprocess.run(
+            ["sysctl", "-n", "hw.optional.arm64"],
+            capture_output=True, text=True, timeout=2,
+        )
+        return r.stdout.strip() == "1"
+    except Exception:
+        return platform.machine() == "arm64"
+
+
+def _native_brew_cmd(cmd: list[str]) -> list[str]:
+    """Wrap an install command so it runs natively on Apple Silicon.
+
+    Three layers of defense:
+      1. Prepend `arch -arm64` so the subprocess is arm64 even if our
+         own Python process was launched under Rosetta.
+      2. Rewrite a leading `brew` arg to /opt/homebrew/bin/brew when
+         that exists, so a stale x86_64 brew at /usr/local/bin can't
+         take precedence on PATH.
+      3. Same for `npm` (which depends on the brewed node).
+
+    On Intel Macs and non-Darwin platforms, returns cmd unchanged.
+    """
+    if not _is_apple_silicon():
+        return list(cmd)
+    new_cmd = list(cmd)
+    if new_cmd:
+        if new_cmd[0] == "brew" and os.path.isfile("/opt/homebrew/bin/brew"):
+            new_cmd[0] = "/opt/homebrew/bin/brew"
+        elif new_cmd[0] == "npm" and os.path.isfile("/opt/homebrew/bin/npm"):
+            new_cmd[0] = "/opt/homebrew/bin/npm"
+    return ["arch", "-arm64"] + new_cmd
+
+
 _INSTALL_COMMANDS = {
     "claude": {
         "Darwin": ["brew", "install", "claude"],
@@ -610,7 +667,9 @@ def start_install(tool: str) -> dict:
                 "needs_node": first_arg == "npm",
             }
 
-    cmd = cmds[system]
+    # On Apple Silicon, force arm64 + absolute brew path so the install
+    # doesn't bail with the Rosetta/prefix mismatch error.
+    cmd = _native_brew_cmd(cmds[system]) if system == "Darwin" else cmds[system]
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
     log_path = _install_log_path(tool)
     log_file = open(log_path, "w")
@@ -736,10 +795,16 @@ def _open_brew_install_terminal() -> None:
     to the user; the wizard polls shutil.which("brew") and resumes the
     chain automatically once brew lands on PATH.
     """
-    install_cmd = (
+    # On Apple Silicon, force the installer to run natively. Without
+    # this, a Rosetta-emulated Terminal.app would tell the brew installer
+    # 'uname -m' is x86_64 and it would set up Homebrew under /usr/local
+    # — leading to the same "Cannot install under Rosetta 2 in ARM
+    # default prefix" failure on every subsequent install.
+    inner = (
         '/bin/bash -c "$(curl -fsSL '
         'https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
     )
+    install_cmd = f"arch -arm64 {inner}" if _is_apple_silicon() else inner
     # Wrap in single-quote then echo a marker so the user sees a clear
     # finish line in their Terminal window.
     apple_script = (
@@ -769,6 +834,9 @@ def _run_install_step(tool: str, cmd: list[str]) -> bool:
     """Run one install command synchronously, tee stdout into the rolling
     log + bootstrap.log. Returns True iff the command exits 0 AND the
     post-check (binary actually on PATH) also passes."""
+    # On Apple Silicon, every brew/npm call is wrapped to run natively
+    # so it doesn't trip the "Cannot install under Rosetta 2" error.
+    cmd = _native_brew_cmd(cmd)
     _append_log(f"\n=== {tool}: {' '.join(cmd)} ===")
     try:
         proc = subprocess.Popen(
