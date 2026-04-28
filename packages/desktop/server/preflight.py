@@ -192,6 +192,13 @@ _CLAUDE_FALLBACK_PATHS = (
     "/usr/local/bin/claude",
     "/opt/homebrew/bin/claude",
     "~/.npm-global/bin/claude",
+    # npm-global install of @anthropic-ai/claude-code lands here on
+    # Apple Silicon when the user kept the brewed npm prefix at the
+    # default. Without this, post-install detection fails and the
+    # wizard reports the row as broken even though Claude Code is
+    # right there.
+    "/opt/homebrew/lib/node_modules/.bin/claude",
+    "/usr/local/lib/node_modules/.bin/claude",
 )
 
 # Same idea for openclaw — when the wizard is launched from Finder, the
@@ -218,26 +225,61 @@ def _find_binary(name: str, fallbacks: tuple[str, ...] = ()) -> str | None:
     return None
 
 
+def _is_real_claude_code(path: str) -> bool:
+    """Verify a `claude` binary is actually Anthropic's Claude Code, not
+    the unrelated 'claude' Common Lisp parser-generator formula that
+    homebrew-core ships under the same name. Earlier installs wired up
+    `brew install claude` and clients ended up with the wrong tool, so
+    a presence-only check is no longer enough.
+
+    Cheap probe: `claude --version` on the real CLI prints something
+    containing 'Claude Code' (or links to the Anthropic site). The Lisp
+    binary doesn't accept --version and exits non-zero. We accept any
+    output that mentions claude/anthropic to stay loose against future
+    version-string changes; we reject empty or error-only output.
+    """
+    try:
+        r = subprocess.run(
+            [path, "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        return False
+    blob = ((r.stdout or "") + " " + (r.stderr or "")).lower()
+    if r.returncode != 0 and not blob.strip():
+        return False
+    return "claude" in blob or "anthropic" in blob
+
+
 def _check_claude_cli() -> dict:
     """5. `claude` CLI findable on PATH or in a known fallback location.
-    Without it the PTY session can't start at all."""
+    Without it the PTY session can't start at all. We additionally
+    verify the binary IS Anthropic's Claude Code so a leftover Lisp
+    `claude` (from an earlier wrong-formula install) doesn't fool the
+    wizard into showing green."""
     found = _find_binary("claude", _CLAUDE_FALLBACK_PATHS)
-    if found:
+    if found and _is_real_claude_code(found):
         return {
             "id": "claude_cli",
             "ok": True,
             "label": "Claude Code CLI",
             "detail": f"Found at {found}",
         }
+    detail = (
+        f"Found `claude` at {found} but it isn't Anthropic's Claude Code "
+        f"(probably the Common Lisp formula). Re-installing will replace it."
+        if found
+        else "claude CLI not found on PATH or in ~/.local/bin, /usr/local/bin, /opt/homebrew/bin, ~/.npm-global/bin"
+    )
     return {
         "id": "claude_cli",
         "ok": False,
         "label": "Claude Code CLI",
-        "detail": "claude CLI not found on PATH or in ~/.local/bin, /usr/local/bin, /opt/homebrew/bin, ~/.npm-global/bin",
+        "detail": detail,
         "remediation": {
             "type": "install",
             "target": "claude",
-            "command": "brew install claude",
+            "command": "npm install -g @anthropic-ai/claude-code",
             "fallback_url": "https://claude.com/product/claude-code",
         },
     }
@@ -552,8 +594,28 @@ def _native_brew_cmd(cmd: list[str]) -> list[str]:
 
 
 _INSTALL_COMMANDS = {
+    # Claude Code is shipped via npm (@anthropic-ai/claude-code), NOT
+    # Homebrew. There IS a `claude` formula in homebrew-core but it's
+    # an unrelated Common Lisp parser generator — installing it leaves
+    # the wizard either finding nothing or finding the wrong binary.
+    # The bash wrapper preemptively `brew uninstall`s that wrong package
+    # if present so the npm install isn't shadowed on PATH.
     "claude": {
-        "Darwin": ["brew", "install", "claude"],
+        "Darwin": [
+            "bash", "-c",
+            # Use absolute paths so Finder-launched .app processes (whose
+            # PATH is /usr/bin:/bin:/usr/sbin:/sbin) still find brew + npm.
+            # Both /opt/homebrew (Apple Silicon) and /usr/local (Intel)
+            # are probed; whichever bin/brew exists wins.
+            'BREW_BIN="$(command -v brew || echo /opt/homebrew/bin/brew)"; '
+            '[ -x "$BREW_BIN" ] || BREW_BIN=/usr/local/bin/brew; '
+            'NPM_BIN="$(command -v npm || echo /opt/homebrew/bin/npm)"; '
+            '[ -x "$NPM_BIN" ] || NPM_BIN=/usr/local/bin/npm; '
+            'if [ -x "$BREW_BIN" ] && "$BREW_BIN" list --versions claude >/dev/null 2>&1; then '
+            '  "$BREW_BIN" uninstall --force claude >/dev/null 2>&1 || true; '
+            'fi; '
+            '"$NPM_BIN" install -g @anthropic-ai/claude-code',
+        ],
     },
     "openclaw": {
         "Darwin": ["npm", "install", "-g", "openclaw"],
@@ -716,7 +778,21 @@ _BOOTSTRAP_GRAPH: dict[str, tuple[str | None, list[str] | None]] = {
     "brew":     (None,    None),
     "node":     ("brew",  ["brew", "install", "node"]),
     "openclaw": ("node",  ["npm", "install", "-g", "openclaw"]),
-    "claude":   ("brew",  ["brew", "install", "claude"]),
+    # Claude Code lives on npm (@anthropic-ai/claude-code), so it
+    # depends on `node` (which gives us npm), not on brew directly.
+    # The bash wrapper also evicts the wrongly-named `claude` brew
+    # formula if a previous bootstrap installed it.
+    "claude":   ("node",  [
+        "bash", "-c",
+        'BREW_BIN="$(command -v brew || echo /opt/homebrew/bin/brew)"; '
+        '[ -x "$BREW_BIN" ] || BREW_BIN=/usr/local/bin/brew; '
+        'NPM_BIN="$(command -v npm || echo /opt/homebrew/bin/npm)"; '
+        '[ -x "$NPM_BIN" ] || NPM_BIN=/usr/local/bin/npm; '
+        'if [ -x "$BREW_BIN" ] && "$BREW_BIN" list --versions claude >/dev/null 2>&1; then '
+        '  "$BREW_BIN" uninstall --force claude >/dev/null 2>&1 || true; '
+        'fi; '
+        '"$NPM_BIN" install -g @anthropic-ai/claude-code',
+    ]),
 }
 
 
@@ -728,7 +804,10 @@ def _bootstrap_post_check(tool: str) -> bool:
     if tool == "node":
         return shutil.which("npm") is not None
     if tool == "claude":
-        return _find_binary("claude", _CLAUDE_FALLBACK_PATHS) is not None
+        # Must be the real Anthropic CLI, not a stale Lisp formula left
+        # over from an earlier wrong-formula install.
+        path = _find_binary("claude", _CLAUDE_FALLBACK_PATHS)
+        return bool(path) and _is_real_claude_code(path)
     if tool == "openclaw":
         return _find_binary("openclaw", _OPENCLAW_FALLBACK_PATHS) is not None
     return False

@@ -413,14 +413,38 @@ ensure_git() {
 }
 
 ensure_claude() {
+  # Claude Code is distributed via npm (@anthropic-ai/claude-code), NOT
+  # Homebrew. The `brew install claude` formula is an unrelated Common
+  # Lisp parser generator that just happens to share the name — earlier
+  # installs that ran it left clients with the wrong `claude` binary on
+  # PATH and the wizard's post-check would either find nothing useful
+  # or get tricked into thinking Claude Code was present.
+  #
+  # Two-step: nuke the wrong brew formula if present, then install the
+  # real CLI via npm.
   if command -v claude >/dev/null 2>&1; then
-    log "claude already installed"
-  elif brew list --versions claude >/dev/null 2>&1; then
-    log "claude already installed (brew)"
-  else
-    log "Installing claude"
-    brew install claude </dev/null || warn "brew install claude failed — the in-app wizard will retry later"
+    if claude --version 2>/dev/null | grep -qiE 'anthropic|claude code'; then
+      log "claude already installed (Anthropic Claude Code)"
+      return 0
+    fi
+    log "Found a non-Anthropic 'claude' binary on PATH; replacing with Claude Code"
   fi
+  if brew list --versions claude >/dev/null 2>&1; then
+    log "Removing wrong-package brew formula 'claude' (was the Lisp parser, not Anthropic)"
+    brew uninstall --force claude </dev/null 2>&1 || true
+  fi
+  local NPM
+  NPM="$(command -v npm || true)"
+  if [[ -z "$NPM" ]] && command -v brew >/dev/null 2>&1; then
+    NPM="$(brew --prefix node 2>/dev/null)/bin/npm"
+  fi
+  if [[ -z "$NPM" || ! -x "$NPM" ]]; then
+    warn "npm not found — skipping claude (in-app wizard will retry later)"
+    return 0
+  fi
+  log "Installing Claude Code via $NPM"
+  "$NPM" install -g @anthropic-ai/claude-code </dev/null \
+    || warn "npm install -g @anthropic-ai/claude-code failed — the in-app wizard will retry later"
 }
 
 ensure_openclaw() {
