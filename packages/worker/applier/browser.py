@@ -183,7 +183,29 @@ def upload_file(path: str, ref: str) -> str:
 def take_screenshot() -> Optional[str]:
     out = browser("screenshot --full-page --type png", timeout=10)
     m = re.search(r'(\/\S+\.png)', out)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    # Fall back: openclaw versions that print only a bare filename
+    # (or just "ok") still drop the PNG into the workspace screenshots
+    # dir. Pick the newest .png within the last 5 seconds — anything
+    # older is from a previous capture and shouldn't be attributed to
+    # this submit.
+    try:
+        import glob, os, time
+        from config import SCREENSHOT_DIR  # local import to avoid cycle
+        candidates = glob.glob(os.path.join(SCREENSHOT_DIR, "*.png"))
+        if candidates:
+            newest = max(candidates, key=os.path.getmtime)
+            if time.time() - os.path.getmtime(newest) <= 5:
+                return newest
+    except Exception:
+        pass
+    # Don't fail silently — surface what the CLI actually returned so
+    # we can tell whether the screenshot capture itself broke vs. just
+    # the parser. Truncate so log lines stay readable.
+    snippet = (out or "").strip().replace("\n", " | ")[:300]
+    logger.warning(f"take_screenshot: no path in openclaw output: {snippet!r}")
+    return None
 
 
 def wait_load(timeout_ms: int = 5000) -> None:

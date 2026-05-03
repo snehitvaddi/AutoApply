@@ -100,6 +100,30 @@ export async function POST(request: NextRequest) {
         return apiSuccess({ updated: true });
       }
 
+      case "check_already_submitted": {
+        // Worker preflight: before clicking Submit, verify we haven't
+        // already submitted this exact (company, title) for this user.
+        // This is the second of two layers — scout enqueue is the first
+        // — and catches anything that slipped through (scout race,
+        // re-queued retriable that briefly looked like new work, etc.).
+        const company = String(params.company || "");
+        const title = String(params.title || "");
+        if (!company || !title) {
+          return apiSuccess({ already_submitted: false });
+        }
+        // Case-insensitive exact match — see scout-side dedup for
+        // why we escape % and _ before passing to ilike.
+        const escLike = (s: string) => s.replace(/[\\%_]/g, (c) => "\\" + c);
+        const { count } = await supabase
+          .from("applications")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .ilike("company", escLike(company))
+          .ilike("title", escLike(title))
+          .eq("status", "submitted");
+        return apiSuccess({ already_submitted: (count || 0) > 0 });
+      }
+
       case "log_application": {
         await supabase.from("applications").insert({
           user_id: userId,
@@ -658,14 +682,26 @@ export async function POST(request: NextRequest) {
             continue;
           }
 
+          // Dedup against PREVIOUS SUCCESSFUL submissions only. Failed
+          // rows stay logged (for visibility) but don't block — a
+          // captcha/timeout failure should still get another shot next
+          // cycle. Per user's golden rule: never re-submit a job that
+          // already reached the company's server.
+          // Case-insensitive exact match. ilike treats % and _ as
+          // wildcards, so escape them — otherwise a title like
+          // "Engineer_I" would also match "Engineer1". Mirrors the
+          // lower(company)/lower(title) partial unique index from
+          // mig 029.
+          const escLike = (s: string) => s.replace(/[\\%_]/g, (c) => "\\" + c);
           const existing = await supabase
             .from("applications")
             .select("id", { count: "exact" })
             .eq("user_id", userId)
-            .eq("company", job.company)
-            .eq("title", job.title);
+            .ilike("company", escLike(job.company))
+            .ilike("title", escLike(job.title))
+            .eq("status", "submitted");
           if ((existing.count || 0) > 0) {
-            drops.push({ job: jobTag, reason: "dedup: already in applications" });
+            drops.push({ job: jobTag, reason: "dedup: already submitted" });
             continue;
           }
 

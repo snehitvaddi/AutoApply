@@ -511,13 +511,22 @@ _BROWSER_CACHE: dict = {"result": None, "expires_at": 0.0}
 
 
 def _check_browser_ready() -> dict:
-    """7b. End-to-end browser smoke test: run `openclaw browser snapshot`
-    with an 8s timeout. Non-empty output means Chrome is reachable through
-    the gateway. On failure, attempts a one-shot gateway restart (3s) then
-    retries once.
+    """7b. Browser readiness check.
+
+    Old behavior — `openclaw browser snapshot` every 60 s + a fallback
+    `openclaw gateway restart` on miss. Both commands actually drive
+    Chrome and would briefly flash an empty tab on the user's screen,
+    triggered roughly once a minute by the setup-page poll.
+
+    New behavior — probe ONLY the gateway process (`openclaw gateway
+    status`), which doesn't touch Chrome at all. The real apply path
+    still has its own snapshot-based recovery (worker.restart_browser_
+    gateway) when an actual submit times out, so user-affecting
+    failures still recover. Caching 10 min on success cuts the poll
+    cost almost completely; we don't need to keep proving the
+    gateway is up.
 
     optional: True — never blocks ready=True; shown as a warning row.
-    Cached: 60s success / 10s failure.
     """
     import time as _time
     now = _time.time()
@@ -540,42 +549,30 @@ def _check_browser_ready() -> dict:
             "remediation": {"type": "install", "target": "openclaw"},
         }, 10)
 
-    def _probe() -> bool:
+    # Process-only probe: this just queries the gateway daemon and
+    # does NOT spawn or focus Chrome. Safe to call from a UI poll
+    # without flashing a tab on the user's screen.
+    def _gateway_running() -> bool:
         try:
             r = subprocess.run(
-                [openclaw, "browser", "snapshot"],
-                capture_output=True, text=True, timeout=8,
+                [openclaw, "gateway", "status"],
+                capture_output=True, text=True, timeout=5,
             )
-            return bool((r.stdout or "").strip())
+            return "running" in (r.stdout or "").lower()
         except Exception:
             return False
 
-    if _probe():
+    if _gateway_running():
+        # 10 min TTL — once the gateway is verified up, the apply
+        # path's own snapshot calls will catch any later breakage,
+        # so re-checking constantly only adds noise.
         return _cache({
             "id": "browser_ready",
             "ok": True,
             "optional": True,
             "label": "Browser (OpenClaw)",
-            "detail": "Browser reachable",
-        }, 60)
-
-    logger.info("browser_ready: snapshot empty, attempting gateway restart")
-    try:
-        subprocess.run(
-            [openclaw, "gateway", "restart"],
-            capture_output=True, timeout=3,
-        )
-    except Exception as e:
-        logger.warning(f"browser_ready: gateway restart failed: {e}")
-
-    if _probe():
-        return _cache({
-            "id": "browser_ready",
-            "ok": True,
-            "optional": True,
-            "label": "Browser (OpenClaw)",
-            "detail": "Browser reachable (recovered after gateway restart)",
-        }, 60)
+            "detail": "Browser gateway running",
+        }, 600)
 
     return _cache({
         "id": "browser_ready",
@@ -583,15 +580,15 @@ def _check_browser_ready() -> dict:
         "optional": True,
         "label": "Browser (OpenClaw)",
         "detail": (
-            "OpenClaw cannot open the browser — snapshot empty after gateway restart. "
-            "Is Chrome running with the openclaw profile?"
+            "OpenClaw browser gateway is not running. "
+            "Click the remediation below to start it."
         ),
         "remediation": {
             "type": "install",
             "target": "openclaw_gateway",
-            "command": "openclaw gateway restart",
+            "command": "openclaw gateway start",
         },
-    }, 10)
+    }, 30)
 
 
 def _check_git() -> dict:

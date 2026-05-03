@@ -23,7 +23,7 @@ from tenant import (
 from scout import REGISTERED_SOURCES
 from db import (
     claim_next_job, claim_next_job_locally, load_user_profile,
-    update_queue_status, log_application,
+    update_queue_status, log_application, is_already_submitted,
     fetch_next_plan, report_plan_outcome,
     check_daily_limit, check_daily_limit_locally, count_profile_applied_today,
     get_answer_key, download_resume, download_resume_by_url, upload_screenshot,
@@ -1500,6 +1500,31 @@ def main():
                 log_application(user_id, job, {'status': 'failed', 'error': f"resume missing: {e}"})
                 update_heartbeat(user_id, "failed", f"{company} — resume missing")
                 continue
+
+            # Preflight dedup: if we've already logged a SUCCESSFUL
+            # submission for this user + (company, title), skip without
+            # clicking Submit. Belt-and-suspenders against the scout-time
+            # check — catches anything that slipped through (re-queued
+            # retriable, scout race, queue rebuilt from stale data).
+            # Failed/blocked rows do NOT count here — those didn't reach
+            # the company's server, so re-applying is safe.
+            _job_title = job.get('title', '')
+            if is_already_submitted(user_id, company, _job_title):
+                logger.info(f"Dedup skip: {company} — {_job_title[:80]} (already submitted)")
+                # Queue status enum: pending|locked|processing|submitted|
+                # failed|cancelled. 'cancelled' is the right shape for
+                # "we chose not to submit" — it doesn't pollute the
+                # submitted/failed counts on the dashboard.
+                update_queue_status(job['id'], 'cancelled', error='dedup_skipped')
+                try:
+                    update_local_status(job, 'skipped', 'already submitted (dedup)')
+                except Exception:
+                    pass
+                update_heartbeat(user_id, "skipped", f"{company} — dedup")
+                apply_outcome = "skipped"
+                apply_outcome_detail = f"dedup: already submitted {company} — {_job_title[:80]}"
+                continue
+
             result = applier.apply(apply_url)
 
             # Tracks whether we've already persisted a final outcome to the
@@ -1513,13 +1538,26 @@ def main():
                 screenshot_url = None
                 if result.screenshot:
                     screenshot_url = upload_screenshot(user_id, result.screenshot)
+                else:
+                    # Catch silent capture drops (regex miss, openclaw
+                    # error swallowed) so we know which ATSes need
+                    # attention. WARN not ERROR — the apply itself
+                    # succeeded; missing screenshot is degraded UX.
+                    logger.warning(
+                        f"submit succeeded but no screenshot captured for "
+                        f"{job.get('company','?')} — {job.get('title','?')[:80]}"
+                    )
                 update_queue_status(job['id'], 'submitted')
                 log_application(user_id, job, {'status': 'submitted', 'screenshot_url': screenshot_url})
                 outcome_logged = True
                 # Only render the bundle name for multi-profile users so
                 # single-profile users see the pre-refactor caption.
                 _bundle_name = job_profile.name if len(tenant.profiles) > 1 else None
-                send_application_result(user_id, job, result.screenshot, profile_name=_bundle_name)
+                send_application_result(
+                    user_id, job, result.screenshot,
+                    profile_name=_bundle_name,
+                    screenshot_url=screenshot_url,
+                )
                 hourly_count += 1
                 update_heartbeat(user_id, "applied", f"{company} — {job.get('title', '')}")
                 apply_outcome = "success"
@@ -1561,13 +1599,28 @@ def main():
                     apply_outcome = "skipped"
                     apply_outcome_detail = f"retriable {_new_attempts}/{_max_attempts}: {str(result.error)[:160]}"
                 else:
+                    # Upload failure screenshot too — Telegram + dashboard
+                    # both want it, and the dashboard reads
+                    # applications.screenshot_url. Best-effort: a missing
+                    # url just falls back to the local-file send path.
+                    fail_screenshot_url = None
+                    if result.screenshot:
+                        try:
+                            fail_screenshot_url = upload_screenshot(user_id, result.screenshot)
+                        except Exception as _e:
+                            logger.debug(f"failure screenshot upload skipped: {_e}")
                     update_queue_status(job['id'], 'failed', error=result.error)
                     update_local_status(job, 'failed', result.error)
-                    log_application(user_id, job, {'status': 'failed', 'error': result.error})
+                    log_application(
+                        user_id, job,
+                        {'status': 'failed', 'error': result.error,
+                         'screenshot_url': fail_screenshot_url},
+                    )
                     outcome_logged = True
                     send_failure(
                         user_id, company, job.get('title', ''), result.error,
                         screenshot_path=result.screenshot,
+                        screenshot_url=fail_screenshot_url,
                     )
                     update_heartbeat(user_id, "failed", f"{company} — {result.error[:80]}")
                     apply_outcome = "failed"
