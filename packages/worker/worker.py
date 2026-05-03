@@ -912,6 +912,15 @@ def check_and_pull_updates() -> bool:
 
 def main():
     global running
+    # Bypass-the-logger heartbeat so a startup crash before logging is
+    # configured (or before the first .info() flushes) still leaves a
+    # trace. Goes straight to stderr which the desktop process_manager
+    # captures into the in-memory ring buffer + worker.log if routed.
+    # If "uptime 0 + empty worker.log" reappears, the absence of THIS
+    # line means main() was never reached — points at PYTHONPATH /
+    # script wrapper / launcher issues, not worker.py itself.
+    import sys as _sys
+    print(f"[worker.boot] main() entered, WORKER_ID={WORKER_ID}, pid={os.getpid()}", file=_sys.stderr, flush=True)
     logger.info(f"Worker {WORKER_ID} starting...")
 
     # Load THIS tenant's config before anything else. No "system" fallback —

@@ -511,22 +511,30 @@ _BROWSER_CACHE: dict = {"result": None, "expires_at": 0.0}
 
 
 def _check_browser_ready() -> dict:
-    """7b. Browser readiness check.
+    """7b. Browser readiness — gateway-status fast path with snapshot fallback.
 
-    Old behavior — `openclaw browser snapshot` every 60 s + a fallback
-    `openclaw gateway restart` on miss. Both commands actually drive
-    Chrome and would briefly flash an empty tab on the user's screen,
-    triggered roughly once a minute by the setup-page poll.
+    Two-tier so we get the best of both prior shapes:
+      1. Cheap probe: `openclaw gateway status` (process check, NEVER
+         touches Chrome). If it says "running" AND we cached a recent
+         snapshot success, return ok immediately. No Chrome contact.
+      2. Deep probe: `openclaw browser snapshot`. Only runs when the
+         deep cache has expired (default: 10 min). Catches the
+         "gateway daemon is up but Chrome itself is wedged" failure
+         mode that broke MCP browser_snapshot for an entire session
+         when removed entirely. On miss, runs `openclaw gateway
+         restart` — that's the only auto-recovery the apply pipeline
+         has from a wedged Chrome session.
 
-    New behavior — probe ONLY the gateway process (`openclaw gateway
-    status`), which doesn't touch Chrome at all. The real apply path
-    still has its own snapshot-based recovery (worker.restart_browser_
-    gateway) when an actual submit times out, so user-affecting
-    failures still recover. Caching 10 min on success cuts the poll
-    cost almost completely; we don't need to keep proving the
-    gateway is up.
+    Result: the setup-page poll (every 3 s) hits the cheap probe ~99%
+    of the time. The deep probe + possible restart fires roughly 6×/hr
+    instead of 60×/hr — way fewer Chrome pops than the original code,
+    while preserving the auto-recovery.
 
-    optional: True — never blocks ready=True; shown as a warning row.
+    Override the deep-probe interval with APPLYLOOP_BROWSER_DEEP_PROBE_S
+    (env var, seconds) — 0 disables the deep probe entirely for users
+    who want zero Chrome pops at the cost of no auto-recovery.
+
+    optional: True — never blocks ready=True.
     """
     import time as _time
     now = _time.time()
@@ -549,9 +557,6 @@ def _check_browser_ready() -> dict:
             "remediation": {"type": "install", "target": "openclaw"},
         }, 10)
 
-    # Process-only probe: this just queries the gateway daemon and
-    # does NOT spawn or focus Chrome. Safe to call from a UI poll
-    # without flashing a tab on the user's screen.
     def _gateway_running() -> bool:
         try:
             r = subprocess.run(
@@ -562,17 +567,78 @@ def _check_browser_ready() -> dict:
         except Exception:
             return False
 
-    if _gateway_running():
-        # 10 min TTL — once the gateway is verified up, the apply
-        # path's own snapshot calls will catch any later breakage,
-        # so re-checking constantly only adds noise.
+    def _snapshot_works() -> bool:
+        try:
+            r = subprocess.run(
+                [openclaw, "browser", "snapshot"],
+                capture_output=True, text=True, timeout=8,
+            )
+            return bool((r.stdout or "").strip())
+        except Exception:
+            return False
+
+    deep_probe_s = int(os.environ.get("APPLYLOOP_BROWSER_DEEP_PROBE_S", "600") or "600")
+    last_deep_ok = _BROWSER_CACHE.get("last_deep_ok", 0.0)
+
+    if not _gateway_running():
+        # Don't auto-restart from preflight — the openclaw gateway
+        # restart spawns a fresh Chrome window which is the exact pop
+        # that bothered the user. Surface remediation instead; the
+        # user (or the brain via browser_gateway_restart) can do it.
+        return _cache({
+            "id": "browser_ready",
+            "ok": False,
+            "optional": True,
+            "label": "Browser (OpenClaw)",
+            "detail": "OpenClaw browser gateway is not running.",
+            "remediation": {
+                "type": "install",
+                "target": "openclaw_gateway",
+                "command": "openclaw gateway start",
+            },
+        }, 30)
+
+    # Gateway is running. Skip the deep probe if it's been disabled
+    # OR if the last deep probe was recent enough.
+    if deep_probe_s == 0 or (last_deep_ok and (now - last_deep_ok) < deep_probe_s):
         return _cache({
             "id": "browser_ready",
             "ok": True,
             "optional": True,
             "label": "Browser (OpenClaw)",
-            "detail": "Browser gateway running",
-        }, 600)
+            "detail": "Browser gateway running (cached)",
+        }, 60)
+
+    # Deep probe: actually verify Chrome responds. Costs one tab pop.
+    if _snapshot_works():
+        _BROWSER_CACHE["last_deep_ok"] = now
+        return _cache({
+            "id": "browser_ready",
+            "ok": True,
+            "optional": True,
+            "label": "Browser (OpenClaw)",
+            "detail": "Browser reachable (snapshot ok)",
+        }, deep_probe_s)
+
+    # Snapshot empty — Chrome session is wedged. Auto-restart only as
+    # a last resort, since this is the failure mode that breaks MCP
+    # browser_snapshot for the brain.
+    logger.info("browser_ready: snapshot empty, restarting gateway")
+    try:
+        subprocess.run([openclaw, "gateway", "restart"], capture_output=True, timeout=5)
+        _time.sleep(2)
+    except Exception as e:
+        logger.warning(f"browser_ready: gateway restart failed: {e}")
+
+    if _snapshot_works():
+        _BROWSER_CACHE["last_deep_ok"] = _time.time()
+        return _cache({
+            "id": "browser_ready",
+            "ok": True,
+            "optional": True,
+            "label": "Browser (OpenClaw)",
+            "detail": "Browser reachable (recovered after gateway restart)",
+        }, deep_probe_s)
 
     return _cache({
         "id": "browser_ready",
@@ -580,13 +646,13 @@ def _check_browser_ready() -> dict:
         "optional": True,
         "label": "Browser (OpenClaw)",
         "detail": (
-            "OpenClaw browser gateway is not running. "
-            "Click the remediation below to start it."
+            "OpenClaw cannot drive the browser — snapshot empty after "
+            "gateway restart. Chrome may have crashed; restart it and retry."
         ),
         "remediation": {
             "type": "install",
             "target": "openclaw_gateway",
-            "command": "openclaw gateway start",
+            "command": "openclaw gateway restart",
         },
     }, 30)
 

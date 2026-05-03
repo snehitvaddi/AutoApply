@@ -128,6 +128,23 @@ def browser_upload(path: str, ref: str) -> str:
 
 
 @mcp.tool()
+def browser_gateway_restart() -> str:
+    """Restart the OpenClaw browser gateway. Returns JSON {ok, detail}.
+
+    Use when browser_snapshot returns empty, the active tab keeps
+    flipping to about:blank, or browser_click times out on visible
+    elements — those are signs the Chrome session is wedged. The
+    restart spawns a fresh Chrome so the wedge clears.
+
+    Do NOT call mid-form (it kills the open tab). Use it between
+    apply attempts as a recovery action when the standard primitives
+    misbehave for ≥2 consecutive calls.
+    """
+    ok, detail = _browser.gateway_restart()
+    return json.dumps({"ok": ok, "detail": detail})
+
+
+@mcp.tool()
 def browser_select_react(selector: str, label: str, value: str = "") -> str:
     """Commit a value to a React-Select / fiber-driven combobox.
 

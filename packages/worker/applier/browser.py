@@ -63,6 +63,36 @@ def browser(cmd: str, timeout: int = 15) -> str:
         return ""
 
 
+def gateway_restart() -> tuple[bool, str]:
+    """Restart the OpenClaw browser gateway. Use when MCP browser
+    primitives start misbehaving (snapshot empty, active tab flipping
+    to about:blank, click timeouts on visible elements). The gateway
+    spawns a fresh Chrome session so the wedged state clears.
+
+    Returns (ok, detail). Doesn't raise — callers decide whether to
+    surface the failure.
+    """
+    try:
+        r = subprocess.run(
+            "openclaw gateway restart",
+            shell=True, capture_output=True, text=True, timeout=15,
+        )
+    except Exception as e:
+        return False, f"gateway restart raised: {e}"
+    time.sleep(2)
+    try:
+        s = subprocess.run(
+            "openclaw gateway status",
+            shell=True, capture_output=True, text=True, timeout=5,
+        )
+        running = "running" in (s.stdout or "").lower()
+    except Exception:
+        running = False
+    if running:
+        return True, "gateway restarted"
+    return False, f"gateway restart returned rc={r.returncode}, status not running"
+
+
 def health_check() -> tuple[bool, str]:
     """End-to-end browser reachability check with auto-recovery.
 

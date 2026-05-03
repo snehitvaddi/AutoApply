@@ -130,6 +130,18 @@ async def browser_list_tabs(args: dict[str, Any]) -> dict:
 
 
 @tool(
+    "browser_gateway_restart",
+    "Restart the OpenClaw browser gateway. Use when browser_snapshot returns empty, the active tab keeps flipping to about:blank, or browser_click times out on visible elements — those are signs the Chrome session is wedged. Spawns a fresh Chrome and clears the bad state. Do NOT call mid-form (it kills any open tab); use between apply attempts.",
+    {},
+)
+async def browser_gateway_restart(args: dict[str, Any]) -> dict:
+    def _do():
+        ok, detail = _browser.gateway_restart()
+        return {"ok": ok, "detail": detail}
+    return _log_and_run("browser_gateway_restart", {}, _do)
+
+
+@tool(
     "browser_select_react",
     "Commit a value to a React-Select / fiber-driven combobox by walking the React fiber from `selector` and calling onChange directly. Use when a normal click on the option succeeds visually but the form still complains about a missing value (Greenhouse country dropdown, Ashby combobox).",
     {"selector": str, "label": str, "value": str},
@@ -520,6 +532,7 @@ ALL_TOOLS = [
     browser_navigate, browser_wait_load, browser_snapshot, browser_click,
     browser_fill, browser_select, browser_select_react, browser_type,
     browser_upload, browser_press_key, browser_evaluate_js,
+    browser_gateway_restart,
     browser_screenshot, browser_list_tabs, browser_dismiss_stray_tabs,
     # queue
     queue_claim_next, queue_update_status, queue_log_application,
