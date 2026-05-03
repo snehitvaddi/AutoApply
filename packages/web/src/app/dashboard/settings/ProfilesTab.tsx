@@ -74,7 +74,7 @@ export function ProfilesTab({
         fetch("/api/settings/resumes").then((r) => r.json()),
         fetch("/api/settings/email-accounts").then((r) => r.json()),
       ]);
-      setProfiles(pRes?.data?.profiles || []);
+      const rawProfiles = pRes?.data?.profiles || [];
       const rawResumeList: Resume[] = Array.isArray(rRes?.data) ? rRes.data : (rRes?.data?.resumes || []);
       // Dedupe by file_name. Before the upload endpoint learned to
       // upsert by (user_id, file_name), every re-upload of the same
@@ -83,13 +83,29 @@ export function ProfilesTab({
       // duplicates; this client-side collapse hides the legacy ones
       // that already exist in the DB. We keep the most recent row per
       // filename (list is ordered DESC by created_at server-side).
-      const seen = new Set<string>();
-      const resumeList = rawResumeList.filter((r) => {
-        if (seen.has(r.file_name)) return false;
-        seen.add(r.file_name);
-        return true;
-      });
+      // While collapsing, build a redirect map { droppedId → keptId }
+      // so we can rewrite saved profiles whose resume_id points at a
+      // hidden duplicate — that's what produced the false "missing
+      // resume" badge that blocked Save even after a successful upload.
+      const firstByName = new Map<string, string>();
+      const redirect = new Map<string, string>();
+      const resumeList: Resume[] = [];
+      for (const r of rawResumeList) {
+        const keptId = firstByName.get(r.file_name);
+        if (keptId) {
+          redirect.set(r.id, keptId);
+        } else {
+          firstByName.set(r.file_name, r.id);
+          resumeList.push(r);
+        }
+      }
       setResumes(resumeList);
+      const remappedProfiles = rawProfiles.map((p: Profile) =>
+        p.resume_id && redirect.has(p.resume_id)
+          ? { ...p, resume_id: redirect.get(p.resume_id) || null }
+          : p,
+      );
+      setProfiles(remappedProfiles);
       setEmailAccounts(eRes?.data?.email_accounts || []);
     } finally {
       setLoading(false);
@@ -282,7 +298,13 @@ export function ProfilesTab({
         {profiles.map((p) => {
           const isExpanded = editingId === p.id;
           const resumeFile = p.resume_id ? resumes.find((r) => r.id === p.resume_id)?.file_name : undefined;
-          const resumeMissing = !!p.resume_id && !resumeFile;
+          // Suppress the badge while the user is mid-edit on this card
+          // and has a draft resume_id that DOES resolve to a known
+          // resume — otherwise the saved-state row still flags "missing"
+          // for one render after upload, which read like a hard error
+          // and (combined with the legacy-dup redirect bug) blocked Save.
+          const draftResumeOk = isExpanded && !!draft.resume_id && !!resumes.find((r) => r.id === draft.resume_id);
+          const resumeMissing = !!p.resume_id && !resumeFile && !draftResumeOk;
           return (
             <div key={p.id} className="border rounded-lg overflow-hidden">
               {/* Card header — click to expand. Action buttons stop
@@ -385,9 +407,15 @@ export function ProfilesTab({
           // Existing-profile edit gets a real id; new-profile draft
           // is null and skips the parse step until first save.
           profileId={editingId !== "__new__" ? editingId : null}
-          onUploaded={(rid) => {
+          onUploaded={async (rid) => {
+            // Refresh the resumes list FIRST so the legacy-dup redirect
+            // map is rebuilt, then bind the draft to the (possibly
+            // remapped) id. Order matters — binding first against a
+            // stale list left the draft pointing at a hidden row when
+            // the upsert preserved an older row id under the same file
+            // name.
+            await load();
             setDraft((d) => ({ ...d, resume_id: rid }));
-            load();
           }}
           onParsed={(parsed) => {
             // Merge parsed W&E into the draft so the editor pre-fills.

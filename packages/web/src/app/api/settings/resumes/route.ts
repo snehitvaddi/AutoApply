@@ -69,12 +69,19 @@ export async function POST(request: NextRequest) {
   // this — every PDF re-upload created a new user_resumes row even
   // though Supabase Storage upserts at the same path (belt-and-
   // suspenders: upsert:true above already stomps the file bytes).
-  const { data: existing } = await supabase
+  // .maybeSingle() throws when MULTIPLE rows match — that path used to
+  // silently fall through to a fresh INSERT and grow the dropdown by
+  // one every time the user re-uploaded a same-named PDF. Pre-mig 008
+  // installs still have those legacy duplicates, so do an explicit
+  // ordered fetch and update the most-recent row.
+  const { data: existingRows } = await supabase
     .from("user_resumes")
     .select("id")
     .eq("user_id", auth.userId)
     .eq("file_name", file.name)
-    .maybeSingle();
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const existing = existingRows && existingRows.length > 0 ? existingRows[0] : null;
 
   if (existing?.id) {
     const { data: resume, error: updateError } = await supabase

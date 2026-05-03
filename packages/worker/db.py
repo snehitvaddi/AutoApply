@@ -260,6 +260,26 @@ def update_queue_status(
 
 # ── Application logging ───────────────────────────────────────────────────
 
+def is_already_submitted(user_id: str, company: str, title: str) -> bool:
+    """Worker preflight: ask the cloud whether this (company, title)
+    has already been logged as a successful submission for this user.
+
+    Conservative on failure — if the proxy call errors we return False
+    so the worker still attempts the apply (the scout-side dedup and
+    DB-level partial unique index from mig 008 stay as backstops).
+    Better an extra-careful retry than blocking submissions on a
+    transient network blip.
+    """
+    if not company or not title:
+        return False
+    try:
+        resp = _api_call("check_already_submitted", company=company, title=title)
+        return bool((resp or {}).get("already_submitted"))
+    except Exception as e:
+        logger.debug(f"dedup preflight failed (non-fatal, will attempt apply): {e}")
+        return False
+
+
 def log_application(user_id: str, job: dict, result: dict):
     """Log application to local SQLite (source of truth) + send only
     aggregate counts to the cloud for the web dashboard.

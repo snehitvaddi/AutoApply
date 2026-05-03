@@ -1337,6 +1337,55 @@ mkdir -p "$HOME/.local/bin"
 ln -sf "$APPLYLOOP_HOME/packages/desktop/scripts/applyloop" "$HOME/.local/bin/applyloop"
 chmod +x "$APPLYLOOP_HOME/packages/desktop/scripts/applyloop" 2>/dev/null || true
 
+# Ensure ~/.local/bin is on PATH for future shells. macOS zsh and many
+# Linux shells don't include it by default, so a fresh-install user
+# would type `applyloop` and get "command not found" — the symlink
+# is there but the shell can't see it. Patch the rc files for the
+# active shells (zsh + bash) idempotently, guarded by a marker so
+# re-running the installer doesn't append duplicates.
+APPLYLOOP_PATH_MARKER="# >>> applyloop PATH >>>"
+APPLYLOOP_PATH_BLOCK="$(cat <<'PATHBLOCK'
+# >>> applyloop PATH >>>
+# Added by ApplyLoop installer so the `applyloop` CLI is on PATH.
+# Remove this block (and its <<<) to undo.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+# <<< applyloop PATH <<<
+PATHBLOCK
+)"
+for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+  # Only touch rc files that already exist OR correspond to the user's
+  # current login shell — don't create stray files for shells the user
+  # doesn't run. zsh is macOS default; .profile is the universal bash
+  # fallback if .bashrc/.bash_profile aren't present.
+  case "$rc" in
+    "$HOME/.zshrc")        [[ "${SHELL##*/}" == "zsh"  ]] || [[ -f "$rc" ]] || continue ;;
+    "$HOME/.bashrc")       [[ "${SHELL##*/}" == "bash" ]] || [[ -f "$rc" ]] || continue ;;
+    "$HOME/.bash_profile") [[ -f "$rc" ]] || continue ;;
+    "$HOME/.profile")      [[ -f "$rc" ]] || continue ;;
+  esac
+  if [[ -f "$rc" ]] && grep -qF "$APPLYLOOP_PATH_MARKER" "$rc" 2>/dev/null; then
+    continue
+  fi
+  printf '\n%s\n' "$APPLYLOOP_PATH_BLOCK" >> "$rc"
+  log "Added ~/.local/bin to PATH in $rc"
+done
+# Make the current installer shell see the new PATH too, so the
+# rest of this script (and any `applyloop` reference printed in the
+# success banner) actually works without the user opening a new
+# terminal.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+
+# Tell the user how to pick up the new PATH without restarting the
+# terminal. The installer process can't `source` the rc into the
+# parent shell, so the best we can do is print the command.
+log "Tip: run 'source ~/.zshrc' (or open a new terminal) so 'applyloop' is on PATH."
+
 # ------------------------------------------------------------------ version stamp
 
 git -C "$APPLYLOOP_HOME" rev-parse HEAD > "$APPLYLOOP_HOME/.applyloop-version"
