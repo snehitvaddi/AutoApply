@@ -128,6 +128,31 @@ def browser_upload(path: str, ref: str) -> str:
 
 
 @mcp.tool()
+def browser_select_react(selector: str, label: str, value: str = "") -> str:
+    """Commit a value to a React-Select / fiber-driven combobox.
+
+    Greenhouse country dropdown, Ashby comboboxes, and any React-Select
+    v5 widget keep the selected value in React fiber, not the DOM.
+    Clicking the visible option fires events that React often treats
+    as a no-op — the form looks selected but submission still throws
+    "field required". This tool walks the fiber up from `selector`
+    until it finds a node whose memoizedProps.onChange is a function,
+    then calls it with `{value, label}` directly so React state
+    actually updates.
+
+    `selector` should target ANY element inside the combobox container
+    (`.select__control`, `.select__input`, the rendered input itself).
+    `value` is optional; if omitted the tool uses `label` as the value.
+
+    Returns: 'ok' / 'ok_no_meta' on success, otherwise a diagnostic
+    string ('no_element', 'no_fiber', 'no_onChange', 'onChange_threw:
+    <msg>'). Doesn't raise — caller decides whether to retry.
+    """
+    out = _browser.select_react_value(selector, label, value or None)
+    return out
+
+
+@mcp.tool()
 def browser_press_key(key: str) -> str:
     """Press one key (e.g. 'Enter', 'Tab', 'End')."""
     _browser.press_key(key)
@@ -245,9 +270,16 @@ def queue_enqueue_jobs(jobs_json: str) -> str:
     `scout_run_source` (keys: company, title, apply_url, ats, source,
     location, external_id, posted_at, application_profile_id).
 
-    Persists each row as status='queued' in the local SQLite DB. Returns
-    {"enqueued": N, "submitted": K} so the agent can confirm how many
-    survived dedup.
+    Persists each row as status='queued' in the local SQLite DB.
+    Returns a typed summary the agent cannot misread:
+      {
+        "enqueued": <int>,      # net new rows actually queued
+        "input_total": <int>,   # how many jobs you handed in
+        "skipped_dedup": <int>, # collapsed by local dedup_token UNIQUE
+      }
+    The old shape used `submitted` for `input_total`, which read like a
+    success metric; some agents logged "submitted: 34" as success when
+    enqueued was 0. Renamed to be unambiguous.
     """
     from db import enqueue_to_local_db
     try:
@@ -256,8 +288,16 @@ def queue_enqueue_jobs(jobs_json: str) -> str:
         return json.dumps({"error": f"invalid jobs_json: {e}"})
     if not isinstance(jobs, list):
         return json.dumps({"error": "jobs_json must be a JSON array of job dicts"})
+    total = len(jobs)
     inserted = enqueue_to_local_db(jobs)
-    return json.dumps({"enqueued": inserted, "submitted": len(jobs)}, default=str)
+    return json.dumps(
+        {
+            "enqueued": inserted,
+            "input_total": total,
+            "skipped_dedup": max(0, total - inserted),
+        },
+        default=str,
+    )
 
 
 @mcp.tool()
@@ -528,6 +568,167 @@ def email_read_link(
         return "error: himalaya not installed or config write failed — run: brew install himalaya"
     link = find_link(sender_pattern, link_regex, timeout=timeout)
     return link or f"error: no link matching '{link_regex}' from '{sender_pattern}' within {timeout}s"
+
+
+# ── worker lifecycle ──────────────────────────────────────────────────────
+# Brain-callable wrappers around the desktop server's /api/worker/* HTTP
+# endpoints. The python worker.py loop carries every per-ATS recipe in
+# packages/worker/applier/*.py — Greenhouse dropzone uploads, Ashby
+# combobox refresh, Workday multi-page wizard, etc. When it dies the
+# brain loses all of that and has to reinvent each quirk in real time.
+# These tools let the brain revive the loop instead of hand-driving.
+
+def _desktop_url() -> str:
+    explicit = os.environ.get("APPLYLOOP_DESKTOP_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    port = os.environ.get("APPLYLOOP_PORT", "18790").strip() or "18790"
+    return f"http://127.0.0.1:{port}"
+
+
+def _worker_api(method: str, path: str) -> dict:
+    import httpx as _httpx
+    url = _desktop_url() + path
+    try:
+        with _httpx.Client(timeout=15.0) as c:
+            r = c.request(method, url)
+        if r.status_code >= 400:
+            return {"ok": False, "status": r.status_code, "error": (r.text or "")[:300]}
+        try:
+            return r.json()
+        except Exception:
+            return {"ok": True, "raw": (r.text or "")[:300]}
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"could not reach desktop server at {url}: {e}",
+            "hint": "Is the ApplyLoop desktop app running? Try `applyloop start`.",
+        }
+
+
+@mcp.tool()
+def worker_status() -> str:
+    """Report the python worker.py loop state: {running, pid, uptime,
+    restart_count}. Call BEFORE hand-driving an apply — if running=true,
+    use queue_claim_next + the worker's deterministic ATS recipes
+    instead of MCP browser_* primitives."""
+    return json.dumps(_worker_api("GET", "/api/worker/status"), default=str)
+
+
+@mcp.tool()
+def worker_start() -> str:
+    """Start the python worker.py loop via the desktop FastAPI server.
+    The worker reads the queue and applies jobs deterministically using
+    ATS-specific recipes (way more reliable than driving the browser by
+    hand through MCP). Returns {ok, pid, ...}."""
+    return json.dumps(_worker_api("POST", "/api/worker/start"), default=str)
+
+
+@mcp.tool()
+def worker_stop() -> str:
+    """Stop the python worker.py loop. SIGTERM with up to 10s graceful
+    window before SIGKILL. Returns {ok, pid}."""
+    return json.dumps(_worker_api("POST", "/api/worker/stop"), default=str)
+
+
+@mcp.tool()
+def worker_restart() -> str:
+    """Stop-then-start the python worker.py loop. Use after pulling
+    code or rotating credentials."""
+    return json.dumps(_worker_api("POST", "/api/worker/restart"), default=str)
+
+
+# ── local pipeline + scout url verification ───────────────────────────────
+
+@mcp.tool()
+def queue_get_local_pipeline(limit: int = 50, since_hours: int = 168) -> str:
+    """Read recent rows from the LOCAL SQLite applications table.
+
+    The cloud-backed queue_get_pipeline only sees discovered_jobs +
+    application_queue rows; many submitted/failed/skipped applications
+    live ONLY in local SQLite. Use this to answer "what have I applied
+    to in the past <since_hours> hours" without calling
+    queue_check_dedup once per company.
+
+    Returns {since_hours, counts, submitted: [], failed: [], skipped: []}.
+    Each row has {id, company, role, ats, url, applied_at, updated_at, notes}.
+    """
+    import sqlite3
+    from contextlib import closing as _closing
+    from db import LOCAL_DB_PATH
+    rows: dict[str, list[dict]] = {"submitted": [], "failed": [], "skipped": []}
+    try:
+        with _closing(sqlite3.connect(LOCAL_DB_PATH, timeout=5.0)) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                "SELECT id, company, role, url, ats, status, applied_at, updated_at, notes "
+                "FROM applications "
+                "WHERE status IN ('submitted','failed','skipped') "
+                "  AND COALESCE(updated_at, applied_at) >= datetime('now', ?) "
+                "ORDER BY COALESCE(updated_at, applied_at) DESC LIMIT ?",
+                (f"-{int(since_hours)} hours", max(1, min(500, int(limit)))),
+            )
+            for r in cur.fetchall():
+                bucket = rows.get(r["status"])
+                if bucket is None:
+                    continue
+                bucket.append({
+                    "id": r["id"], "company": r["company"], "role": r["role"],
+                    "ats": r["ats"], "url": r["url"],
+                    "applied_at": r["applied_at"], "updated_at": r["updated_at"],
+                    "notes": r["notes"],
+                })
+    except Exception as e:
+        return json.dumps({"error": f"local sqlite read failed: {e}", **{k: [] for k in rows}})
+    return json.dumps(
+        {"since_hours": since_hours,
+         "counts": {k: len(v) for k, v in rows.items()},
+         **rows},
+        default=str,
+    )
+
+
+@mcp.tool()
+def scout_verify_url(url: str) -> str:
+    """Probe an apply URL — HEAD with redirect follow, falling back to
+    GET if HEAD returns 405 or the body has to be sniffed. Returns
+    {ok, status, final_url, reason}.
+
+    Detects common dead-listing markers in the response body:
+    'Job not found', 'this job is no longer', 'no longer accepting',
+    'posting not found'. Ashby + Greenhouse return HTTP 200 on dead
+    listings, so plain status-code checks aren't enough.
+
+    Use BEFORE browser_navigate — a stale URL costs you a tab + a
+    snapshot + an LLM step before the agent realizes the listing is
+    dead.
+    """
+    import httpx as _httpx
+    if not (url or "").strip():
+        return json.dumps({"ok": False, "status": 0, "final_url": "", "reason": "empty_url"})
+    try:
+        with _httpx.Client(follow_redirects=True, timeout=8.0) as c:
+            r = c.head(url)
+            if r.status_code == 405:
+                r = c.get(url)
+            ok = 200 <= r.status_code < 400
+            reason = "ok"
+            if ok and "text/html" in (r.headers.get("content-type") or "").lower():
+                try:
+                    body = (c.get(str(r.url)).text if r.request.method == "HEAD" else (r.text or "")).lower()
+                except Exception:
+                    body = ""
+                for marker in ("job not found", "this job is no longer",
+                               "no longer accepting", "posting not found"):
+                    if marker in body:
+                        ok = False
+                        reason = f"dead_marker:{marker}"
+                        break
+        return json.dumps({"ok": ok, "status": r.status_code,
+                           "final_url": str(r.url), "reason": reason})
+    except Exception as e:
+        return json.dumps({"ok": False, "status": 0, "final_url": url,
+                           "reason": f"exception:{type(e).__name__}:{e}"})
 
 
 # ── knowledge ─────────────────────────────────────────────────────────────

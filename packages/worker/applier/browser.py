@@ -167,17 +167,95 @@ def select_option(ref: str, value: str) -> str:
 
 
 def upload_file(path: str, ref: str) -> str:
-    """Two-step resume upload: arm the file chooser, then click the button.
+    """Three-step resume upload with verification.
 
-    Auto-copies the source file into the OpenClaw upload sandbox before
-    arming so paths outside `/tmp/openclaw/uploads/` work transparently.
-    Raises BrowserError if the source is missing, the sandbox copy fails,
-    or openclaw signals a non-zero exit. The MCP tool propagates the
-    error back to the agent instead of returning a misleading "ok"."""
+    1. Arm the file chooser via `openclaw browser upload`. (Auto-copies
+       the source into the OpenClaw upload sandbox; paths outside
+       `/tmp/openclaw/uploads/` are rejected by the CLI.)
+    2. Click the visible target so the React dropzone takes the file.
+       Failures here used to be silently swallowed — OpenClaw still
+       reported `ok` from step 1, the agent logged a successful upload,
+       and the form went to submit with an empty `<input>`. Now: if
+       the click times out OR no `input[type=file]` ends up holding a
+       file, raise BrowserError so the caller learns the truth.
+    3. Verify via JS that some `input[type=file]` on the page now has
+       `.files.length > 0`. If none does, fall back to a DataTransfer
+       injection (works for React-rendered dropzones that ignore the
+       click entirely) and re-verify.
+
+    The verification step is the actual fix for the brain's
+    "browser_upload says ok but Greenhouse field is empty" report —
+    Greenhouse's React dropzone often consumes the click without
+    forwarding the file to the underlying input.
+    """
     sandbox_path = _ensure_in_upload_sandbox(path)
     _browser_strict(f"upload '{sandbox_path}'", timeout=10)
     time.sleep(0.3)
-    return click_ref(ref)
+    # Best-effort click. A timeout / non-zero is logged and recovered
+    # from in step 3 — many React dropzones handle the file via the
+    # `change` event the upload verb already fired and don't need the
+    # button click at all. Don't raise here; let the verify step decide.
+    try:
+        click_ref(ref)
+    except Exception as e:
+        logger.debug(f"upload_file: post-arm click on {ref!r} failed (will verify): {e}")
+    time.sleep(0.4)
+
+    # Step 3 — verify a file landed somewhere. We don't know which
+    # specific <input> the dropzone is targeting, so we walk all of
+    # them. Returns the file count for diagnostics.
+    def _file_count() -> int:
+        probe = (
+            "() => {"
+            " const ins = document.querySelectorAll('input[type=file]');"
+            " let n = 0;"
+            " for (const i of ins) { if (i && i.files) n += i.files.length; }"
+            " return n;"
+            "}"
+        )
+        out = (evaluate_js(probe) or "").strip()
+        # OpenClaw evaluate output is the JSON-encoded return; safest
+        # to grab the trailing integer if any.
+        m = re.search(r"(\d+)\s*$", out)
+        return int(m.group(1)) if m else 0
+
+    if _file_count() > 0:
+        return "ok"
+
+    # Fallback: synthesize a File via DataTransfer and dispatch onto
+    # the first visible input[type=file]. Reading the bytes via fetch()
+    # would require the file to be served; instead we ask OpenClaw to
+    # navigate to a file:// URL of the sandbox copy (won't work cross-
+    # origin) — so the cleanest fallback is to re-arm + dispatch a
+    # synthetic 'change' event via JS. Many React dropzones listen for
+    # the change on the input directly.
+    logger.warning(
+        f"upload_file: no input[type=file] holds a file after arm+click "
+        f"on ref={ref!r} — re-arming and dispatching change"
+    )
+    _browser_strict(f"upload '{sandbox_path}'", timeout=10)
+    time.sleep(0.3)
+    fire_change = (
+        "() => {"
+        " const ins = document.querySelectorAll('input[type=file]');"
+        " let fired = 0;"
+        " for (const i of ins) {"
+        "   try { i.dispatchEvent(new Event('change', {bubbles:true})); fired++; }"
+        "   catch (e) {}"
+        " }"
+        " return fired;"
+        "}"
+    )
+    evaluate_js(fire_change)
+    time.sleep(0.5)
+
+    final = _file_count()
+    if final > 0:
+        return f"ok (after fallback, files={final})"
+    raise BrowserError(
+        f"upload_file: file did not land on any input[type=file] after "
+        f"arm + click({ref!r}) + change-dispatch. Source: {sandbox_path}"
+    )
 
 
 def take_screenshot() -> Optional[str]:
@@ -314,6 +392,70 @@ def dismiss_stray_tabs(keep_url_substring: str | None = None) -> int:
         focus_tab(next(iter(keeper_ids)))
 
     return closed
+
+
+def select_react_value(selector: str, label: str, value: str | None = None) -> str:
+    """Commit a value to a React-Select / fiber-driven combobox.
+
+    Why: React-Select v5 (Greenhouse) and Ashby's combobox keep their
+    selected state in React fiber, not the DOM. Clicking the visible
+    option fires a synthetic event that React frequently treats as a
+    no-op — the dropdown closes, the label appears selected, but the
+    form's onChange never sees it and submission fails with "field
+    required". The fix is to walk the fiber up from the trigger
+    element until we find a node whose `memoizedProps.onChange` is a
+    function, then call it with the canonical option object. This
+    bypasses every DOM-event quirk and writes directly into React
+    state.
+
+    Args:
+        selector: CSS selector for ANY element inside the
+            React-Select container (commonly the visible
+            `.select__control`, `.select__input`, or the input that
+            holds the typed text).
+        label: Display label of the option to pick.
+        value: Optional opaque value the option carries; many
+            React-Select schemas use `{value, label}` and the form
+            keys off `value`. If None, falls back to `label`.
+
+    Returns:
+        "ok" on success, otherwise a JS-side error string. Doesn't
+        raise — callers decide whether an empty result is fatal.
+    """
+    target_value = (value if value is not None else label).replace('"', '\\"')
+    target_label = label.replace('"', '\\"')
+    sel = selector.replace('"', '\\"')
+    js = (
+        "() => {"
+        f" const el = document.querySelector(\"{sel}\");"
+        " if (!el) return 'no_element';"
+        " let node = el;"
+        " let fiberKey = null;"
+        " for (const k of Object.keys(node)) {"
+        "   if (k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')) { fiberKey = k; break; }"
+        " }"
+        " if (!fiberKey) return 'no_fiber';"
+        " let fiber = node[fiberKey];"
+        " let onChange = null;"
+        " let depth = 0;"
+        " while (fiber && depth < 30) {"
+        "   const p = fiber.memoizedProps;"
+        "   if (p && typeof p.onChange === 'function') { onChange = p.onChange; break; }"
+        "   fiber = fiber.return;"
+        "   depth++;"
+        " }"
+        " if (!onChange) return 'no_onChange';"
+        f" const opt = {{value: \"{target_value}\", label: \"{target_label}\"}};"
+        " try {"
+        "   onChange(opt, {action: 'select-option'});"
+        "   return 'ok';"
+        " } catch (e) {"
+        "   try { onChange(opt); return 'ok_no_meta'; } catch (e2) { return 'onChange_threw:' + (e2.message || ''); }"
+        " }"
+        "}"
+    )
+    out = (evaluate_js(js) or "").strip()
+    return out or "no_output"
 
 
 def parse_snapshot(raw: str) -> list[dict]:

@@ -130,6 +130,20 @@ async def browser_list_tabs(args: dict[str, Any]) -> dict:
 
 
 @tool(
+    "browser_select_react",
+    "Commit a value to a React-Select / fiber-driven combobox by walking the React fiber from `selector` and calling onChange directly. Use when a normal click on the option succeeds visually but the form still complains about a missing value (Greenhouse country dropdown, Ashby combobox).",
+    {"selector": str, "label": str, "value": str},
+)
+async def browser_select_react(args: dict[str, Any]) -> dict:
+    return _log_and_run(
+        "browser_select_react", args,
+        lambda: _browser.select_react_value(
+            args["selector"], args["label"], args.get("value") or None,
+        ),
+    )
+
+
+@tool(
     "browser_dismiss_stray_tabs",
     "Close any tab whose URL does not contain `keep_url_substring` (usually the apply ATS hostname). Popups opened by privacy/terms links stole focus from Roblox-class flows — call this between steps.",
     {"keep_url_substring": str},
@@ -210,6 +224,53 @@ async def queue_get_pipeline(args: dict[str, Any]) -> dict:
     return _log_and_run("queue_get_pipeline", {}, _do)
 
 
+@tool(
+    "queue_get_local_pipeline",
+    "Read the LOCAL SQLite applications table directly — recent submitted/failed/skipped rows that the cloud-side queue_get_pipeline doesn't see. Use to answer 'what have I applied to this week' without per-company dedup probing.",
+    {"limit": int, "since_hours": int},
+)
+async def queue_get_local_pipeline(args: dict[str, Any]) -> dict:
+    def _do():
+        import sqlite3
+        from contextlib import closing
+        from db import LOCAL_DB_PATH  # deferred
+        limit = int(args.get("limit") or 50)
+        since_hours = int(args.get("since_hours") or 168)  # default 7 days
+        rows: dict[str, list[dict]] = {"submitted": [], "failed": [], "skipped": []}
+        try:
+            with closing(sqlite3.connect(LOCAL_DB_PATH, timeout=5.0)) as conn:
+                conn.row_factory = sqlite3.Row
+                # Pull recent rows ordered newest-first; bucket client-
+                # side so a single query covers all three statuses.
+                cur = conn.execute(
+                    "SELECT id, company, role, url, ats, status, applied_at, updated_at, notes "
+                    "FROM applications "
+                    "WHERE status IN ('submitted','failed','skipped') "
+                    "  AND COALESCE(updated_at, applied_at) >= datetime('now', ?) "
+                    "ORDER BY COALESCE(updated_at, applied_at) DESC "
+                    "LIMIT ?",
+                    (f"-{since_hours} hours", max(1, min(500, limit))),
+                )
+                for r in cur.fetchall():
+                    bucket = rows.get(r["status"])
+                    if bucket is None:
+                        continue
+                    bucket.append({
+                        "id": r["id"], "company": r["company"], "role": r["role"],
+                        "ats": r["ats"], "url": r["url"],
+                        "applied_at": r["applied_at"], "updated_at": r["updated_at"],
+                        "notes": r["notes"],
+                    })
+        except Exception as e:
+            return {"error": f"local sqlite read failed: {e}", "submitted": [], "failed": [], "skipped": []}
+        return {
+            "since_hours": since_hours,
+            "counts": {k: len(v) for k, v in rows.items()},
+            **rows,
+        }
+    return _log_and_run("queue_get_local_pipeline", args, _do)
+
+
 # ───────── scout.* ────────────────────────────────────────────────────────
 
 @tool("scout_list_sources", "List available scout sources (name, priority, requires_auth).", {})
@@ -218,6 +279,51 @@ async def scout_list_sources(args: dict[str, Any]) -> dict:
         from scout import REGISTERED_SOURCES  # deferred
         return {"sources": [{"name": s.name, "priority": s.priority, "requires_auth": s.requires_auth} for s in REGISTERED_SOURCES]}
     return _log_and_run("scout_list_sources", {}, _do)
+
+
+@tool(
+    "scout_verify_url",
+    "Probe an apply URL to see if it's still live (HEAD with redirect follow). "
+    "Returns {ok: bool, status: int, final_url: str, reason: str}. Use before "
+    "navigating — Ashby/Greenhouse invalidate jobIds quickly and a stale URL "
+    "wastes a tab + LLM steps.",
+    {"url": str},
+)
+async def scout_verify_url(args: dict[str, Any]) -> dict:
+    def _do():
+        import httpx as _httpx  # deferred
+        url = (args.get("url") or "").strip()
+        if not url:
+            return {"ok": False, "status": 0, "final_url": "", "reason": "empty_url"}
+        try:
+            # HEAD first; some ATSes serve 405 to HEAD, retry GET if so.
+            with _httpx.Client(follow_redirects=True, timeout=8.0) as c:
+                r = c.head(url)
+                if r.status_code == 405:
+                    r = c.get(url)
+            ok = 200 <= r.status_code < 400
+            # Heuristic: Ashby/Greenhouse "Job not found" pages still
+            # return 200 with HTML; sniff the body for known markers.
+            reason = "ok"
+            if ok and "text/html" in (r.headers.get("content-type") or "").lower():
+                try:
+                    body = c.get(str(r.url)).text.lower() if r.request.method == "HEAD" else (r.text or "").lower()
+                except Exception:
+                    body = ""
+                for marker in ("job not found", "this job is no longer", "no longer accepting", "posting not found"):
+                    if marker in body:
+                        ok = False
+                        reason = f"dead_marker:{marker}"
+                        break
+            return {
+                "ok": ok,
+                "status": r.status_code,
+                "final_url": str(r.url),
+                "reason": reason,
+            }
+        except Exception as e:
+            return {"ok": False, "status": 0, "final_url": url, "reason": f"exception:{type(e).__name__}:{e}"}
+    return _log_and_run("scout_verify_url", args, _do)
 
 
 @tool("scout_run_source", "Run one scout source against the current tenant. Returns the list of JobPost dicts (pre-enqueue).", {"name": str})
@@ -297,6 +403,99 @@ async def notify_telegram(args: dict[str, Any]) -> dict:
     return _log_and_run("notify_telegram", args, _do)
 
 
+# ───────── worker.* ───────────────────────────────────────────────────────
+# Lifecycle of the python worker.py loop, controlled via the desktop
+# server's HTTP API (FastAPI on APPLYLOOP_PORT, default 18790). Brain
+# couldn't previously revive a dead worker — it had to fall back to
+# hand-driving the browser via MCP, which loses every per-ATS recipe
+# encoded in packages/worker/applier/*.py. These tools restore parity.
+
+def _desktop_url() -> str:
+    """Resolve the local desktop FastAPI base URL.
+
+    Priority:
+      1. APPLYLOOP_DESKTOP_URL env var (explicit override).
+      2. APPLYLOOP_PORT (matches packages/desktop/launch.py).
+      3. 18790 (the install.sh / launch.py default).
+
+    Always 127.0.0.1 — the desktop server binds locally only.
+    """
+    explicit = os.environ.get("APPLYLOOP_DESKTOP_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    port = os.environ.get("APPLYLOOP_PORT", "18790").strip() or "18790"
+    return f"http://127.0.0.1:{port}"
+
+
+def _worker_api(method: str, path: str) -> dict:
+    """One-shot HTTP call to the desktop worker API. Short timeout —
+    worker.start can spawn a subprocess in <2s; status is instant; stop
+    waits up to 10s for graceful SIGTERM in process_manager but we
+    don't block the brain on that."""
+    import httpx as _httpx  # deferred
+    url = _desktop_url() + path
+    try:
+        with _httpx.Client(timeout=15.0) as c:
+            r = c.request(method, url)
+        if r.status_code >= 400:
+            return {"ok": False, "status": r.status_code, "error": (r.text or "")[:300]}
+        try:
+            return r.json()
+        except Exception:
+            return {"ok": True, "raw": (r.text or "")[:300]}
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"could not reach desktop server at {url}: {e}",
+            "hint": "Is the ApplyLoop desktop app running? Try `applyloop start`.",
+        }
+
+
+@tool(
+    "worker_status",
+    "Report the python worker.py loop state: running, pid, uptime, restart_count. "
+    "Use BEFORE starting a hand-driven apply — if running=true, claim a queue row "
+    "via queue_claim_next instead; the worker will handle ATS-specific quirks "
+    "(React-Select, dropzone uploads, multi-page wizards) that brain has to work "
+    "around manually.",
+    {},
+)
+async def worker_status(args: dict[str, Any]) -> dict:
+    return _log_and_run("worker_status", {}, lambda: _worker_api("GET", "/api/worker/status"))
+
+
+@tool(
+    "worker_start",
+    "Start the python worker.py loop via the desktop server. The worker reads "
+    "the queue and applies jobs deterministically using the ATS-specific "
+    "recipes in packages/worker/applier/*.py — much more reliable than hand-"
+    "driving the browser through MCP. Returns {ok, pid, ...}.",
+    {},
+)
+async def worker_start(args: dict[str, Any]) -> dict:
+    return _log_and_run("worker_start", {}, lambda: _worker_api("POST", "/api/worker/start"))
+
+
+@tool(
+    "worker_stop",
+    "Stop the python worker.py loop. Returns {ok, pid}. Sends SIGTERM with up "
+    "to 10s graceful window before SIGKILL.",
+    {},
+)
+async def worker_stop(args: dict[str, Any]) -> dict:
+    return _log_and_run("worker_stop", {}, lambda: _worker_api("POST", "/api/worker/stop"))
+
+
+@tool(
+    "worker_restart",
+    "Stop-then-start the python worker.py loop. Use after pulling code or "
+    "rotating credentials.",
+    {},
+)
+async def worker_restart(args: dict[str, Any]) -> dict:
+    return _log_and_run("worker_restart", {}, lambda: _worker_api("POST", "/api/worker/restart"))
+
+
 # ───────── knowledge.* ────────────────────────────────────────────────────
 
 @tool(
@@ -319,18 +518,20 @@ async def knowledge_get_ats_playbook(args: dict[str, Any]) -> dict:
 ALL_TOOLS = [
     # browser
     browser_navigate, browser_wait_load, browser_snapshot, browser_click,
-    browser_fill, browser_select, browser_type, browser_upload,
-    browser_press_key, browser_evaluate_js, browser_screenshot,
-    browser_list_tabs, browser_dismiss_stray_tabs,
+    browser_fill, browser_select, browser_select_react, browser_type,
+    browser_upload, browser_press_key, browser_evaluate_js,
+    browser_screenshot, browser_list_tabs, browser_dismiss_stray_tabs,
     # queue
     queue_claim_next, queue_update_status, queue_log_application,
-    queue_get_pipeline,
+    queue_get_pipeline, queue_get_local_pipeline,
     # scout
-    scout_list_sources, scout_run_source,
+    scout_list_sources, scout_run_source, scout_verify_url,
     # tenant
     tenant_load,
     # notify
     notify_heartbeat, notify_upload_screenshot, notify_telegram,
+    # worker lifecycle
+    worker_status, worker_start, worker_stop, worker_restart,
     # knowledge
     knowledge_get_ats_playbook,
 ]
