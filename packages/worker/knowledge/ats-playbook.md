@@ -29,9 +29,33 @@ Conventions used below:
   input labeled "Enter security code," fetch the most recent Greenhouse
   code from the configured Gmail account (via the worker's IMAP helper)
   and fill it.
-- **reCAPTCHA.** When the snapshot has an `iframe[title*="reCAPTCHA"]`,
-  set `page_state=captcha` and skip — Greenhouse reCAPTCHA is enterprise
-  and cannot be solved client-side.
+- **reCAPTCHA — v2 vs v3, very different.**
+  - **v3 (invisible, the common case).** A hidden `<input>` field named
+    `g-recaptcha-response-XXXXX` sitting in the form payload, no iframe,
+    no checkbox, no challenge surface. v3 scores the session by browser
+    fingerprint and submits silently. Headed openclaw sessions pass it
+    fine — proceed normally and submit. **Do NOT skip the job.** The
+    only signal the v3 token failed is a post-submit error page; if you
+    see one, log a failure and move on — it's a fingerprint problem,
+    not a captcha-solving one.
+  - **v2 (visible challenge).** Snapshot has an `iframe[title*="reCAPTCHA"]`
+    OR a visible "I'm not a robot" checkbox OR an image-grid challenge.
+    Cannot be solved client-side. Set `page_state=captcha` and skip.
+  - Quick discriminator: if `document.querySelector('iframe[title*="reCAPTCHA"]')`
+    is null but `document.querySelector('input[name^="g-recaptcha-response"]')`
+    is non-null, you have v3 — submit normally.
+- **React-Select country/state dropdowns.** Greenhouse uses React-Select
+  v5 for country, work-auth, and several screening dropdowns. A normal
+  click on the option visually selects it but the form's onChange never
+  fires — submit returns "Select a country". Use `browser_select_react`
+  with `selector=".select__control"` (or the input ref) and the option's
+  label. The tool walks the React fiber and calls onChange directly.
+- **Resume dropzone is React-controlled.** The visible "Attach" / drag-
+  and-drop area is NOT the underlying `<input type=file>`. `browser_upload`
+  now arms the input + clicks + verifies via JS that some
+  `input[type=file]` actually holds a file, falling back to a synthetic
+  `change` dispatch if the click was a no-op. Trust its return — if it
+  raises BrowserError, the file genuinely didn't land.
 
 ## Lever (`jobs.lever.co/<slug>`)
 
