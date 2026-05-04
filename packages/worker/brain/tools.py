@@ -338,6 +338,164 @@ async def scout_verify_url(args: dict[str, Any]) -> dict:
     return _log_and_run("scout_verify_url", args, _do)
 
 
+@tool(
+    "scout_set_plan",
+    "Bias the next worker scout cycle. Brain calls this when it has "
+    "signal that some sources are noisy / rate-limited / low-yield, OR "
+    "to dedupe / narrow the tenant's search query list. `sources_json` "
+    "is a JSON array of source NAMES (greenhouse, ashby, lever, "
+    "linkedin_public, jsearch, himalayas, etc.) — null/empty = run all "
+    "enabled. `queries_json` is a JSON array of search strings to use "
+    "INSTEAD of tenant.search_queries — null/empty = keep tenant defaults. "
+    "`max_per_source` caps results per source (None = unlimited). "
+    "`ttl_minutes` is how long the plan stays in force (default 240 = "
+    "4 hrs); after expiry, worker reverts to defaults. ALWAYS pass a "
+    "`notes` string explaining WHY — future you (or the operator) "
+    "needs to debug 'why didn't scout run X today'.",
+    {"sources_json": str, "queries_json": str, "max_per_source": int, "ttl_minutes": int, "notes": str},
+)
+async def scout_set_plan(args: dict[str, Any]) -> dict:
+    def _do():
+        from scout.plan import set_plan  # deferred
+        try:
+            sources = json.loads(args.get("sources_json") or "null")
+            queries = json.loads(args.get("queries_json") or "null")
+        except json.JSONDecodeError as e:
+            return {"ok": False, "error": f"invalid JSON in sources_json/queries_json: {e}"}
+        return set_plan(
+            sources=sources if sources else None,
+            queries=queries if queries else None,
+            max_per_source=args.get("max_per_source") or None,
+            ttl_minutes=args.get("ttl_minutes") or 240,
+            notes=args.get("notes") or "",
+            set_by="brain",
+        )
+    return _log_and_run("scout_set_plan", args, _do)
+
+
+@tool(
+    "scout_get_plan",
+    "Read the current scout plan (None / empty if no active plan or it's expired). Useful for the brain to inspect what bias is currently applied before deciding to overwrite.",
+    {},
+)
+async def scout_get_plan(args: dict[str, Any]) -> dict:
+    def _do():
+        from scout.plan import get_active_plan, _read  # deferred
+        active = get_active_plan()
+        return {
+            "active": active,
+            "raw_present": _read() is not None,
+            "is_stale": active is None and _read() is not None,
+        }
+    return _log_and_run("scout_get_plan", {}, _do)
+
+
+@tool(
+    "scout_clear_plan",
+    "Remove the scout plan immediately (don't wait for TTL). Worker "
+    "reverts to default REGISTERED_SOURCES + tenant.search_queries on "
+    "the next cycle.",
+    {},
+)
+async def scout_clear_plan(args: dict[str, Any]) -> dict:
+    def _do():
+        from scout.plan import clear_plan  # deferred
+        return {"cleared": clear_plan()}
+    return _log_and_run("scout_clear_plan", {}, _do)
+
+
+@tool(
+    "scout_get_stats",
+    "Read scout/apply stats from the local SQLite to inform scout-plan "
+    "decisions. Returns per-source enqueue counts + per-ATS submission "
+    "counts over the last `since_hours` (default 168 = 7d). Brain uses "
+    "this to decide which sources are worth running today: a source "
+    "with high enqueue count but zero submitted is probably noisy; "
+    "zero enqueued in 24h means it's rate-limited or broken.",
+    {"since_hours": int},
+)
+async def scout_get_stats(args: dict[str, Any]) -> dict:
+    def _do():
+        import sqlite3
+        from contextlib import closing as _closing
+        from db import LOCAL_DB_PATH  # deferred
+        since_hours = int(args.get("since_hours") or 168)
+        out: dict[str, Any] = {"since_hours": since_hours, "by_source": {}, "by_ats": {}}
+        try:
+            with _closing(sqlite3.connect(LOCAL_DB_PATH, timeout=5.0)) as conn:
+                # by source — count rows per source over the window
+                cur = conn.execute(
+                    "SELECT COALESCE(source,''), status, COUNT(*) FROM applications "
+                    "WHERE COALESCE(updated_at, applied_at, scouted_at) >= datetime('now', ?) "
+                    "GROUP BY 1, 2",
+                    (f"-{since_hours} hours",),
+                )
+                for src, status, n in cur.fetchall():
+                    out["by_source"].setdefault(src or "(none)", {})[status] = n
+                cur = conn.execute(
+                    "SELECT COALESCE(ats,''), status, COUNT(*) FROM applications "
+                    "WHERE COALESCE(updated_at, applied_at, scouted_at) >= datetime('now', ?) "
+                    "GROUP BY 1, 2",
+                    (f"-{since_hours} hours",),
+                )
+                for ats_v, status, n in cur.fetchall():
+                    out["by_ats"].setdefault(ats_v or "(none)", {})[status] = n
+        except Exception as e:
+            return {"error": f"local sqlite read failed: {e}", **out}
+        return out
+    return _log_and_run("scout_get_stats", args, _do)
+
+
+@tool(
+    "scout_search_google",
+    "Search the web (DuckDuckGo HTML — no API key) for query and return "
+    "the top results. Use to find ATS slugs / company career pages / "
+    "verify a job exists when scout returned a stale URL. Returns "
+    "`[{title, url, snippet}, ...]`. Defaults to 10 results.",
+    {"query": str, "max_results": int},
+)
+async def scout_search_google(args: dict[str, Any]) -> dict:
+    def _do():
+        import re as _re
+        import httpx as _httpx
+        q = (args.get("query") or "").strip()
+        if not q:
+            return {"error": "query is required"}
+        max_results = int(args.get("max_results") or 10)
+        # DDG HTML endpoint — stable, no auth, returns scrapable HTML.
+        # Avoids hitting Google directly (which requires API keys + has
+        # aggressive bot detection).
+        url = "https://duckduckgo.com/html/"
+        try:
+            with _httpx.Client(timeout=10.0, follow_redirects=True,
+                               headers={"User-Agent": "Mozilla/5.0 (ApplyLoop scout)"}) as c:
+                r = c.post(url, data={"q": q})
+                html = r.text
+        except Exception as e:
+            return {"error": f"http error: {e}"}
+        # Lightweight extraction: <a class="result__a" href="...">title</a>
+        # plus <a class="result__snippet">snippet</a>. DDG's HTML shape
+        # is stable enough for this; a real upgrade would parse with bs4
+        # but adding a dep is overkill.
+        results = []
+        for m in _re.finditer(
+            r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+            html, _re.DOTALL,
+        ):
+            href = m.group(1)
+            title = _re.sub(r"<[^>]+>", "", m.group(2)).strip()
+            # DDG sometimes wraps the real URL in /l/?kh=-1&uddg=<encoded>
+            if "uddg=" in href:
+                from urllib.parse import unquote, parse_qs, urlparse
+                qs = parse_qs(urlparse(href).query)
+                href = unquote(qs.get("uddg", [href])[0])
+            results.append({"title": title, "url": href, "snippet": ""})
+            if len(results) >= max_results:
+                break
+        return {"query": q, "count": len(results), "results": results}
+    return _log_and_run("scout_search_google", args, _do)
+
+
 @tool("scout_run_source", "Run one scout source against the current tenant. Returns the list of JobPost dicts (pre-enqueue).", {"name": str})
 async def scout_run_source(args: dict[str, Any]) -> dict:
     def _do():
@@ -632,6 +790,8 @@ ALL_TOOLS = [
     queue_get_pipeline, queue_get_local_pipeline,
     # scout
     scout_list_sources, scout_run_source, scout_verify_url,
+    scout_set_plan, scout_get_plan, scout_clear_plan,
+    scout_get_stats, scout_search_google,
     # tenant
     tenant_load,
     # notify

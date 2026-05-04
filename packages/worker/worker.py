@@ -455,11 +455,49 @@ def run_scout_cycle(tenant: TenantConfig, style_filter: str | None = None) -> in
     """
     update_heartbeat(tenant.user_id, "scouting", tenant.profile_summary_hint())
 
+    # Brain-driven scout plan: when present and not stale, narrows
+    # this cycle's source list AND optionally overrides the tenant's
+    # search queries. Brain writes via scout_set_plan MCP tool; worker
+    # honors it here. With no plan, behavior is identical to pre-2026-
+    # 05-04 (run every source against tenant.search_queries). Plan TTL
+    # ensures a forgotten override can't keep biasing scout for days.
+    from scout.plan import get_active_plan, applies_to_source, effective_queries
+    _plan = get_active_plan()
+    if _plan:
+        logger.info(
+            f"Scout plan active (set by {_plan.get('set_by','?')} {_plan.get('set_at','?')[:16]}, "
+            f"ttl={_plan.get('ttl_minutes')}m): "
+            f"sources={_plan.get('sources') or 'all'}, "
+            f"queries={'override' if _plan.get('queries') is not None else 'tenant defaults'}, "
+            f"max_per_source={_plan.get('max_per_source') or 'unlimited'}"
+        )
+        # Override search queries on the tenant FOR THIS CYCLE only —
+        # restored at end so subsequent cycles aren't affected unless
+        # the plan is still active. Sources read tenant.search_queries
+        # directly so we have to mutate the live object.
+        _orig_queries = list(tenant.search_queries)
+        _planned_queries = effective_queries(_plan, _orig_queries)
+        if _planned_queries != _orig_queries:
+            try:
+                tenant.search_queries = list(_planned_queries)  # type: ignore[misc]
+            except Exception:
+                pass
+    else:
+        _orig_queries = None
+
     all_jobs: list[dict] = []
     counts: dict[str, int] = {}
 
+    _max_per_source = (_plan or {}).get("max_per_source")
+
     for source in REGISTERED_SOURCES:
         if not source.is_enabled_for(tenant):
+            continue
+        # Plan-level allow-list: brain narrows the source set when it
+        # has signal that some are noisy / rate-limited / low-yield.
+        if not applies_to_source(_plan, source.name):
+            counts[source.name] = 0
+            logger.info(f"Scout: {source.name} skipped by plan")
             continue
         if style_filter is not None:
             source_style = _SCOUT_STYLE.get(source.name, "title")
@@ -474,6 +512,12 @@ def run_scout_cycle(tenant: TenantConfig, style_filter: str | None = None) -> in
         try:
             logger.info(f"Scout: {source.priority.upper()} — {source.name} for {tenant.user_id[:8]}")
             jobs = source.scout(tenant)
+            if _max_per_source and len(jobs) > _max_per_source:
+                logger.info(
+                    f"Scout: {source.name} returned {len(jobs)} → capped to "
+                    f"{_max_per_source} per plan"
+                )
+                jobs = jobs[: int(_max_per_source)]
             for j in jobs:
                 j.setdefault("source", source.name)
             all_jobs.extend(jobs)
@@ -481,6 +525,14 @@ def run_scout_cycle(tenant: TenantConfig, style_filter: str | None = None) -> in
         except Exception as e:
             logger.warning(f"{source.name} scout failed: {e}")
             counts[source.name] = 0
+
+    # Restore tenant.search_queries so the plan override is single-cycle
+    # only. Subsequent calls re-read get_active_plan() and re-apply.
+    if _orig_queries is not None:
+        try:
+            tenant.search_queries = _orig_queries  # type: ignore[misc]
+        except Exception:
+            pass
 
     # Tag every job with the best-matching profile bundle (multi-profile).
     # Single-profile users: every job gets default.id. Jobs no bundle

@@ -751,6 +751,152 @@ def scout_verify_url(url: str) -> str:
 # ── knowledge ─────────────────────────────────────────────────────────────
 
 @mcp.tool()
+def scout_set_plan(
+    sources_json: str = "null",
+    queries_json: str = "null",
+    max_per_source: int = 0,
+    ttl_minutes: int = 240,
+    notes: str = "",
+) -> str:
+    """Bias the next worker scout cycle.
+
+    Brain calls this after looking at scout_get_stats / queue state to
+    decide which sources are worth running and what queries to use.
+
+    sources_json: JSON array of source NAMES (greenhouse, ashby, lever,
+        linkedin_public, jsearch, himalayas, etc.) — null/empty = run
+        all enabled sources.
+    queries_json: JSON array of search strings INSTEAD OF
+        tenant.search_queries — null/empty = keep tenant defaults. Use
+        to dedupe ("Engineer" + "Senior Engineer" + "Sr. Engineer" →
+        just one) or to focus on a hot title temporarily.
+    max_per_source: cap results per source per cycle (0 = unlimited).
+        Use to throttle a noisy source.
+    ttl_minutes: how long the plan stays in force (default 240 = 4 hrs).
+        After expiry, worker reverts to defaults — prevents stale
+        biases sticking forever.
+    notes: free-text. ALWAYS include why — "LinkedIn rate-limited,
+        Ashby boards yielded 4/5 submissions yesterday."
+    """
+    from scout.plan import set_plan
+    try:
+        sources = json.loads(sources_json) if sources_json and sources_json != "null" else None
+        queries = json.loads(queries_json) if queries_json and queries_json != "null" else None
+    except json.JSONDecodeError as e:
+        return json.dumps({"ok": False, "error": f"invalid JSON: {e}"})
+    return json.dumps(
+        set_plan(
+            sources=sources,
+            queries=queries,
+            max_per_source=max_per_source or None,
+            ttl_minutes=ttl_minutes,
+            notes=notes,
+            set_by="brain",
+        ),
+        default=str,
+    )
+
+
+@mcp.tool()
+def scout_get_plan() -> str:
+    """Read the active scout plan or {} if none active. Useful before
+    overwriting — diff your new plan against the current to make sure
+    you're moving in the right direction."""
+    from scout.plan import get_active_plan, _read
+    active = get_active_plan()
+    return json.dumps(
+        {"active": active, "raw_present": _read() is not None,
+         "is_stale": active is None and _read() is not None},
+        default=str,
+    )
+
+
+@mcp.tool()
+def scout_clear_plan() -> str:
+    """Remove the scout plan immediately. Worker reverts to default
+    REGISTERED_SOURCES + tenant.search_queries on the next cycle."""
+    from scout.plan import clear_plan
+    return json.dumps({"cleared": clear_plan()})
+
+
+@mcp.tool()
+def scout_get_stats(since_hours: int = 168) -> str:
+    """Read scout/apply stats from local SQLite to inform the scout-plan.
+
+    Returns per-source enqueue counts + per-ATS submission counts over
+    the last `since_hours` (default 168 = 7d). Use BEFORE calling
+    scout_set_plan so your decision is data-driven instead of guessed.
+
+    A source with high enqueue but zero submitted is probably noisy
+    (titles slipped past tenant filters but were still wrong). Zero
+    enqueued in 24h means it's rate-limited or broken.
+    """
+    import sqlite3
+    from contextlib import closing as _closing
+    from db import LOCAL_DB_PATH
+    out: dict = {"since_hours": since_hours, "by_source": {}, "by_ats": {}}
+    try:
+        with _closing(sqlite3.connect(LOCAL_DB_PATH, timeout=5.0)) as conn:
+            cur = conn.execute(
+                "SELECT COALESCE(source,''), status, COUNT(*) FROM applications "
+                "WHERE COALESCE(updated_at, applied_at, scouted_at) >= datetime('now', ?) "
+                "GROUP BY 1, 2",
+                (f"-{int(since_hours)} hours",),
+            )
+            for src, status, n in cur.fetchall():
+                out["by_source"].setdefault(src or "(none)", {})[status] = n
+            cur = conn.execute(
+                "SELECT COALESCE(ats,''), status, COUNT(*) FROM applications "
+                "WHERE COALESCE(updated_at, applied_at, scouted_at) >= datetime('now', ?) "
+                "GROUP BY 1, 2",
+                (f"-{int(since_hours)} hours",),
+            )
+            for ats_v, status, n in cur.fetchall():
+                out["by_ats"].setdefault(ats_v or "(none)", {})[status] = n
+    except Exception as e:
+        return json.dumps({"error": f"local sqlite read failed: {e}", **out}, default=str)
+    return json.dumps(out, default=str)
+
+
+@mcp.tool()
+def scout_search_google(query: str, max_results: int = 10) -> str:
+    """Web search via DuckDuckGo HTML (no API key). Use to find ATS
+    slugs, company career pages, or verify a stale job URL.
+
+    Returns JSON: {query, count, results: [{title, url, snippet}, ...]}.
+    Brain decides when to call this — typically when a scout source
+    didn't find a target company, or when an apply URL went dead.
+    """
+    import re as _re
+    import httpx as _httpx
+    q = (query or "").strip()
+    if not q:
+        return json.dumps({"error": "query is required"})
+    try:
+        with _httpx.Client(timeout=10.0, follow_redirects=True,
+                           headers={"User-Agent": "Mozilla/5.0 (ApplyLoop scout)"}) as c:
+            r = c.post("https://duckduckgo.com/html/", data={"q": q})
+            html = r.text
+    except Exception as e:
+        return json.dumps({"error": f"http error: {e}"})
+    results = []
+    for m in _re.finditer(
+        r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+        html, _re.DOTALL,
+    ):
+        href = m.group(1)
+        title = _re.sub(r"<[^>]+>", "", m.group(2)).strip()
+        if "uddg=" in href:
+            from urllib.parse import unquote, parse_qs, urlparse
+            qs = parse_qs(urlparse(href).query)
+            href = unquote(qs.get("uddg", [href])[0])
+        results.append({"title": title, "url": href, "snippet": ""})
+        if len(results) >= max_results:
+            break
+    return json.dumps({"query": q, "count": len(results), "results": results})
+
+
+@mcp.tool()
 def knowledge_get_ats_playbook(name: str) -> str:
     """Return the ATS playbook section. Names: greenhouse, lever, ashby, smartrecruiters, workday, linkedin, universal.
 
