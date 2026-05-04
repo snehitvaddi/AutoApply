@@ -185,6 +185,34 @@ class WorkerProcess:
         # Start reading output in background
         self._read_task = asyncio.create_task(self._read_output())
 
+        # Wait briefly to catch dead-on-arrival exits. Before this the
+        # method returned ok:True the moment Popen was set, even if the
+        # subprocess died in the next millisecond (missing
+        # APPLYLOOP_USER_ID, bad venv path, etc.). Brain saw running:
+        # true → polled status → got running:false uptime:0 and
+        # restarted, repeating forever. Now: 1.5s grace window. If it
+        # exited inside that window we surface the exit code + buffered
+        # output instead of lying about ok.
+        for _ in range(15):
+            await asyncio.sleep(0.1)
+            if self.process.poll() is not None:
+                break
+        if self.process.poll() is not None:
+            exit_code = self.process.returncode
+            tail = "\n".join(list(self.output_buffer)[-20:]) if self.output_buffer else ""
+            WORKER_PID_FILE.unlink(missing_ok=True)
+            logger.error(f"Worker {self.process.pid} exited immediately (code={exit_code})")
+            return {
+                "ok": False,
+                "error": f"worker exited with code {exit_code} within 1.5s of spawn",
+                "exit_code": exit_code,
+                "tail": tail,
+                "hint": (
+                    "Common causes: missing APPLYLOOP_USER_ID env (profile.json layout), "
+                    "missing WORKER_TOKEN, ENCRYPTION_KEY unset, broken venv python path."
+                ),
+            }
+
         logger.info(f"Worker started with PID {self.process.pid}")
         return {"ok": True, **self.status()}
 

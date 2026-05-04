@@ -83,6 +83,45 @@ def load_token() -> str | None:
     return os.environ.get("AUTOAPPLY_TOKEN") or os.environ.get("WORKER_TOKEN")
 
 
+def _read_user_id_from_profile() -> str | None:
+    """Best-effort user_id lookup from ~/.applyloop/profile.json.
+
+    Profile shape varied across installs: flat {user_id, id} OR nested
+    {user: {id}} (activate-response layout) OR {data: {user: {id}}}
+    (cli-config layout). Probe all three so the desktop can inject a
+    correct APPLYLOOP_USER_ID into the worker subprocess regardless
+    of which layout is on disk. Mirrors the worker's own probe in
+    worker._read_user_id_from_profile_json — both have to agree.
+    """
+    import json as _json
+    home = os.environ.get("APPLYLOOP_HOME") or os.path.expanduser("~/.applyloop")
+    candidates = [
+        os.environ.get("APPLYLOOP_PROFILE"),
+        os.path.join(home, "profile.json"),
+        os.path.expanduser("~/.applyloop/profile.json"),
+    ]
+    for path in candidates:
+        if not path:
+            continue
+        try:
+            with open(path) as f:
+                data = _json.load(f)
+            uid = (
+                data.get("user_id")
+                or data.get("id")
+                or (isinstance(data.get("user"), dict) and data["user"].get("id"))
+                or (isinstance(data.get("user"), dict) and data["user"].get("user_id"))
+                or (isinstance(data.get("data"), dict)
+                    and isinstance(data["data"].get("user"), dict)
+                    and (data["data"]["user"].get("id") or data["data"]["user"].get("user_id")))
+            )
+            if uid:
+                return str(uid)
+        except Exception:
+            continue
+    return None
+
+
 def get_worker_env() -> dict[str, str]:
     """Build environment variables for the worker subprocess."""
     token = load_token()
@@ -93,6 +132,15 @@ def get_worker_env() -> dict[str, str]:
         # Ensure the worker writes to the same SQLite DB that the desktop UI reads
         "APPLYLOOP_DB": str(WORKSPACE_DIR / "applications.db"),
     }
+    # Inject APPLYLOOP_USER_ID so the worker doesn't have to fall back
+    # to its own profile probe — keeps the desktop as the single source
+    # of truth for "which tenant is this worker running for". Without
+    # this, profile.json layout drift caused worker to exit in
+    # milliseconds with "no user_id, cannot run tenant-agnostic".
+    if not env.get("APPLYLOOP_USER_ID"):
+        uid = _read_user_id_from_profile()
+        if uid:
+            env["APPLYLOOP_USER_ID"] = uid
     if token:
         env["WORKER_TOKEN"] = token
         env["AUTOAPPLY_TOKEN"] = token

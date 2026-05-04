@@ -799,6 +799,14 @@ def _read_user_id_from_profile_json() -> str | None:
     """Fallback path if APPLYLOOP_USER_ID isn't in env yet. Reads
     ~/.applyloop/profile.json which install.sh writes at activation.
     Returns None if the file doesn't exist or doesn't have a user_id.
+
+    Profile.json shape evolved over time. install.sh originally wrote
+    a flat `{"user_id": "..."}`, then the activate response shape
+    (`{"user": {"id": "..."}}`) took over. Both layouts are still in
+    the wild on existing installs, so probe BOTH — the worker was
+    silently exiting on millisecond #2 for users with the nested
+    layout because the lookup returned None and main() bailed at
+    "no APPLYLOOP_USER_ID".
     """
     import json
     candidates = [
@@ -811,7 +819,19 @@ def _read_user_id_from_profile_json() -> str | None:
         try:
             with open(path) as f:
                 data = json.load(f)
-            uid = data.get("user_id") or data.get("id")
+            uid = (
+                data.get("user_id")
+                or data.get("id")
+                # Activate-response layout: {"user": {"id": "..."}}.
+                or (isinstance(data.get("user"), dict) and data["user"].get("id"))
+                # Defensive: profile.user_id under user{}, in case of
+                # a future shape that nests but keeps the snake_case key.
+                or (isinstance(data.get("user"), dict) and data["user"].get("user_id"))
+                # cli-config response also nests under data{user}.
+                or (isinstance(data.get("data"), dict)
+                    and isinstance(data["data"].get("user"), dict)
+                    and (data["data"]["user"].get("id") or data["data"]["user"].get("user_id")))
+            )
             if uid:
                 return str(uid)
         except Exception:
