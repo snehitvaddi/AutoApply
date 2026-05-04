@@ -37,10 +37,46 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# Apply-in-progress marker — preflight reads this to skip the deep
+# browser probe (and the gateway-restart fallback) while an apply is
+# actively driving the same Chrome session. Without this signal,
+# preflight's 10-min deep probe could shell `openclaw gateway restart`
+# mid-apply, killing the session. See plan
+# `hey-i-understand-the-hashed-sutherland.md` Fix 3.
+_APPLY_MARKER_PATH = os.path.join(
+    os.environ.get("APPLYLOOP_HOME") or os.path.expanduser("~/.applyloop"),
+    ".apply-in-progress",
+)
+# Auto-expire after 5 min — a real apply can take a couple minutes
+# (resume upload, captcha wait), but if the marker outlives that the
+# brain almost certainly crashed and we shouldn't hold preflight off
+# forever.
+_APPLY_MARKER_TTL_S = 300
+
+
+def _write_apply_marker() -> None:
+    try:
+        os.makedirs(os.path.dirname(_APPLY_MARKER_PATH), exist_ok=True)
+        with open(_APPLY_MARKER_PATH, "w") as f:
+            f.write(str(int(time.time())))
+    except OSError as e:
+        logger.debug(f"could not write apply marker: {e}")
+
+
+def _clear_apply_marker() -> None:
+    try:
+        os.unlink(_APPLY_MARKER_PATH)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logger.debug(f"could not clear apply marker: {e}")
 
 
 def _make_outcome(
@@ -326,7 +362,10 @@ def apply_one_job(
         update_local_status(job, "failed", f"applier init: {e}")
         return _make_outcome("error", job=job, error=f"applier init: {e}")
 
-    # Run the recipe.
+    # Run the recipe. Marker tells preflight "an apply is driving this
+    # Chrome session — do NOT deep-probe / restart the gateway". Cleared
+    # in finally so a crash, success, or non-success all release it.
+    _write_apply_marker()
     try:
         result = applier.apply(apply_url)
     except Exception as e:
@@ -334,6 +373,8 @@ def apply_one_job(
         update_local_status(job, "failed", f"applier raised: {e}")
         log_application(user_id, job, {"status": "failed", "error": f"applier raised: {e}"})
         return _make_outcome("error", job=job, error=f"applier raised: {e}")
+    finally:
+        _clear_apply_marker()
 
     if result.success:
         screenshot_url = None

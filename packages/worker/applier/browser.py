@@ -375,19 +375,58 @@ def focus_tab(target_id: str) -> str:
     return browser(f"focus {target_id}", timeout=5)
 
 
+# Known stray-tab patterns. These are tabs the apply flow never wants
+# kept around: about:blank placeholders OpenClaw spawns at gateway boot,
+# tracker pixels (li.protechts.net, googletagmanager, doubleclick),
+# and OAuth iframe pop-ins (accounts.google.com/gsi). Match against the
+# tab URL, case-insensitive, substring.
+#
+# When `dismiss_stray_tabs(keep_url_substring=None)` is called without
+# hostname context, we close ONLY tabs matching this allowlist and keep
+# every other "real" tab. This replaces the previous default of "keep
+# only tab[0]" which silently closed the brain's apply tab on every
+# `browser_snapshot()` call (since OpenClaw keeps about:blank as tab[0]).
+_STRAY_URL_PATTERNS: tuple[str, ...] = (
+    "about:blank",
+    "chrome://",
+    "chrome-extension://",
+    "data:",
+    "li.protechts.net",          # LinkedIn bot-guard tracker
+    "googletagmanager",
+    "doubleclick.net",
+    "accounts.google.com/gsi",   # Google OAuth iframe pop-ins
+)
+
+
+def _is_stray(url: str) -> bool:
+    u = (url or "").lower()
+    if not u:
+        # An empty URL is itself a stray (orphan target with no nav).
+        return True
+    return any(p in u for p in _STRAY_URL_PATTERNS)
+
+
 def dismiss_stray_tabs(keep_url_substring: str | None = None) -> int:
-    """Close every tab that is NOT the apply tab.
+    """Close stray tabs that get in the way of the apply flow.
+
+    Two modes:
+
+    - `keep_url_substring="<hostname>"` (recommended during an active
+      apply): keep ONLY tabs whose URL contains the hostname; close
+      everything else. If no tab matches, fall back to keeping tabs
+      that aren't on the stray allowlist (the brain may have just
+      started navigating — don't kill its in-flight tab).
+
+    - `keep_url_substring=None` (ad-hoc cleanup with no apply context):
+      close only tabs matching `_STRAY_URL_PATTERNS` (about:blank,
+      trackers, OAuth iframes). Every other tab is kept. NEVER keeps
+      "only tab[0]" — that historical default silently killed the
+      brain's apply tab during the brain-as-conductor era.
 
     The apply flow occasionally triggers privacy-policy / terms-of-use
-    links that open a new tab and steal focus. OpenClaw's next snapshot
-    then targets the popup, the agent fills the wrong page, and the
-    original form stalls. Call this between apply steps to keep the
-    session single-tabbed.
-
-    Args:
-        keep_url_substring: if given, keep tabs whose URL contains this
-            substring (use the apply ATS hostname). If None, keep only
-            the first tab in the list.
+    links that open a new tab and steal focus. Use the hostname mode
+    between apply steps. Use the None mode for periodic
+    blank/tracker sweeps where you can't safely identify the apply tab.
 
     Returns:
         Number of tabs closed. 0 means nothing to do.
@@ -397,17 +436,27 @@ def dismiss_stray_tabs(keep_url_substring: str | None = None) -> int:
         return 0
 
     closed = 0
+    keeper_ids: set[str] = set()
+
     if keep_url_substring:
-        keeper_ids: set[str] = set()
+        needle = keep_url_substring.lower()
         for t in tabs:
             url = (t.get("url") or "").lower()
-            if keep_url_substring.lower() in url and not keeper_ids:
+            if needle in url and not keeper_ids:
                 keeper_ids.add(str(t.get("targetId") or ""))
-        # No tab matched the filter? Fall back to keeping the first.
+        # No tab matched? Fall back to keeping every non-stray. Better
+        # to leave a few extra tabs open than risk closing the apply
+        # tab during a navigation race.
         if not keeper_ids:
-            keeper_ids = {str(tabs[0].get("targetId") or "")}
+            for t in tabs:
+                if not _is_stray(t.get("url") or ""):
+                    keeper_ids.add(str(t.get("targetId") or ""))
     else:
-        keeper_ids = {str(tabs[0].get("targetId") or "")}
+        # No hostname context — keep every "real" tab, close only known
+        # strays.
+        for t in tabs:
+            if not _is_stray(t.get("url") or ""):
+                keeper_ids.add(str(t.get("targetId") or ""))
 
     for t in tabs:
         tid = str(t.get("targetId") or "")
@@ -416,8 +465,9 @@ def dismiss_stray_tabs(keep_url_substring: str | None = None) -> int:
         close_tab(tid)
         closed += 1
 
-    # Make sure the keeper is foregrounded — popups often steal focus
-    # and OpenClaw's next snapshot targets the focused tab.
+    # Foreground a real tab so OpenClaw's next snapshot targets the
+    # right context. With multiple keepers we just pick one (any real
+    # tab is better than letting focus stay on a popup we just closed).
     if keeper_ids:
         focus_tab(next(iter(keeper_ids)))
 

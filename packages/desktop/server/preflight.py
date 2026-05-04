@@ -580,6 +580,32 @@ def _check_browser_ready() -> dict:
     deep_probe_s = int(os.environ.get("APPLYLOOP_BROWSER_DEEP_PROBE_S", "600") or "600")
     last_deep_ok = _BROWSER_CACHE.get("last_deep_ok", 0.0)
 
+    # Apply-in-progress marker: when the brain (or a recipe) is actively
+    # driving Chrome, the deep probe's `openclaw browser snapshot` can
+    # collide with the in-flight session, and the gateway-restart
+    # fallback would kill the apply tab outright. Skip both while the
+    # marker is fresh. single_apply.py writes/clears it around recipe
+    # runs; brain calls browser_session_begin/end during manual handoff.
+    apply_marker_path = os.path.join(
+        os.environ.get("APPLYLOOP_HOME") or os.path.expanduser("~/.applyloop"),
+        ".apply-in-progress",
+    )
+    apply_marker_ttl = 300  # mirrors _APPLY_MARKER_TTL_S in single_apply.py
+    try:
+        st = os.stat(apply_marker_path)
+        if (now - st.st_mtime) < apply_marker_ttl:
+            return _cache({
+                "id": "browser_ready",
+                "ok": True,
+                "optional": True,
+                "label": "Browser (OpenClaw)",
+                "detail": "apply in progress, deep probe deferred",
+            }, 30)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
     if not _gateway_running():
         # Don't auto-restart from preflight — the openclaw gateway
         # restart spawns a fresh Chrome window which is the exact pop

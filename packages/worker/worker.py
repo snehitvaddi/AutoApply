@@ -994,6 +994,36 @@ def main():
     print(f"[worker.boot] main() entered, WORKER_ID={WORKER_ID}, pid={os.getpid()}", file=_sys.stderr, flush=True)
     logger.info(f"Worker {WORKER_ID} starting...")
 
+    # APPLYLOOP_MODE=brain: PTY Claude is the SOLE driver via MCP tools
+    # (worker_apply_one_job / browser_*). The desktop launcher already
+    # skips spawning us in this mode, but if a stale daemon got launched
+    # before the env was set we must NOT compete on claim_next_job_locally
+    # or share Chrome — that's how the "tab bouncing during apply"
+    # regression manifested. Refuse to run the apply/scout cycles;
+    # heartbeat-only so the dashboard still sees us alive.
+    _mode = (os.environ.get("APPLYLOOP_MODE", "") or "").strip().lower()
+    if _mode == "brain":
+        _user_id = (
+            os.environ.get("APPLYLOOP_USER_ID")
+            or _read_user_id_from_profile_json()
+            or "unknown"
+        )
+        logger.info(
+            "APPLYLOOP_MODE=brain — daemon is idle by design; brain drives "
+            "applies via MCP. Heartbeat-only loop."
+        )
+        import time as _time
+        try:
+            while running:
+                try:
+                    update_heartbeat(_user_id, "idle:brain-mode", "daemon idle — brain owns apply cycle")
+                except Exception:
+                    pass
+                _time.sleep(60)
+        except KeyboardInterrupt:
+            pass
+        return
+
     # Load THIS tenant's config before anything else. No "system" fallback —
     # if the user hasn't finished setup, fail loud so they see the error in
     # the chat UI + Telegram and fix their profile. Silent fallback to admin

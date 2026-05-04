@@ -75,10 +75,16 @@ def browser_wait_load(timeout_ms: int = 5000) -> str:
 
 @mcp.tool()
 def browser_snapshot() -> str:
-    """Take an accessibility snapshot of the current page. Returns parsed fields as JSON.
-    Auto-dismisses stray tabs first so hijacking popups (LinkedIn trackers, reCAPTCHA
-    webworkers) don't capture the snapshot."""
-    _browser.dismiss_stray_tabs()
+    """Take an accessibility snapshot of the current page. Pure read — no
+    side effects on tab state. Returns parsed fields as JSON.
+
+    If a hijacking popup (LinkedIn tracker, reCAPTCHA worker, OAuth iframe)
+    is stealing focus, call `browser_dismiss_stray_tabs(<apply-hostname>)`
+    explicitly BEFORE snapshotting. Earlier this tool auto-dismissed
+    without a hostname, which under the brain-as-conductor architecture
+    silently closed the apply tab on every snapshot — see plan
+    `hey-i-understand-the-hashed-sutherland.md` Fix 1.
+    """
     raw = _browser.snapshot()
     fields = _browser.parse_snapshot(raw) if raw else []
     return json.dumps({"raw": raw, "fields": fields, "field_count": len(fields)}, default=str)
@@ -124,6 +130,37 @@ def browser_upload(path: str, ref: str) -> str:
     the agent sees a real tool error instead of a misleading "ok".
     """
     _browser.upload_file(path, ref)
+    return "ok"
+
+
+@mcp.tool()
+def browser_session_begin() -> str:
+    """Hold the apply-in-progress marker so preflight stops deep-probing
+    + auto-restarting the gateway during a hand-driven apply.
+
+    Call this at the START of any sequence where YOU (the brain) drive
+    the browser directly via browser_navigate / browser_click / etc.
+    `worker_apply_one_job` already manages the marker around recipe
+    execution — only call this tool when you take over manually
+    (handoff from a recipe failure, or scout-side investigation).
+
+    Always pair with browser_session_end() in a try/finally-style
+    structure so the marker doesn't outlive the work. The marker also
+    auto-expires after 5 minutes as a safety net.
+    """
+    from single_apply import _write_apply_marker
+    _write_apply_marker()
+    return "ok"
+
+
+@mcp.tool()
+def browser_session_end() -> str:
+    """Release the apply-in-progress marker so preflight resumes its
+    deep-probe + auto-recovery duties. Pair with browser_session_begin().
+    Idempotent — safe to call when no marker exists.
+    """
+    from single_apply import _clear_apply_marker
+    _clear_apply_marker()
     return "ok"
 
 
