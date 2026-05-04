@@ -153,13 +153,29 @@ class WorkerProcess:
             return {"ok": False, "error": f"worker.py not found at {worker_script}"}
 
         env = get_worker_env()
+        # Resolve the python interpreter EXPLICITLY. The previous code
+        # let `python3` resolve via PATH inside `bash -l`, which on
+        # macOS lands on /usr/bin/python3 (system Python 3.9) — but
+        # worker.py uses PEP-604 union syntax (`str | None`, `list[dict]`)
+        # which requires 3.10+. Result: ImportError on millisecond #1,
+        # silent exit, brain saw "worker keeps dying after each start".
+        # Pin to whichever interpreter is running THIS desktop server
+        # (almost always the venv that install.sh provisioned).
+        import sys as _sys
+        py = _sys.executable or "python3"
+
         # macOS: wrap the worker in `script(1)` to allocate a PTY — this
         # bypasses macOS TCC restrictions that would otherwise block
         # .app-spawned processes from reading user files in Downloads/
         # Desktop/etc. (Those restrictions don't exist on Windows/Linux,
         # so we spawn the Python interpreter directly there.)
         if _IS_DARWIN:
-            script_wrapper = f"""cd '{str(WORKER_DIR)}' && exec python3 '{str(worker_script)}'"""
+            # Quote the python path defensively so a path with spaces
+            # (e.g. "~/Library/Application Support/...") still works.
+            script_wrapper = (
+                f"cd '{str(WORKER_DIR)}' && "
+                f"exec '{py}' '{str(worker_script)}'"
+            )
             self.process = subprocess.Popen(
                 ["/usr/bin/script", "-q", "/dev/null", "/bin/bash", "-l", "-c", script_wrapper],
                 stdout=subprocess.PIPE,
@@ -168,9 +184,8 @@ class WorkerProcess:
             )
         else:
             # Windows + Linux: direct spawn, no PTY wrapper needed.
-            import sys as _sys
             self.process = subprocess.Popen(
-                [_sys.executable, str(worker_script)],
+                [py, str(worker_script)],
                 cwd=str(WORKER_DIR),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
