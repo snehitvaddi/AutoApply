@@ -935,19 +935,48 @@ export async function POST(request: NextRequest) {
       }
 
       case "get_pipeline": {
-        const { data: queue } = await supabase
-          .from("application_queue")
-          .select("id, job_id, status, company, apply_url, error, created_at")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: false })
-          .limit(200);
+        // SOURCE OF TRUTH: terminal states (submitted/failed) come from
+        // the `applications` table — same source the /api/applications
+        // list page uses. application_queue is read only for IN-FLIGHT
+        // states (pending/locked/processing). Before this fix the
+        // pipeline mixed the two: queue's `status='submitted'` rows
+        // could be missing for jobs claimed via the local-first path
+        // (no cloud queue_id → update_queue_status no-ops the cloud
+        // write) or jobs logged via the brain's MCP queue_log_application
+        // tool (writes applications directly, never touches the queue).
+        // Result: Pipeline showed 1 "Submitted" while the list showed 2.
+        const [appsRes, queueRes, discoveredRes] = await Promise.all([
+          supabase
+            .from("applications")
+            .select("id, queue_id, job_id, status, company, title, ats, apply_url, error, applied_at, updated_at")
+            .eq("user_id", userId)
+            .in("status", ["submitted", "failed"])
+            .order("applied_at", { ascending: false })
+            .limit(200),
+          supabase
+            .from("application_queue")
+            .select("id, job_id, status, company, apply_url, error, created_at")
+            .eq("user_id", userId)
+            .in("status", ["pending", "locked", "processing"])
+            .order("created_at", { ascending: false })
+            .limit(200),
+          supabase
+            .from("discovered_jobs")
+            .select("id, title, company, ats, posted_at")
+            .order("discovered_at", { ascending: false })
+            .limit(50),
+        ]);
+        const apps = appsRes.data || [];
+        const queue = queueRes.data || [];
+        const discovered = discoveredRes.data || [];
 
-        // Enrich with job details
-        const jobIds = [...new Set((queue || []).map((q: Record<string, unknown>) => q.job_id).filter(Boolean))];
-        const { data: jobs } = jobIds.length
-          ? await supabase.from("discovered_jobs").select("id, title, company, ats, posted_at").in("id", jobIds)
+        // Enrich queue rows with job details (queue carries only job_id;
+        // applications already has company/title denormalized).
+        const queueJobIds = [...new Set(queue.map((q: Record<string, unknown>) => q.job_id).filter(Boolean))];
+        const { data: queueJobs } = queueJobIds.length
+          ? await supabase.from("discovered_jobs").select("id, title, company, ats, posted_at").in("id", queueJobIds)
           : { data: [] };
-        const jobMap = new Map((jobs || []).map((j: Record<string, unknown>) => [j.id, j]));
+        const jobMap = new Map((queueJobs || []).map((j: Record<string, unknown>) => [j.id, j]));
 
         const pipeline: Record<string, unknown[]> = {
           discovered: [],
@@ -957,7 +986,21 @@ export async function POST(request: NextRequest) {
           failed: [],
         };
 
-        for (const q of queue || []) {
+        for (const a of apps) {
+          const item = {
+            id: a.id,
+            company: a.company || "",
+            title: a.title || "",
+            ats: a.ats || "",
+            posted_at: a.applied_at,
+            status: a.status,
+            error: a.error,
+          };
+          if (a.status === "submitted") pipeline.submitted.push(item);
+          else if (a.status === "failed") pipeline.failed.push(item);
+        }
+
+        for (const q of queue) {
           const job = jobMap.get(q.job_id) || {};
           const item = {
             id: q.id,
@@ -970,20 +1013,13 @@ export async function POST(request: NextRequest) {
           };
           if (q.status === "pending") pipeline.queued.push(item);
           else if (q.status === "locked" || q.status === "processing") pipeline.applying.push(item);
-          else if (q.status === "submitted") pipeline.submitted.push(item);
-          else if (q.status === "failed") pipeline.failed.push(item);
         }
 
-        // Add recent discovered jobs not yet in queue
-        const { data: discovered } = await supabase
-          .from("discovered_jobs")
-          .select("id, title, company, ats, posted_at")
-          .order("discovered_at", { ascending: false })
-          .limit(50);
-
-        const queuedJobIds = new Set((queue || []).map((q: Record<string, unknown>) => q.job_id));
-        for (const d of discovered || []) {
-          if (!queuedJobIds.has(d.id)) {
+        // Discovered = recent rows not yet in either bucket.
+        const queuedJobIds = new Set(queue.map((q: Record<string, unknown>) => q.job_id));
+        const appliedJobIds = new Set(apps.map((a: Record<string, unknown>) => a.job_id).filter(Boolean));
+        for (const d of discovered) {
+          if (!queuedJobIds.has(d.id) && !appliedJobIds.has(d.id)) {
             pipeline.discovered.push({
               id: d.id,
               company: d.company,
