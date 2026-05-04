@@ -104,6 +104,55 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Telegram gateway failed to start: {e}")
 
+    # ── Browser gateway lifecycle ──────────────────────────────────
+    # The OpenClaw browser gateway hosts a persistent Chrome session
+    # the appliers + brain drive via Playwright. Two ways it could
+    # already be running:
+    #   1. The user kept the legacy `ai.openclaw.gateway.plist`
+    #      LaunchAgent loaded — Chrome auto-starts at login (the
+    #      "empty Chrome tab popping up" experience).
+    #   2. The user ran `openclaw gateway start` manually.
+    # If neither is true, applies + scout-with-LinkedIn fail because
+    # there's no Chrome. So: at desktop boot, ensure the gateway is
+    # up. Track ownership so we only stop it on shutdown if WE
+    # started it — we won't ever kill a user's pre-existing session.
+    import os as _os, subprocess as _sp, shutil as _sh
+    _gateway_started_by_us = False
+
+    def _gateway_status_running() -> bool:
+        try:
+            r = _sp.run(
+                ["openclaw", "gateway", "status"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return "running" in (r.stdout or "").lower()
+        except Exception:
+            return False
+
+    if not _os.environ.get("APPLYLOOP_HEADLESS") and _sh.which("openclaw"):
+        if _gateway_status_running():
+            logger.info("OpenClaw gateway already running — leaving alone")
+        else:
+            try:
+                logger.info("Starting OpenClaw gateway...")
+                _sp.run(
+                    ["openclaw", "gateway", "start"],
+                    capture_output=True, timeout=15,
+                )
+                # Brief settle window — gateway needs ~1-2s to be
+                # snapshot-ready after start.
+                await asyncio.sleep(2)
+                if _gateway_status_running():
+                    _gateway_started_by_us = True
+                    logger.info("OpenClaw gateway started by desktop")
+                else:
+                    logger.warning(
+                        "OpenClaw gateway start returned but status is not "
+                        "'running' — applies may fail until it's healthy"
+                    )
+            except Exception as e:
+                logger.warning(f"OpenClaw gateway start failed: {e}")
+
     # Auto-start the Claude Code PTY session so users don't have to
     # manually click "Start Session" on the Terminal tab every time
     # they relaunch.
@@ -117,7 +166,6 @@ async def lifespan(app: FastAPI):
     #
     # Still gated by headless mode (CI runners have none of these
     # tools installed and don't need the agent loop).
-    import os as _os
     if not _os.environ.get("APPLYLOOP_HEADLESS"):
         try:
             pf = await preflight.run_preflight()
@@ -147,6 +195,40 @@ async def lifespan(app: FastAPI):
                 )
         except Exception as e:
             logger.warning(f"PTY auto-start failed: {e}")
+
+    # ── Worker daemon auto-start ───────────────────────────────────
+    # User wants autonomous filling at the end of the day. With the
+    # legacy LaunchAgent unloaded (and us controlling gateway lifecycle
+    # above), nothing else starts the worker. Bring it up here when
+    # preflight is ready so launching the desktop = the bot starts
+    # working. Skipped under APPLYLOOP_HEADLESS or APPLYLOOP_NO_AUTO_WORKER
+    # for the rare cases (CI, debugging) where a daemon would be in
+    # the way.
+    if (
+        not _os.environ.get("APPLYLOOP_HEADLESS")
+        and not _os.environ.get("APPLYLOOP_NO_AUTO_WORKER")
+    ):
+        try:
+            if worker.is_running:
+                logger.info("Worker already running; skipping auto-start")
+            else:
+                # Reuse the same readiness gate as the PTY — if
+                # required tools are missing, don't spawn a worker
+                # that's just going to crash on first iteration.
+                pf2 = await preflight.run_preflight()
+                if pf2.get("ready"):
+                    wstart = await worker.start()
+                    if wstart.get("ok"):
+                        logger.info(f"Auto-started worker (pid={wstart.get('pid')})")
+                    else:
+                        logger.warning(
+                            f"Worker auto-start failed: {wstart.get('error', 'unknown')}. "
+                            f"Hint: {wstart.get('hint', '')}"
+                        )
+                else:
+                    logger.info("Setup not ready — skipping worker auto-start")
+        except Exception as e:
+            logger.warning(f"Worker auto-start raised: {e}")
 
     # Background profile sync: every N seconds, re-pull profile.json from
     # /api/settings/cli-config so edits made on applyloop.vercel.app propagate
@@ -226,6 +308,21 @@ async def lifespan(app: FastAPI):
     if worker.is_running:
         logger.info("Shutting down worker...")
         await worker.stop()
+
+    # Stop the OpenClaw gateway only if WE started it. If the user has
+    # the legacy LaunchAgent loaded (or started it themselves before
+    # opening the desktop), leave it alone — they're responsible for
+    # its lifecycle. Quitting the desktop shouldn't yank Chrome out
+    # from under their other tools.
+    if _gateway_started_by_us:
+        try:
+            logger.info("Stopping OpenClaw gateway (we started it)...")
+            _sp.run(
+                ["openclaw", "gateway", "stop"],
+                capture_output=True, timeout=10,
+            )
+        except Exception as e:
+            logger.debug(f"OpenClaw gateway stop error: {e}")
 
 
 app = FastAPI(title="ApplyLoop Desktop", lifespan=lifespan)
