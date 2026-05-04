@@ -1330,15 +1330,32 @@ class PTYSession:
             if not os.path.isfile(python_bin) or not os.path.isdir(worker_dir):
                 return
 
-            # Read APPLYLOOP_USER_ID from profile.json if available.
+            # Read APPLYLOOP_USER_ID via the three-layout helper. profile.json
+            # ships in three shapes across installs (flat / `{user:{id}}` /
+            # `{data:{user:{id}}}`); the inline narrow probe used to miss the
+            # nested shapes and ship `APPLYLOOP_USER_ID=""`, which broke every
+            # `worker_apply_one_job` call. Reuse the same helper the worker
+            # subprocess uses so MCP and worker agree on the user id.
             user_id = ""
             try:
-                profile_path = os.path.join(applyloop_home, "profile.json")
-                with open(profile_path, encoding="utf-8") as _f:
-                    _profile = json.load(_f)
-                user_id = _profile.get("user_id") or _profile.get("id") or ""
+                from .config import _read_user_id_from_profile
+                user_id = _read_user_id_from_profile() or ""
             except Exception:
-                pass
+                # Fall back to the narrow probe for the unlikely case where
+                # the helper import fails (e.g. running outside the package).
+                try:
+                    profile_path = os.path.join(applyloop_home, "profile.json")
+                    with open(profile_path, encoding="utf-8") as _f:
+                        _profile = json.load(_f)
+                    user_id = _profile.get("user_id") or _profile.get("id") or ""
+                    if not user_id and isinstance(_profile.get("user"), dict):
+                        user_id = _profile["user"].get("id") or _profile["user"].get("user_id") or ""
+                    if not user_id and isinstance(_profile.get("data"), dict):
+                        _u = _profile["data"].get("user")
+                        if isinstance(_u, dict):
+                            user_id = _u.get("id") or _u.get("user_id") or ""
+                except Exception:
+                    pass
 
             mcp_server = {
                 "command": python_bin,

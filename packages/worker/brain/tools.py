@@ -303,30 +303,77 @@ async def scout_list_sources(args: dict[str, Any]) -> dict:
 )
 async def scout_verify_url(args: dict[str, Any]) -> dict:
     def _do():
+        import re as _re
         import httpx as _httpx  # deferred
         url = (args.get("url") or "").strip()
         if not url:
             return {"ok": False, "status": 0, "final_url": "", "reason": "empty_url"}
+
+        # Ashby / Greenhouse SPAs render the same HTML shell for live and
+        # dead listings — body-sniffing misses the dead ones. For these
+        # hosts hit the posting API instead and check authoritatively.
+        ashby_re = _re.compile(
+            r"^https?://jobs\.ashbyhq\.com/([^/]+)/(?:application\?jobId=)?([a-f0-9-]+)(?:/application)?/?$",
+            _re.IGNORECASE,
+        )
+        gh_re = _re.compile(
+            r"^https?://(?:www\.)?(?:boards|job-boards)\.greenhouse\.io/([^/]+)/jobs/(\d+)",
+            _re.IGNORECASE,
+        )
+        try:
+            m = ashby_re.match(url)
+            if m:
+                slug, job_id = m.group(1), m.group(2)
+                with _httpx.Client(timeout=5.0, follow_redirects=True) as c:
+                    r = c.get(f"https://api.ashbyhq.com/posting-api/job-board/{slug}")
+                    if r.status_code != 200:
+                        return {"ok": False, "status": r.status_code, "final_url": url,
+                                "reason": f"ashby_api_status:{r.status_code}"}
+                    for j in r.json().get("jobs", []) or []:
+                        if j.get("id") == job_id:
+                            if j.get("isListed") is False:
+                                return {"ok": False, "status": 200, "final_url": url,
+                                        "reason": "ashby_not_listed"}
+                            return {"ok": True, "status": 200, "final_url": url,
+                                    "reason": "ashby_api_listed"}
+                    return {"ok": False, "status": 200, "final_url": url,
+                            "reason": "ashby_id_not_in_board"}
+
+            m = gh_re.match(url)
+            if m:
+                board, job_id = m.group(1), m.group(2)
+                with _httpx.Client(timeout=5.0, follow_redirects=True) as c:
+                    r = c.get(f"https://api.greenhouse.io/v1/boards/{board}/jobs/{job_id}")
+                    if r.status_code == 200:
+                        return {"ok": True, "status": 200, "final_url": url,
+                                "reason": "greenhouse_api_listed"}
+                    if r.status_code == 404:
+                        return {"ok": False, "status": 404, "final_url": url,
+                                "reason": "greenhouse_not_found"}
+                    return {"ok": False, "status": r.status_code, "final_url": url,
+                            "reason": f"greenhouse_api_status:{r.status_code}"}
+        except Exception as e:
+            return {"ok": False, "status": 0, "final_url": url,
+                    "reason": f"api_exception:{type(e).__name__}:{e}"}
+
         try:
             # HEAD first; some ATSes serve 405 to HEAD, retry GET if so.
             with _httpx.Client(follow_redirects=True, timeout=8.0) as c:
                 r = c.head(url)
                 if r.status_code == 405:
                     r = c.get(url)
-            ok = 200 <= r.status_code < 400
-            # Heuristic: Ashby/Greenhouse "Job not found" pages still
-            # return 200 with HTML; sniff the body for known markers.
-            reason = "ok"
-            if ok and "text/html" in (r.headers.get("content-type") or "").lower():
-                try:
-                    body = c.get(str(r.url)).text.lower() if r.request.method == "HEAD" else (r.text or "").lower()
-                except Exception:
-                    body = ""
-                for marker in ("job not found", "this job is no longer", "no longer accepting", "posting not found"):
-                    if marker in body:
-                        ok = False
-                        reason = f"dead_marker:{marker}"
-                        break
+                ok = 200 <= r.status_code < 400
+                reason = "ok"
+                if ok and "text/html" in (r.headers.get("content-type") or "").lower():
+                    try:
+                        body = c.get(str(r.url)).text.lower() if r.request.method == "HEAD" else (r.text or "").lower()
+                    except Exception:
+                        body = ""
+                    for marker in ("job not found", "this job is no longer", "no longer accepting", "posting not found"):
+                        if marker in body:
+                            ok = False
+                            reason = f"dead_marker:{marker}"
+                            break
             return {
                 "ok": ok,
                 "status": r.status_code,

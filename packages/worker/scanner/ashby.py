@@ -47,7 +47,9 @@ def _fetch_ashby_jobs(client: httpx.Client, slug: str) -> list[dict]:
         if isinstance(location, dict):
             location = location.get("name", "")
 
-        apply_url = f"https://jobs.ashbyhq.com/{slug}/application?jobId={job['id']}"
+        # Ashby's public apply URL is path-based: /{slug}/{jobId}/application.
+        # The query-string form returns "Job not found" when hit publicly.
+        apply_url = f"https://jobs.ashbyhq.com/{slug}/{job['id']}/application"
         if job.get("applicationUrl"):
             apply_url = job["applicationUrl"]
 

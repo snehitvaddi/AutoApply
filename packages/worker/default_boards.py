@@ -61,3 +61,17 @@ DEFAULT_GREENHOUSE_RECAPTCHA: list[str] = [
 DEFAULT_GREENHOUSE_BOARDS: list[str] = (
     DEFAULT_GREENHOUSE_SUBMITTABLE + DEFAULT_GREENHOUSE_RECAPTCHA
 )
+
+
+# ── Lever boards (curated; auto-grown via _expand_tenant_boards) ───────────
+# Lever's public API is `https://api.lever.co/v0/postings/{slug}?mode=json`.
+# Slug format is the company name lowercased with hyphens.
+DEFAULT_LEVER_BOARDS: list[str] = [
+    "netflix", "figma", "stripe", "coinbase", "notion",
+    "reddit", "discord", "datadog", "cloudflare", "plaid",
+    "airtable", "webflow", "vercel", "linear", "dbt-labs",
+    "anyscale", "weights-and-biases", "hugging-face",
+    "scale-ai", "labelbox", "snorkel-ai",
+    "cruise", "nuro", "aurora-innovation",
+    "grammarly", "duolingo", "quora",
+]

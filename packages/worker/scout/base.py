@@ -31,6 +31,14 @@ class JobPost(TypedDict, total=False):
     external_id: str
     ats: str
     source: str  # populated by dispatcher; sources don't set this themselves
+    posted_at: str
+    posted_text: str
+    # Right-pane fields — populated by deep extractors (e.g. LinkedIn
+    # scroll scout's card-body click). Optional and best-effort: empty
+    # string when the source can't supply it. Consumers MUST tolerate
+    # missing keys.
+    description: str
+    applicants: str
 
 
 class ScoutSource(ABC):

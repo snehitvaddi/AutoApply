@@ -1,27 +1,20 @@
-"""Lever scout plugin — wraps scanner.lever.scan_lever_boards."""
+"""Lever scout plugin — wraps scanner.lever.scan_lever_boards.
+
+Honors `tenant.lever_boards` (per-tenant override) and falls back to the
+global pool in `default_boards.DEFAULT_LEVER_BOARDS`. Mirrors the
+Ashby/Greenhouse override semantics so all three scouts feel the same.
+"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from default_boards import DEFAULT_LEVER_BOARDS
 from scanner.lever import scan_lever_boards
 
 from .base import JobPost, ScoutSource
 
 if TYPE_CHECKING:
     from tenant import TenantConfig
-
-# Default Lever company slugs — curated global pool, same pattern as
-# Ashby/Greenhouse. Each tenant uses the full pool; the filter layer
-# decides what's relevant per tenant's target_titles.
-DEFAULT_LEVER_COMPANIES: list[str] = [
-    "netflix", "figma", "stripe", "coinbase", "notion",
-    "reddit", "discord", "datadog", "cloudflare", "plaid",
-    "airtable", "webflow", "vercel", "linear", "dbt-labs",
-    "anyscale", "weights-and-biases", "hugging-face",
-    "scale-ai", "labelbox", "snorkel-ai",
-    "cruise", "nuro", "aurora-innovation",
-    "grammarly", "duolingo", "quora",
-]
 
 
 class LeverScout(ScoutSource):
@@ -30,8 +23,12 @@ class LeverScout(ScoutSource):
     requires_auth = False
 
     def scout(self, tenant: "TenantConfig") -> list[JobPost]:
+        # Tenant override wins; fall back to the curated global pool.
+        slugs = list(getattr(tenant, "lever_boards", None) or []) or list(DEFAULT_LEVER_BOARDS)
+        if not slugs:
+            return []
         try:
-            raw_jobs = scan_lever_boards(DEFAULT_LEVER_COMPANIES)
+            raw_jobs = scan_lever_boards(slugs)
         except Exception as e:
             self.logger.warning(f"Lever scout failed: {e}")
             return []

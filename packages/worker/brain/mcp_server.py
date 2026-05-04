@@ -449,9 +449,32 @@ def scout_run_source(name: str) -> str:
 
 # ── tenant ────────────────────────────────────────────────────────────────
 
+def _boards_default_hash() -> str:
+    """Short sha1 fingerprint of default_boards.py contents.
+
+    Lets the brain detect when the curated global pool changes mid-session
+    (e.g. a `git pull` rolls in new slugs). Compared against the hash in a
+    prior tenant_load response — if it differs, re-pull boards before
+    making decisions about which slugs are worth polling.
+    """
+    import hashlib
+    from pathlib import Path
+    try:
+        p = Path(__file__).resolve().parent.parent / "default_boards.py"
+        return hashlib.sha1(p.read_bytes()).hexdigest()[:12]
+    except Exception:
+        return ""
+
+
 @mcp.tool()
 def tenant_load() -> str:
-    """Load the current tenant config snapshot (profiles, preferences, daily limits)."""
+    """Load the current tenant config snapshot (profiles, preferences, daily limits).
+
+    Includes the per-source board lists the scout polls (`ashby_boards`,
+    `greenhouse_boards`, `lever_boards`) plus a `boards_version` hash so
+    the brain can answer "where did this URL come from?" without tailing
+    the worker log.
+    """
     from tenant import TenantConfig
     user_id = os.environ.get("APPLYLOOP_USER_ID", "")
     t = TenantConfig.load(user_id)
@@ -462,6 +485,13 @@ def tenant_load() -> str:
         "profiles": [{"id": p.id, "name": p.name, "is_default": p.is_default}
                      for p in getattr(t, "profiles", [])],
         "daily_apply_limit": getattr(t, "daily_apply_limit", None),
+        # Board lists the scout actually polls. These existed on the
+        # TenantConfig dataclass but weren't surfaced — brain had no way
+        # to inspect "what slugs are we hitting?" without a code read.
+        "ashby_boards":      list(getattr(t, "ashby_boards", []) or []),
+        "greenhouse_boards": list(getattr(t, "greenhouse_boards", []) or []),
+        "lever_boards":      list(getattr(t, "lever_boards", []) or []),
+        "boards_version":    _boards_default_hash(),
     }
     return json.dumps(data, default=str)
 
@@ -765,24 +795,95 @@ def queue_get_local_pipeline(limit: int = 50, since_hours: int = 168) -> str:
     )
 
 
+_ASHBY_URL_RE = __import__("re").compile(
+    r"^https?://jobs\.ashbyhq\.com/([^/]+)/([a-f0-9-]+)(?:/application)?/?$",
+    __import__("re").IGNORECASE,
+)
+_ASHBY_LEGACY_URL_RE = __import__("re").compile(
+    r"^https?://jobs\.ashbyhq\.com/([^/]+)/application\?jobId=([a-f0-9-]+)",
+    __import__("re").IGNORECASE,
+)
+_GREENHOUSE_URL_RE = __import__("re").compile(
+    r"^https?://(?:www\.)?(?:boards|job-boards)\.greenhouse\.io/([^/]+)/jobs/(\d+)",
+    __import__("re").IGNORECASE,
+)
+
+
+def _verify_ashby_via_api(slug: str, job_id: str) -> tuple[bool, str]:
+    """Hit Ashby's posting API and check if `job_id` is currently listed.
+    Returns (ok, reason). Cheap (~1 HTTP round-trip), authoritative.
+    """
+    import httpx as _httpx
+    try:
+        with _httpx.Client(timeout=5.0, follow_redirects=True) as c:
+            r = c.get(f"https://api.ashbyhq.com/posting-api/job-board/{slug}")
+            if r.status_code != 200:
+                return False, f"ashby_api_status:{r.status_code}"
+            for j in r.json().get("jobs", []) or []:
+                if j.get("id") == job_id:
+                    if j.get("isListed") is False:
+                        return False, "ashby_not_listed"
+                    return True, "ashby_api_listed"
+        return False, "ashby_id_not_in_board"
+    except Exception as e:
+        return False, f"ashby_api_exception:{type(e).__name__}"
+
+
+def _verify_greenhouse_via_api(board: str, job_id: str) -> tuple[bool, str]:
+    """Hit Greenhouse's public job-board API for a single posting.
+    404 = dead listing; 200 = alive.
+    """
+    import httpx as _httpx
+    try:
+        with _httpx.Client(timeout=5.0, follow_redirects=True) as c:
+            r = c.get(f"https://api.greenhouse.io/v1/boards/{board}/jobs/{job_id}")
+            if r.status_code == 200:
+                return True, "greenhouse_api_listed"
+            if r.status_code == 404:
+                return False, "greenhouse_not_found"
+            return False, f"greenhouse_api_status:{r.status_code}"
+    except Exception as e:
+        return False, f"greenhouse_api_exception:{type(e).__name__}"
+
+
 @mcp.tool()
 def scout_verify_url(url: str) -> str:
-    """Probe an apply URL — HEAD with redirect follow, falling back to
-    GET if HEAD returns 405 or the body has to be sniffed. Returns
-    {ok, status, final_url, reason}.
+    """Probe an apply URL — returns {ok, status, final_url, reason}.
 
-    Detects common dead-listing markers in the response body:
-    'Job not found', 'this job is no longer', 'no longer accepting',
-    'posting not found'. Ashby + Greenhouse return HTTP 200 on dead
-    listings, so plain status-code checks aren't enough.
+    Strategy by host:
+      - Ashby (jobs.ashbyhq.com/{slug}/{id}/application or legacy form) →
+        hit https://api.ashbyhq.com/posting-api/job-board/{slug} and look
+        for {id} with isListed != false. The SPA HTML shell is the same
+        for live and dead listings, so body-sniffing is unreliable.
+      - Greenhouse (boards.greenhouse.io/{board}/jobs/{id}) → hit the
+        public Greenhouse jobs API; 404 = dead, 200 = alive.
+      - Anything else → HEAD/GET + body-sniff for known dead markers
+        ('job not found', 'no longer accepting', etc.).
 
-    Use BEFORE browser_navigate — a stale URL costs you a tab + a
-    snapshot + an LLM step before the agent realizes the listing is
-    dead.
+    Use BEFORE browser_navigate — a stale URL costs a tab + a snapshot
+    + an LLM step before the agent realizes the listing is dead.
     """
     import httpx as _httpx
     if not (url or "").strip():
         return json.dumps({"ok": False, "status": 0, "final_url": "", "reason": "empty_url"})
+
+    # Ashby branch: API check is authoritative for both modern and legacy URLs.
+    m = _ASHBY_URL_RE.match(url) or _ASHBY_LEGACY_URL_RE.match(url)
+    if m:
+        slug, job_id = m.group(1), m.group(2)
+        ok, reason = _verify_ashby_via_api(slug, job_id)
+        return json.dumps({"ok": ok, "status": 200 if ok else 0,
+                           "final_url": url, "reason": reason})
+
+    # Greenhouse branch.
+    m = _GREENHOUSE_URL_RE.match(url)
+    if m:
+        board, job_id = m.group(1), m.group(2)
+        ok, reason = _verify_greenhouse_via_api(board, job_id)
+        return json.dumps({"ok": ok, "status": 200 if ok else 0,
+                           "final_url": url, "reason": reason})
+
+    # Generic branch: HEAD/GET + body sniff (works for non-SPA hosts).
     try:
         with _httpx.Client(follow_redirects=True, timeout=8.0) as c:
             r = c.head(url)
@@ -916,6 +1017,133 @@ def scout_get_stats(since_hours: int = 168) -> str:
     except Exception as e:
         return json.dumps({"error": f"local sqlite read failed: {e}", **out}, default=str)
     return json.dumps(out, default=str)
+
+
+def _board_stats_for(ats: str, slugs: list[str], since_hours: int = 0) -> list[dict]:
+    """Pull per-slug metadata from the cloud proxy.
+
+    Single round-trip — the proxy aggregates discovered_jobs (last_pulled
+    + windowed count) and applications (lifetime submitted) on the server
+    side. Returns [] on any error so the brain still gets *something* it
+    can render.
+    """
+    try:
+        from db import _api_call  # type: ignore
+        resp = _api_call("board_stats", ats=ats, slugs=slugs, since_hours=since_hours)
+        return list(resp.get("stats") or [])
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"board_stats failed: {e}")
+        return []
+
+
+@mcp.tool()
+def scout_list_boards() -> str:
+    """Return per-source slug lists with last-poll metadata.
+
+    Format:
+      {
+        "ashby":      [{slug, last_pulled, jobs_returned_window,
+                        submitted_lifetime, is_default, is_tenant_override}, ...],
+        "greenhouse": [...],
+        "lever":      [...],
+        "boards_version": "<sha1>"
+      }
+
+    Use this when the brain needs to answer "where did this URL come
+    from?" or "which boards are pulling weight?" — the alternative is
+    grepping default_boards.py + tailing the worker log.
+    """
+    from tenant import TenantConfig
+    from default_boards import (
+        DEFAULT_ASHBY_BOARDS, DEFAULT_GREENHOUSE_BOARDS,
+    )
+    try:
+        from default_boards import DEFAULT_LEVER_BOARDS  # type: ignore
+    except ImportError:
+        DEFAULT_LEVER_BOARDS = []  # type: ignore
+
+    user_id = os.environ.get("APPLYLOOP_USER_ID", "")
+    t = TenantConfig.load(user_id)
+
+    def _enrich(ats: str, slugs: list[str], defaults: list[str]) -> list[dict]:
+        default_set = {s.lower() for s in defaults}
+        stats_by_slug = {s["slug"]: s for s in _board_stats_for(ats, slugs)}
+        out = []
+        for slug in slugs:
+            st = stats_by_slug.get(slug, {})
+            out.append({
+                "slug": slug,
+                "last_pulled": st.get("last_pulled"),
+                "jobs_returned_window": st.get("jobs_returned_window") or 0,
+                "submitted_lifetime": st.get("submitted_lifetime") or 0,
+                "is_default": slug.lower() in default_set,
+                "is_tenant_override": slug.lower() not in default_set,
+            })
+        return out
+
+    data = {
+        "ashby":      _enrich("ashby",      list(getattr(t, "ashby_boards", []) or []),      list(DEFAULT_ASHBY_BOARDS)),
+        "greenhouse": _enrich("greenhouse", list(getattr(t, "greenhouse_boards", []) or []), list(DEFAULT_GREENHOUSE_BOARDS)),
+        "lever":      _enrich("lever",      list(getattr(t, "lever_boards", []) or []),      list(DEFAULT_LEVER_BOARDS)),
+        "boards_version": _boards_default_hash(),
+    }
+    return json.dumps(data, default=str)
+
+
+@mcp.tool()
+def scout_get_zero_producers(since_hours: int = 72) -> str:
+    """List slugs that returned ZERO jobs in the given window.
+
+    Default window = 72h. Useful before a scout cycle to skip dead boards
+    OR to surface them to the operator via Telegram so they can be
+    pruned. A slug counts as a zero-producer when it has no
+    `discovered_jobs` row scouted within the window — `last_pulled = null`
+    OR older than `since_hours`.
+
+    Returns: {since_hours, ashby: [...], greenhouse: [...], lever: [...]}.
+    """
+    from tenant import TenantConfig
+    user_id = os.environ.get("APPLYLOOP_USER_ID", "")
+    t = TenantConfig.load(user_id)
+
+    def _zeros(ats: str, slugs: list[str]) -> list[str]:
+        if not slugs:
+            return []
+        stats = _board_stats_for(ats, slugs, since_hours=since_hours)
+        # Slugs with zero rows in the window come back from the proxy
+        # with jobs_returned_window=0; slugs not present in the response
+        # at all are also zero (proxy returned them as a placeholder).
+        nonzero = {s["slug"] for s in stats if (s.get("jobs_returned_window") or 0) > 0}
+        return [s for s in slugs if s not in nonzero]
+
+    data = {
+        "since_hours": since_hours,
+        "ashby":      _zeros("ashby",      list(getattr(t, "ashby_boards", []) or [])),
+        "greenhouse": _zeros("greenhouse", list(getattr(t, "greenhouse_boards", []) or [])),
+        "lever":      _zeros("lever",      list(getattr(t, "lever_boards", []) or [])),
+    }
+    return json.dumps(data, default=str)
+
+
+@mcp.tool()
+def scout_propose_board(slug: str, ats: str, evidence: str = "") -> str:
+    """Propose a new ATS slug for the GLOBAL default pool.
+
+    The scout's _expand_tenant_boards already auto-grows each tenant's
+    prefs when ats_resolver finds a new slug for a company. This tool
+    promotes that signal one level higher — operator reviews and rolls
+    high-occurrence proposals into default_boards.py so every tenant
+    benefits.
+
+    Idempotent on (ats, slug): re-proposing bumps `occurrences`. Call it
+    every time you discover a slug worth promoting; high-occurrence
+    proposals float to the top.
+
+    Returns the stored entry: {ok, stored: {ats, slug, occurrences,
+    first_seen, last_seen, evidence}, is_new}.
+    """
+    from knowledge.proposed_boards import propose
+    return json.dumps(propose(slug, ats, evidence), default=str)
 
 
 @mcp.tool()

@@ -10,6 +10,7 @@ Ashby key differences:
 """
 
 import os
+import re
 import json
 import time
 import logging
@@ -26,6 +27,28 @@ from config import SCREENSHOT_DIR
 logger = logging.getLogger(__name__)
 
 
+# Legacy Ashby fallback URL format (`/{slug}/application?jobId={uuid}`) was
+# produced by an earlier scout fallback. Ashby's React SPA does NOT route
+# that path — it renders "Job not found". The public apply page is path-
+# based: `/{slug}/{uuid}/application`. Rewrite in flight so any queue rows
+# created before the scout fix still reach a real form.
+_LEGACY_ASHBY_RE = re.compile(
+    r"^(https?://jobs\.ashbyhq\.com/[^/]+)/application\?jobId=([a-f0-9-]+).*$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_ashby_url(url: str) -> str:
+    if not url:
+        return url
+    m = _LEGACY_ASHBY_RE.match(url)
+    if not m:
+        return url
+    fixed = f"{m.group(1)}/{m.group(2)}/application"
+    logger.info(f"Rewrote legacy Ashby URL → {fixed}")
+    return fixed
+
+
 class AshbyApplier(BaseApplier):
     """Applies to Ashby jobs using OpenClaw browser CLI.
 
@@ -40,8 +63,10 @@ class AshbyApplier(BaseApplier):
         # runs only under APPLYLOOP_BRAIN_DISABLED=1.
 
         try:
-            # 1. Navigate (reuse tab) — legacy regex path
-            logger.info(f"Navigating to {apply_url} (legacy path)")
+            # 1. Navigate (reuse tab). Normalize legacy `/application?jobId=`
+            #    URLs in flight so old queue rows still resolve to a real form.
+            apply_url = _normalize_ashby_url(apply_url)
+            logger.info(f"Navigating to {apply_url}")
             navigate_url(apply_url)
             wait_load(8000)
             time.sleep(2)  # Ashby SPAs need extra load time

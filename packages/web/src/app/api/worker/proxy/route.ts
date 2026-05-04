@@ -28,6 +28,20 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Legacy Ashby fallback URL produced by an earlier scout (/{slug}/application
+// ?jobId={uuid}) is dead in Ashby's React SPA — the public apply form lives
+// at /{slug}/{uuid}/application. Rewrite in flight so old queue rows still
+// reach a real form. Idempotent for already-correct URLs.
+const _LEGACY_ASHBY_RE =
+  /^(https?:\/\/jobs\.ashbyhq\.com\/[^/]+)\/application\?jobId=([a-f0-9-]+).*$/i;
+
+function normalizeAshbyUrl(url: string): string {
+  if (!url) return url;
+  const m = url.match(_LEGACY_ASHBY_RE);
+  if (!m) return url;
+  return `${m[1]}/${m[2]}/application`;
+}
+
 async function authenticateWorker(request: NextRequest): Promise<string | null> {
   const token = request.headers.get("x-worker-token");
   if (!token) return null;
@@ -67,7 +81,12 @@ export async function POST(request: NextRequest) {
           .single();
         if (jobDetail) {
           queueRow.ats = jobDetail.ats;
-          queueRow.apply_url = jobDetail.apply_url;
+          // Normalize legacy Ashby URLs in flight. The earlier scout produced
+          // /{slug}/application?jobId={uuid} as a fallback — that path renders
+          // "Job not found" in Ashby's React SPA. The real public form lives
+          // at /{slug}/{uuid}/application. Rewrite here so any pre-fix queue
+          // row still reaches a real form even before the SQL backfill runs.
+          queueRow.apply_url = normalizeAshbyUrl(jobDetail.apply_url || "");
           queueRow.company = jobDetail.company;
           queueRow.title = jobDetail.title;
           queueRow.posted_at = jobDetail.posted_at;
@@ -308,6 +327,7 @@ export async function POST(request: NextRequest) {
             min_salary: b.min_salary ?? null,
             ashby_boards: b.ashby_boards ?? null,
             greenhouse_boards: b.greenhouse_boards ?? null,
+            lever_boards: b.lever_boards ?? null,
             auto_apply: b.auto_apply !== false,
             max_daily: b.max_daily ?? null,
             resume: resume ? {
@@ -344,6 +364,7 @@ export async function POST(request: NextRequest) {
           keyword_filter: targetKeywords.length > 0 ? targetKeywords : targetTitles,
           ashby_boards: (prefs.ashby_boards as string[] | null | undefined) ?? null,
           greenhouse_boards: (prefs.greenhouse_boards as string[] | null | undefined) ?? null,
+          lever_boards: (prefs.lever_boards as string[] | null | undefined) ?? null,
           excluded_role_keywords: (prefs.excluded_role_keywords as string[] | undefined) ?? [],
           excluded_levels: (prefs.excluded_levels as string[] | undefined) ?? [],
           excluded_companies: (prefs.excluded_companies as string[] | undefined) ?? [],
@@ -607,7 +628,7 @@ export async function POST(request: NextRequest) {
           // silently dropped before this fix, so desktop Settings saves
           // for these never persisted. Audit (Apr 14) surfaced it.
           "excluded_role_keywords", "excluded_levels",
-          "ashby_boards", "greenhouse_boards",
+          "ashby_boards", "greenhouse_boards", "lever_boards",
           "min_salary", "preferred_locations",
           "remote_only", "auto_apply", "max_daily",
         ] as const;
@@ -1207,6 +1228,73 @@ export async function POST(request: NextRequest) {
           return apiError("internal_server_error", error.message);
         }
         return apiSuccess({ ok: true });
+      }
+
+      case "board_stats": {
+        // Per-source slug metadata for the brain's `scout_list_boards` /
+        // `scout_get_zero_producers` MCP tools. Caller passes:
+        //   { ats: "ashby"|"greenhouse"|"lever", slugs: string[],
+        //     since_hours?: number }
+        // Returns:
+        //   { stats: [{slug, last_pulled, jobs_returned_window,
+        //              submitted_lifetime}] }
+        //
+        // Reads `discovered_jobs` (scouted_at + count, optionally windowed)
+        // and `applications` (lifetime submitted count) for the requested
+        // slugs. Single round-trip per side; the brain calls this O(1)x
+        // per cycle rather than per-slug.
+        const ats = String(params.ats || "").toLowerCase();
+        const slugs: string[] = Array.isArray(params.slugs) ? params.slugs.map(String) : [];
+        const sinceHours = Number(params.since_hours || 0);
+        if (!ats || slugs.length === 0) {
+          return apiSuccess({ stats: [] });
+        }
+        const sinceISO = sinceHours > 0
+          ? new Date(Date.now() - sinceHours * 3600 * 1000).toISOString()
+          : null;
+
+        // discovered_jobs.company holds the slug for ATS-API sources
+        // (ashby, greenhouse, lever). LinkedIn / Indeed jobs have free-form
+        // company names — the caller scopes to a single ats so this is fine.
+        let djQuery = supabase
+          .from("discovered_jobs")
+          .select("company, scouted_at, ats")
+          .eq("ats", ats)
+          .in("company", slugs);
+        if (sinceISO) djQuery = djQuery.gte("scouted_at", sinceISO);
+        const { data: djRows } = await djQuery;
+
+        const { data: appRows } = await supabase
+          .from("applications")
+          .select("company")
+          .eq("user_id", userId)
+          .eq("ats", ats)
+          .eq("status", "submitted")
+          .in("company", slugs);
+
+        // Aggregate.
+        const lastPulled = new Map<string, string>();
+        const windowCount = new Map<string, number>();
+        for (const r of (djRows || []) as Array<{ company: string; scouted_at: string }>) {
+          const slug = r.company;
+          if (!slug) continue;
+          windowCount.set(slug, (windowCount.get(slug) || 0) + 1);
+          const prev = lastPulled.get(slug);
+          if (!prev || r.scouted_at > prev) lastPulled.set(slug, r.scouted_at);
+        }
+        const submitted = new Map<string, number>();
+        for (const r of (appRows || []) as Array<{ company: string }>) {
+          if (!r.company) continue;
+          submitted.set(r.company, (submitted.get(r.company) || 0) + 1);
+        }
+
+        const stats = slugs.map((slug) => ({
+          slug,
+          last_pulled: lastPulled.get(slug) || null,
+          jobs_returned_window: windowCount.get(slug) || 0,
+          submitted_lifetime: submitted.get(slug) || 0,
+        }));
+        return apiSuccess({ stats });
       }
 
       default:

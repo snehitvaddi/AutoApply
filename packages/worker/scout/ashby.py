@@ -40,9 +40,12 @@ def _fetch_ashby_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
                     loc = loc.get("name", "")
                 if not tenant.passes_filter(title, slug, loc):
                     continue
+                # Ashby's public apply URL is path-based: /{slug}/{jobId}/application
+                # The query-string form (/application?jobId=...) is an internal route
+                # that returns "Job not found" when hit publicly.
                 apply_url = (
                     job.get("applicationUrl")
-                    or f"https://jobs.ashbyhq.com/{slug}/application?jobId={job['id']}"
+                    or f"https://jobs.ashbyhq.com/{slug}/{job['id']}/application"
                 )
                 # Ashby exposes publishedAt (ISO timestamp) on every job.
                 # Persisting it lets the freshness rule in memory

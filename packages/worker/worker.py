@@ -302,8 +302,7 @@ def _expand_tenant_boards(tenant: "TenantConfig", jobs: list[dict]) -> None:
 
     known_ashby = {s.lower() for s in (getattr(tenant, "ashby_boards", None) or [])}
     known_gh = {s.lower() for s in (getattr(tenant, "greenhouse_boards", None) or [])}
-    # lever_boards column doesn't exist in user_job_preferences yet —
-    # lever slugs are still resolved but only logged, not persisted.
+    known_lever = {s.lower() for s in (getattr(tenant, "lever_boards", None) or [])}
 
     seen_companies: set[str] = set()
     to_probe: list[str] = []
@@ -324,7 +323,7 @@ def _expand_tenant_boards(tenant: "TenantConfig", jobs: list[dict]) -> None:
 
     new_ashby: list[str] = []
     new_gh: list[str] = []
-    lever_discoveries: list[str] = []
+    new_lever: list[str] = []
     for company in to_probe:
         hit = try_resolve_ats_slug(company)
         if not hit:
@@ -337,13 +336,11 @@ def _expand_tenant_boards(tenant: "TenantConfig", jobs: list[dict]) -> None:
         elif platform == "greenhouse" and slug not in known_gh:
             known_gh.add(slug)
             new_gh.append(hit["slug"])
-        elif platform == "lever":
-            # lever_boards isn't persisted (schema gap); log for visibility.
-            lever_discoveries.append(hit["slug"])
+        elif platform == "lever" and slug not in known_lever:
+            known_lever.add(slug)
+            new_lever.append(hit["slug"])
 
-    if lever_discoveries:
-        logger.info(f"lever slugs resolved (not persisted): {lever_discoveries}")
-    if not (new_ashby or new_gh):
+    if not (new_ashby or new_gh or new_lever):
         return
 
     def _merge_and_cap(existing: list[str] | None, additions: list[str]) -> list[str]:
@@ -368,12 +365,14 @@ def _expand_tenant_boards(tenant: "TenantConfig", jobs: list[dict]) -> None:
         payload["ashby_boards"] = _merge_and_cap(getattr(tenant, "ashby_boards", None), new_ashby)
     if new_gh:
         payload["greenhouse_boards"] = _merge_and_cap(getattr(tenant, "greenhouse_boards", None), new_gh)
+    if new_lever:
+        payload["lever_boards"] = _merge_and_cap(getattr(tenant, "lever_boards", None), new_lever)
     try:
         from db import _api_call  # type: ignore
         _api_call("update_preferences", preferences=payload)
         logger.info(
-            "tenant boards expanded: +%d ashby, +%d greenhouse",
-            len(new_ashby), len(new_gh),
+            "tenant boards expanded: +%d ashby, +%d greenhouse, +%d lever",
+            len(new_ashby), len(new_gh), len(new_lever),
         )
     except Exception as e:
         logger.debug(f"update_preferences failed during board expansion: {e}")

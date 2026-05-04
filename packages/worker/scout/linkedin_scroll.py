@@ -89,6 +89,99 @@ def _search_url(keywords: str, location: str, exp: str = _EXP_DEFAULT) -> str:
     )
 
 
+# Right-pane detail extractor — synthesizes a click on each card
+# CONTAINER (not the title <a>) to populate the right detail panel,
+# then reads description / applicant count / posted time.
+#
+# Why click the card body, not the title link: clicking the title
+# anchor opens a NEW page (full /jobs/view/) which navigates away from
+# the search results — losing scroll state and burning the guest
+# session counter aggressively. Clicking the card container leaves the
+# user on /jobs/search and just expands the right pane in-place.
+#
+# We synthesize the click via dispatchEvent rather than a real
+# `browser("click ...")` call to avoid:
+#   1. Browser-level click counting that ramps up LinkedIn's bot guard
+#   2. The need for a snapshot+ref click cycle per card (slow)
+# Each card processed adds ~1.2s for the right-pane to populate. The
+# per-query budget is bounded by `_DEEP_DETAILS_PER_QUERY` so we don't
+# spend the full guest-click allowance on detail fetches.
+#
+# Falls back gracefully: if right-pane selectors miss (LinkedIn DOM
+# rev'd), the card keeps its list-only data and the scout still works.
+_DEEP_EXTRACT_JS = r"""
+async () => {
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const limit = (window.__alLimit__ ?? 12);
+  const cards = Array.from(document.querySelectorAll("li"))
+    .filter(li => li.querySelector('a[href*="/jobs/view/"]'));
+  const out = [];
+  for (let i = 0; i < cards.length && i < limit; i++) {
+    const li = cards[i];
+    const link    = li.querySelector('a[href*="/jobs/view/"]');
+    const title   = li.querySelector('h3.base-search-card__title');
+    const company = li.querySelector('h4.base-search-card__subtitle');
+    const loc     = li.querySelector('.job-search-card__location');
+    const timeEl  = li.querySelector('time');
+    if (!link || !title) continue;
+    const href = (link.getAttribute('href') || '').split('?')[0];
+
+    // Click the CARD container, not the title link. Synthesized
+    // MouseEvent with bubbles:true so the SPA's delegated listeners
+    // pick it up. The title <a> has its own click handler that
+    // navigates — explicitly target the card body.
+    const clickTarget = li.querySelector('[role="button"]')
+      || li.querySelector('div.base-card')
+      || li;
+    try {
+      clickTarget.scrollIntoView({block: 'center'});
+      clickTarget.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+    } catch (_) { /* no-op */ }
+    await sleep(900);  // let right pane populate
+
+    // Right-pane selectors — ordered by specificity. Guest mode and
+    // logged-in mode use slightly different class names; try both.
+    const pane = document.querySelector(
+      '.two-pane-serp-page__detail-view, .details-pane, .jobs-search__job-details--container'
+    );
+    let description = '';
+    let applicants = '';
+    let postedAt = '';
+    if (pane) {
+      const descEl = pane.querySelector(
+        '.show-more-less-html__markup, .description__text, .jobs-description__content'
+      );
+      const appEl  = pane.querySelector(
+        '.num-applicants__caption, .jobs-unified-top-card__applicant-count, .num-applicants__caption-text'
+      );
+      const timeEl2 = pane.querySelector('time');
+      description = (descEl ? descEl.textContent : '').trim().slice(0, 4000);
+      applicants  = (appEl  ? appEl.textContent  : '').trim();
+      postedAt    = (timeEl2 ? (timeEl2.getAttribute('datetime') || timeEl2.textContent || '') : '').trim();
+    }
+
+    out.push({
+      title:        (title.textContent   || '').trim(),
+      company:      (company ? company.textContent : '').trim(),
+      location:     (loc     ? loc.textContent     : '').trim(),
+      href,
+      posted_text:  (timeEl  ? (timeEl.getAttribute('datetime') || timeEl.textContent || '') : '').trim(),
+      // Right-pane fields (best-effort; empty string on miss).
+      description,
+      applicants,
+      pane_posted_at: postedAt,
+    });
+  }
+  return JSON.stringify(out);
+}
+"""
+
+# Cap right-pane fetches per query so deep extraction doesn't burn the
+# entire guest-click budget on detail reads. 12 cards × ~1s right-pane
+# wait ≈ 12s extra per query — still well under a single full scroll
+# cycle. The remaining cards are returned with list-only data.
+_DEEP_DETAILS_PER_QUERY = 12
+
 # Selectors verified against live LinkedIn guest DOM (2026-04).
 # The old ul.jobs-search__results-list and div.base-card are stale —
 # LinkedIn no longer renders those class names. <li> elements with no
@@ -283,15 +376,38 @@ def _scroll_and_extract(
         if not _recover_from_login_wall(search_url):
             return [], clicks
 
-    raw = evaluate_js(_EXTRACT_JS) or ""
-    m = re.search(r"\[.*\]", raw, re.S)
-    if not m:
-        return [], clicks
+    # Try deep extract first — clicks each card body to populate the
+    # right-pane and read description/applicant_count. Synthesized JS
+    # clicks don't tick LinkedIn's "real interaction" counter the same
+    # way real browser clicks do, so this is cheap. If it returns
+    # nothing (LinkedIn DOM rev'd, selectors stale), fall back to the
+    # list-only extractor.
+    cards: list[dict] = []
     try:
-        return _json.loads(m.group(0)), clicks
+        deep_js = (
+            f"window.__alLimit__ = {_DEEP_DETAILS_PER_QUERY}; "
+            f"({_DEEP_EXTRACT_JS})()"
+        )
+        raw = evaluate_js(deep_js) or ""
+        m = re.search(r"\[.*\]", raw, re.S)
+        if m:
+            cards = _json.loads(m.group(0))
     except Exception as e:
-        logger.warning(f"LinkedIn extract JSON parse failed: {e}")
-        return [], clicks
+        logger.warning(f"LinkedIn deep-extract failed, falling back: {e}")
+        cards = []
+
+    if not cards:
+        raw = evaluate_js(_EXTRACT_JS) or ""
+        m = re.search(r"\[.*\]", raw, re.S)
+        if not m:
+            return [], clicks
+        try:
+            cards = _json.loads(m.group(0))
+        except Exception as e:
+            logger.warning(f"LinkedIn extract JSON parse failed: {e}")
+            return [], clicks
+
+    return cards, clicks
 
 
 def _is_stale(posted_text: str) -> bool:
@@ -372,6 +488,13 @@ class LinkedInScrollScout(ScoutSource):
                     continue
                 if not tenant.passes_filter(title, company, location):
                     continue
+                # Right-pane fields (deep extract). Empty strings on
+                # any DOM miss — list-only fallback path naturally
+                # produces empty strings, so consumers can treat both
+                # uniformly: a non-empty description means we got rich
+                # data, empty means card-only metadata.
+                description = (c.get("description") or "").strip()
+                applicants = (c.get("applicants") or "").strip()
                 out.append({
                     "title": title,
                     "company": company,
@@ -380,6 +503,8 @@ class LinkedInScrollScout(ScoutSource):
                     "external_id": _external_id(href),
                     "ats": "linkedin",
                     "posted_text": posted_text,
+                    "description": description,
+                    "applicants": applicants,
                 })
                 kept += 1
             self.logger.info(

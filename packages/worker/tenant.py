@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from default_boards import DEFAULT_ASHBY_BOARDS, DEFAULT_GREENHOUSE_BOARDS
+from default_boards import DEFAULT_ASHBY_BOARDS, DEFAULT_GREENHOUSE_BOARDS, DEFAULT_LEVER_BOARDS
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,7 @@ class ApplyProfile:
     min_salary: int | None
     ashby_boards: tuple[str, ...]
     greenhouse_boards: tuple[str, ...]
+    lever_boards: tuple[str, ...]      # tenant override OR global default
 
     resume_path: str | None            # local cache path of resume PDF
     resume_file_name: str | None
@@ -188,6 +189,7 @@ class TenantConfig:
     linkedin_seed_queries: tuple[str, ...]    # == search_queries (distinct name for clarity)
     ashby_boards: tuple[str, ...]             # tenant override OR global default
     greenhouse_boards: tuple[str, ...]        # tenant override OR global default
+    lever_boards: tuple[str, ...]             # tenant override OR global default
 
     # Filter-side
     keyword_filter: tuple[str, ...]           # target_keywords OR target_titles lowered
@@ -292,6 +294,8 @@ class TenantConfig:
             legacy_ashby = tuple(raw_ashby) if raw_ashby else tuple(DEFAULT_ASHBY_BOARDS)
             raw_gh = prefs.get("greenhouse_boards")
             legacy_gh = tuple(raw_gh) if raw_gh else tuple(DEFAULT_GREENHOUSE_BOARDS)
+            raw_lever = prefs.get("lever_boards")
+            legacy_lever = tuple(raw_lever) if raw_lever else tuple(DEFAULT_LEVER_BOARDS)
             profile_tuple = (ApplyProfile(
                 id=f"legacy-{user_id[:8]}",
                 name="Default",
@@ -308,6 +312,7 @@ class TenantConfig:
                 min_salary=prefs.get("min_salary"),
                 ashby_boards=legacy_ashby,
                 greenhouse_boards=legacy_gh,
+                lever_boards=legacy_lever,
                 resume_path=None,
                 resume_file_name=None,
                 resume_signed_url=None,
@@ -351,6 +356,7 @@ class TenantConfig:
         # Board overrides: take default bundle's override, else global list.
         ashby_boards = default_bundle.ashby_boards or tuple(DEFAULT_ASHBY_BOARDS)
         greenhouse_boards = default_bundle.greenhouse_boards or tuple(DEFAULT_GREENHOUSE_BOARDS)
+        lever_boards = default_bundle.lever_boards or tuple(DEFAULT_LEVER_BOARDS)
 
         # Excluded companies: default bundle's list + visa-dependent clearance.
         user_excluded = [c.lower().strip() for c in default_bundle.excluded_companies]
@@ -378,6 +384,7 @@ class TenantConfig:
             linkedin_seed_queries=tuple(target_titles),
             ashby_boards=ashby_boards,
             greenhouse_boards=greenhouse_boards,
+            lever_boards=lever_boards,
             keyword_filter=tuple(target_keywords or [t.lower() for t in target_titles]),
             excluded_role_keywords=tuple(k.lower() for k in default_bundle.excluded_role_keywords),
             excluded_levels=tuple(k.lower() for k in default_bundle.excluded_levels),
@@ -513,6 +520,7 @@ def _build_apply_profile(raw: dict, fallback_email: str = "") -> ApplyProfile:
         min_salary=raw.get("min_salary"),
         ashby_boards=tuple(raw.get("ashby_boards") or ()) or tuple(DEFAULT_ASHBY_BOARDS),
         greenhouse_boards=tuple(raw.get("greenhouse_boards") or ()) or tuple(DEFAULT_GREENHOUSE_BOARDS),
+        lever_boards=tuple(raw.get("lever_boards") or ()) or tuple(DEFAULT_LEVER_BOARDS),
         resume_path=None,  # filled in by desktop when the file is cached locally
         resume_file_name=(resume.get("file_name") if isinstance(resume, dict) else None),
         resume_signed_url=(resume.get("signed_url") if isinstance(resume, dict) else None),

@@ -8,7 +8,12 @@ from db import get_global_knowledge
 
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_DIR = os.path.join(os.path.dirname(__file__), "knowledge")
+# This file lives at `packages/worker/knowledge/__init__.py`, so the
+# package directory IS the knowledge directory. Earlier this module sat
+# at `packages/worker/knowledge.py` next to a `knowledge/` data dir,
+# which silently broke `from knowledge.learned import ...` (file shadowed
+# the package). Merging into __init__.py fixed both.
+KNOWLEDGE_DIR = os.path.dirname(__file__)
 
 
 def load_global_template() -> dict:
