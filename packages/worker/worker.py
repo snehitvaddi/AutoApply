@@ -1506,14 +1506,18 @@ def main():
             ApplierClass = APPLIERS.get(ats)
             if not ApplierClass:
                 logger.info(
-                    f"No coded applier for ATS '{ats}' — marking for Claude Code "
-                    f"universal fill (job {job['id']}: {company})"
+                    f"No coded applier for ATS '{ats}' — handing to brain "
+                    f"(job {job['id']}: {company})"
                 )
-                # Don't fail the job — mark it as 'queued' so Claude Code can
-                # pick it up via the terminal and apply using OpenClaw directly.
-                # The nudge loop will surface these jobs to Claude.
-                update_queue_status(job['id'], 'pending', error=f'needs_universal_fill:{ats}')
-                update_local_status(job, 'queued', f'Needs Claude Code universal fill ({ats})')
+                # Brain-fallback path: mark the local row 'skipped' with an
+                # `awaiting_brain:<ats>` notes prefix. Worker's
+                # claim_next_job_locally only picks 'queued' rows so we
+                # won't re-claim our own brain-pending work, and the new
+                # MCP tool queue_claim_brain_fallback finds these by the
+                # notes prefix. Cloud queue stays 'pending' (with the same
+                # marker in error) so the dashboard shows them awaiting.
+                update_queue_status(job['id'], 'pending', error=f'awaiting_brain:{ats}')
+                update_local_status(job, 'skipped', f'awaiting_brain:{ats}')
                 continue
 
             try:
@@ -1628,32 +1632,66 @@ def main():
                     apply_outcome = "skipped"
                     apply_outcome_detail = f"retriable {_new_attempts}/{_max_attempts}: {str(result.error)[:160]}"
                 else:
-                    # Upload failure screenshot too — Telegram + dashboard
-                    # both want it, and the dashboard reads
-                    # applications.screenshot_url. Best-effort: a missing
-                    # url just falls back to the local-file send path.
-                    fail_screenshot_url = None
-                    if result.screenshot:
-                        try:
-                            fail_screenshot_url = upload_screenshot(user_id, result.screenshot)
-                        except Exception as _e:
-                            logger.debug(f"failure screenshot upload skipped: {_e}")
-                    update_queue_status(job['id'], 'failed', error=result.error)
-                    update_local_status(job, 'failed', result.error)
-                    log_application(
-                        user_id, job,
-                        {'status': 'failed', 'error': result.error,
-                         'screenshot_url': fail_screenshot_url},
-                    )
-                    outcome_logged = True
-                    send_failure(
-                        user_id, company, job.get('title', ''), result.error,
-                        screenshot_path=result.screenshot,
-                        screenshot_url=fail_screenshot_url,
-                    )
-                    update_heartbeat(user_id, "failed", f"{company} — {result.error[:80]}")
-                    apply_outcome = "failed"
-                    apply_outcome_detail = f"{company}: {str(result.error)[:160]}"
+                    # Recipe genuinely failed (non-retriable). Two paths:
+                    # (a) WORKER_BRAIN_FALLBACK=0 (default off → behave
+                    #     exactly as before: log failed, notify, move on).
+                    # (b) WORKER_BRAIN_FALLBACK=1 → hand the job to the
+                    #     brain instead of giving up. Brain reads the
+                    #     queue_claim_brain_fallback MCP tool, drives
+                    #     the apply via primitives, records a learned
+                    #     pattern on success. Recipe + brain hybrid: the
+                    #     5 hardcoded ATSes still try the recipe first,
+                    #     but the 2-8% the recipe misses don't get
+                    #     dropped, they get a second pass.
+                    _fallback_on = os.environ.get(
+                        "WORKER_BRAIN_FALLBACK", ""
+                    ).lower() in ("1", "true", "yes")
+                    if _fallback_on:
+                        logger.info(
+                            f"Recipe failed for {company} — handing to brain: {result.error}"
+                        )
+                        update_queue_status(
+                            job['id'], 'pending',
+                            error=f'awaiting_brain:recipe_failed:{ats}:{str(result.error)[:120]}',
+                        )
+                        update_local_status(
+                            job, 'skipped',
+                            f'awaiting_brain:recipe_failed:{ats}:{str(result.error)[:120]}',
+                        )
+                        update_heartbeat(
+                            user_id, "handed_to_brain",
+                            f"{company} — recipe failed, brain takes over",
+                        )
+                        apply_outcome = "skipped"
+                        apply_outcome_detail = f"recipe_failed_to_brain: {company}"
+                    else:
+                        # Upload failure screenshot too — Telegram +
+                        # dashboard both want it, and the dashboard reads
+                        # applications.screenshot_url. Best-effort: a
+                        # missing url just falls back to the local-file
+                        # send path.
+                        fail_screenshot_url = None
+                        if result.screenshot:
+                            try:
+                                fail_screenshot_url = upload_screenshot(user_id, result.screenshot)
+                            except Exception as _e:
+                                logger.debug(f"failure screenshot upload skipped: {_e}")
+                        update_queue_status(job['id'], 'failed', error=result.error)
+                        update_local_status(job, 'failed', result.error)
+                        log_application(
+                            user_id, job,
+                            {'status': 'failed', 'error': result.error,
+                             'screenshot_url': fail_screenshot_url},
+                        )
+                        outcome_logged = True
+                        send_failure(
+                            user_id, company, job.get('title', ''), result.error,
+                            screenshot_path=result.screenshot,
+                            screenshot_url=fail_screenshot_url,
+                        )
+                        update_heartbeat(user_id, "failed", f"{company} — {result.error[:80]}")
+                        apply_outcome = "failed"
+                        apply_outcome_detail = f"{company}: {str(result.error)[:160]}"
 
             time.sleep(cooldown)
             update_heartbeat(user_id, "sleep", f"cooldown {cooldown}s")

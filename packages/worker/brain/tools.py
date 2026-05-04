@@ -511,6 +511,99 @@ async def worker_restart(args: dict[str, Any]) -> dict:
 # ───────── knowledge.* ────────────────────────────────────────────────────
 
 @tool(
+    "knowledge_record_pattern",
+    "Record a successful brain-driven apply on a (possibly novel) ATS so future applies are deterministic. Call this RIGHT AFTER you log a successful application on an ATS that wasn't already deeply covered by the hand-written playbook. `fields` is a list of {label, selector, value_source, input_kind} — capture the key form fields you filled, in the order you filled them. `quirks` is a list of free-text gotchas (\"submit button is disabled until upload completes\", \"country dropdown needs React-Select fiber commit\"). `notes` is anything else worth knowing.",
+    {"ats": str, "hostname": str, "fields": str, "quirks": str, "notes": str},
+)
+async def knowledge_record_pattern(args: dict[str, Any]) -> dict:
+    def _do():
+        from knowledge.learned import record_pattern  # deferred
+        # fields/quirks come in as JSON strings (MCP scalar contract).
+        # Tolerate raw lists too in case the SDK ever upgrades.
+        fields_raw = args.get("fields") or "[]"
+        quirks_raw = args.get("quirks") or "[]"
+        try:
+            fields = json.loads(fields_raw) if isinstance(fields_raw, str) else list(fields_raw)
+        except json.JSONDecodeError:
+            return {"ok": False, "error": "fields must be a JSON array"}
+        try:
+            quirks = json.loads(quirks_raw) if isinstance(quirks_raw, str) else list(quirks_raw)
+        except json.JSONDecodeError:
+            return {"ok": False, "error": "quirks must be a JSON array"}
+        return record_pattern(
+            ats=args.get("ats", ""),
+            hostname=args.get("hostname", ""),
+            fields=fields,
+            quirks=quirks,
+            notes=args.get("notes", "") or "",
+        )
+    return _log_and_run("knowledge_record_pattern", args, _do)
+
+
+@tool(
+    "queue_claim_brain_fallback",
+    "Claim the next job that's been handed off for brain-driven apply. Returns the same job dict shape queue_claim_next gives you, or {empty: true} if nothing's waiting. Two sources: (a) ATSes with no hardcoded recipe (iCIMS, Taleo, Jobvite, etc.) and (b) recipe-failed jobs when WORKER_BRAIN_FALLBACK is enabled. After driving the apply, call queue_log_application + queue_update_status as usual; on success, call knowledge_record_pattern so the next apply on this ATS doesn't need to re-derive everything.",
+    {},
+)
+async def queue_claim_brain_fallback(args: dict[str, Any]) -> dict:
+    def _do():
+        import sqlite3
+        from contextlib import closing as _closing
+        from datetime import datetime, timezone
+        from db import LOCAL_DB_PATH  # deferred
+        # Atomic-ish: pull the oldest 'skipped' row whose notes are the
+        # awaiting_brain marker, then flip its status to 'applying' so
+        # we don't hand the same job to two brain sessions. SQLite's
+        # UPDATE...RETURNING gives us the row + the status flip in one
+        # statement.
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with _closing(sqlite3.connect(LOCAL_DB_PATH, timeout=5.0)) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    """
+                    UPDATE applications
+                    SET status = 'applying', updated_at = ?
+                    WHERE id = (
+                        SELECT id FROM applications
+                        WHERE status = 'skipped'
+                          AND notes LIKE 'awaiting_brain:%'
+                        ORDER BY scouted_at ASC
+                        LIMIT 1
+                    )
+                    RETURNING id, company, role, url, ats, source, location,
+                              posted_at, scouted_at, dedup_token, application_profile_id, notes
+                    """,
+                    (now,),
+                ).fetchone()
+                conn.commit()
+        except Exception as e:
+            return {"error": f"local sqlite claim failed: {e}"}
+        if not row:
+            return {"empty": True}
+        external_id = ""
+        dedup = row["dedup_token"]
+        if dedup and "|" in dedup:
+            external_id = dedup.split("|", 1)[1]
+        return {
+            "id": str(row["id"]),
+            "company": row["company"] or "",
+            "title": row["role"] or "",
+            "ats": row["ats"] or "",
+            "source": row["source"] or "",
+            "apply_url": row["url"] or "",
+            "location": row["location"] or "",
+            "posted_at": row["posted_at"],
+            "scouted_at": row["scouted_at"],
+            "external_id": external_id,
+            "application_profile_id": row["application_profile_id"],
+            "fallback_reason": (row["notes"] or "").replace("awaiting_brain:", "", 1),
+            "_local": True,
+        }
+    return _log_and_run("queue_claim_brain_fallback", {}, _do)
+
+
+@tool(
     "knowledge_get_ats_playbook",
     "Return the operator playbook section for one ATS. Names: greenhouse, lever, ashby, smartrecruiters, workday, linkedin, universal.",
     {"name": str},
@@ -546,7 +639,9 @@ ALL_TOOLS = [
     # worker lifecycle
     worker_status, worker_start, worker_stop, worker_restart,
     # knowledge
-    knowledge_get_ats_playbook,
+    knowledge_get_ats_playbook, knowledge_record_pattern,
+    # brain fallback
+    queue_claim_brain_fallback,
 ]
 
 

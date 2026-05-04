@@ -752,11 +752,136 @@ def scout_verify_url(url: str) -> str:
 
 @mcp.tool()
 def knowledge_get_ats_playbook(name: str) -> str:
-    """Return the ATS playbook section. Names: greenhouse, lever, ashby, smartrecruiters, workday, linkedin, universal."""
+    """Return the ATS playbook section. Names: greenhouse, lever, ashby, smartrecruiters, workday, linkedin, universal.
+
+    Hand-written prose AND any auto-recorded learned patterns for that
+    ATS are merged in the section text — one call gets you everything
+    the brain knows about this ATS.
+    """
     section = load_ats_playbook(name.strip())
     if section is None:
         return json.dumps({"found": False, "name": name})
     return json.dumps({"found": True, "name": name, "section": section})
+
+
+@mcp.tool()
+def knowledge_record_pattern(
+    ats: str,
+    hostname: str,
+    fields_json: str = "[]",
+    quirks_json: str = "[]",
+    notes: str = "",
+) -> str:
+    """Record a successful brain-driven apply on a (possibly novel)
+    ATS so future applies are deterministic.
+
+    CALL THIS RIGHT AFTER a successful apply on an ATS that the
+    hand-written playbook doesn't deeply cover. Future brain runs
+    pick up the entry via knowledge_get_ats_playbook automatically
+    and won't re-derive the form.
+
+    fields_json: JSON array of {label, selector, value_source,
+        input_kind} dicts — capture the key fields you filled, in
+        the order you filled them. Skip the boring ones (firstName /
+        lastName / email) unless their selectors were non-obvious.
+    quirks_json: JSON array of strings, each a free-text gotcha
+        ("submit disabled until upload completes", "country needs
+        React-Select fiber commit").
+    notes: anything else worth knowing — multi-page wizard, a
+        captcha kind, an unexpected validation, etc.
+    """
+    from knowledge.learned import record_pattern
+    try:
+        fields = json.loads(fields_json) if fields_json else []
+        quirks = json.loads(quirks_json) if quirks_json else []
+    except json.JSONDecodeError as e:
+        return json.dumps({"ok": False, "error": f"invalid JSON: {e}"})
+    if not isinstance(fields, list) or not isinstance(quirks, list):
+        return json.dumps({"ok": False, "error": "fields_json and quirks_json must be JSON arrays"})
+    return json.dumps(
+        record_pattern(
+            ats=ats, hostname=hostname,
+            fields=fields, quirks=quirks, notes=notes,
+        ),
+        default=str,
+    )
+
+
+@mcp.tool()
+def queue_claim_brain_fallback() -> str:
+    """Claim the next job handed off for brain-driven apply.
+
+    Two job sources land here:
+      1. ATSes with no hardcoded recipe (iCIMS, Taleo, Jobvite, etc.)
+         — worker.py marks them awaiting_brain on dispatch.
+      2. Recipe-failed jobs when WORKER_BRAIN_FALLBACK=1 is set —
+         worker.py routes the failure here instead of giving up.
+
+    Returns the same job dict shape queue_claim_next gives you, plus
+    a `fallback_reason` field describing WHY this job ended up in
+    your hands. Returns {"empty": true} if nothing's waiting.
+
+    Workflow after claiming:
+      1. browser_navigate to apply_url, drive the form via primitives.
+      2. On success: queue_log_application(submitted) +
+         queue_update_status(submitted) + knowledge_record_pattern.
+      3. On failure: queue_update_status(failed, error=...).
+
+    The claim flips the row to 'applying' atomically so two brain
+    sessions can't race on the same job.
+    """
+    import sqlite3
+    from contextlib import closing as _closing
+    from datetime import datetime, timezone
+    from db import LOCAL_DB_PATH
+
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _closing(sqlite3.connect(LOCAL_DB_PATH, timeout=5.0)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                UPDATE applications
+                SET status = 'applying', updated_at = ?
+                WHERE id = (
+                    SELECT id FROM applications
+                    WHERE status = 'skipped'
+                      AND notes LIKE 'awaiting_brain:%'
+                    ORDER BY scouted_at ASC
+                    LIMIT 1
+                )
+                RETURNING id, company, role, url, ats, source, location,
+                          posted_at, scouted_at, dedup_token, application_profile_id, notes
+                """,
+                (now,),
+            ).fetchone()
+            conn.commit()
+    except Exception as e:
+        return json.dumps({"error": f"local sqlite claim failed: {e}"})
+    if not row:
+        return json.dumps({"empty": True})
+    external_id = ""
+    dedup = row["dedup_token"]
+    if dedup and "|" in dedup:
+        external_id = dedup.split("|", 1)[1]
+    return json.dumps(
+        {
+            "id": str(row["id"]),
+            "company": row["company"] or "",
+            "title": row["role"] or "",
+            "ats": row["ats"] or "",
+            "source": row["source"] or "",
+            "apply_url": row["url"] or "",
+            "location": row["location"] or "",
+            "posted_at": row["posted_at"],
+            "scouted_at": row["scouted_at"],
+            "external_id": external_id,
+            "application_profile_id": row["application_profile_id"],
+            "fallback_reason": (row["notes"] or "").replace("awaiting_brain:", "", 1),
+            "_local": True,
+        },
+        default=str,
+    )
 
 
 # ── entry point ───────────────────────────────────────────────────────────

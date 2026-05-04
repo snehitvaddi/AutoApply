@@ -40,16 +40,40 @@ Safety:
 
 def load_ats_playbook(name: str) -> Optional[str]:
     """Return the markdown section for one ATS, or None if the section
-    isn't found. The playbook uses `## <name>` headings."""
-    if not PLAYBOOK_PATH.exists():
-        return None
-    text = PLAYBOOK_PATH.read_text(encoding="utf-8")
+    isn't found. The playbook uses `## <name>` headings.
+
+    Hand-written prose comes first; auto-recorded learned patterns
+    (from successful brain-driven applies on this ATS) get appended.
+    The two sources merge so the brain sees one coherent block — no
+    new tool call needed, no risk of forgetting to check the learned
+    file.
+    """
+    text = PLAYBOOK_PATH.read_text(encoding="utf-8") if PLAYBOOK_PATH.exists() else ""
     # Grab from `## <name>` up to the next `## ` heading or EOF.
     # Case-insensitive, name is matched on prefix so "ashby" hits
     # "Ashby (`jobs.ashbyhq.com/<slug>`)".
-    pattern = re.compile(
-        rf"^##\s+{re.escape(name)}\b.*?(?=^##\s+|\Z)",
-        re.IGNORECASE | re.MULTILINE | re.DOTALL,
-    )
-    m = pattern.search(text)
-    return m.group(0).strip() if m else None
+    section: Optional[str] = None
+    if text:
+        pattern = re.compile(
+            rf"^##\s+{re.escape(name)}\b.*?(?=^##\s+|\Z)",
+            re.IGNORECASE | re.MULTILINE | re.DOTALL,
+        )
+        m = pattern.search(text)
+        if m:
+            section = m.group(0).strip()
+
+    # Merge learned patterns. Import lazily so a corrupted learned.json
+    # never blocks the prose lookup.
+    try:
+        from knowledge.learned import get_learned, format_for_prompt
+        learned = get_learned(ats=name)
+        if learned:
+            tail = format_for_prompt(learned)
+            section = (section + "\n\n" + tail) if section else (
+                f"## {name}\n\n_(No hand-written playbook yet — only auto-recorded patterns below.)_\n{tail}"
+            )
+    except Exception:
+        # Learned merge is best-effort. Fall through with whatever we have.
+        pass
+
+    return section

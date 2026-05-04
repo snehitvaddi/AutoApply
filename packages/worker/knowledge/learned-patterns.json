@@ -1,0 +1,4 @@
+{
+  "_doc": "Auto-managed by knowledge_record_pattern MCP tool. Each entry captures a successful brain-driven apply on a new (or quirky) ATS so future applies can be deterministic. Do not hand-edit unless you know what you're doing — the brain reads this file via knowledge_get_ats_playbook on every apply.",
+  "patterns": []
+}

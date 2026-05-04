@@ -13,6 +13,69 @@ Conventions used below:
 
 ---
 
+## ⛔ Policy: do NOT add new applier/<ats>.py files
+
+The five hardcoded recipes — `greenhouse`, `lever`, `ashby`,
+`smartrecruiters`, `workday` — cover ~80% of real-world applies and
+are the right tool for those. **For every other ATS** (iCIMS, Taleo,
+Jobvite, BambooHR, Recruitee, JazzHR, etc.) the answer is **brain-
+driven apply + self-recorded learned pattern**, not new Python.
+
+The flow:
+
+1. Worker.py sees an ATS without a recipe and marks the row with
+   `notes='awaiting_brain:<ats>'` (status `skipped`). The cloud queue
+   carries the same marker in `error`.
+2. Brain calls `queue_claim_brain_fallback` to pick up the next such
+   row. Drives the apply with `browser_*` primitives (use
+   `browser_select_react` for React-Select dropdowns,
+   `browser_upload` already verifies file landing,
+   `browser_gateway_restart` if Chrome wedges).
+3. After a successful submit + positive-confirmation snapshot:
+   - `queue_log_application(status="submitted", ...)`
+   - `queue_update_status(local_id=<row id>, status="submitted", ...)`
+   - **`knowledge_record_pattern(ats=<slug>, hostname=<apply hostname>,
+     fields=<JSON>, quirks=<JSON>, notes=<...>)`** — this is the
+     critical step. It writes the discovered field mappings to
+     `knowledge/learned-patterns.json`. Future applies on the same
+     ATS get this entry merged into their `knowledge_get_ats_playbook`
+     response automatically — no second discovery needed.
+
+`knowledge_record_pattern` argument shape:
+
+```json
+{
+  "ats": "icims",
+  "hostname": "careers.acme.com",
+  "fields_json": "[
+    {\"label\": \"First Name\", \"selector\": \"input#firstName\",
+     \"value_source\": \"profile.first_name\", \"input_kind\": \"text\"},
+    {\"label\": \"Phone\", \"selector\": \"input[name='phone']\",
+     \"value_source\": \"profile.phone\", \"input_kind\": \"text\"}
+  ]",
+  "quirks_json": "[
+    \"Resume upload uses an iframe — call browser_dismiss_stray_tabs first\",
+    \"Submit button only enables after the consent checkbox is checked\"
+  ]",
+  "notes": "Two-page wizard. Page 1 = personal info, page 2 = EEO."
+}
+```
+
+Skip the obvious fields (firstName/lastName/email) unless their
+selectors were non-obvious. Capture the quirks aggressively — they're
+what makes the pattern useful next time. Same hostname + same field-
+label set just bumps `success_count` on the existing entry; no
+duplicates.
+
+If a recipe-driven apply genuinely fails (validation error after
+submit, "field required" toast, etc.) and `WORKER_BRAIN_FALLBACK=1`
+is set, the same flow handles it — same `queue_claim_brain_fallback`
+tool, same record-pattern step. Recipe + brain hybrid: the 5 covered
+ATSes still try the recipe first, but the 2-8% the recipe misses
+get a second pass instead of a hard fail.
+
+---
+
 ## Greenhouse (`boards.greenhouse.io/<slug>`)
 
 - **Embed URL conversion.** A career page link of the form
