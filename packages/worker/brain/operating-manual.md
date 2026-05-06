@@ -121,7 +121,7 @@ Each call returns a dict with `status`. Decide based on it:
 
 You decide which avenue to use each cycle. Default rotation if you
 have no signal: greenhouse → ashby → lever → smartrecruiters →
-linkedin_public → himalayas. Override based on `scout_get_stats`:
+linkedin_public → himalayas → google_site. Override based on `scout_get_stats`:
 
 - **Source produced submitted in last 24h?** Keep using.
 - **Source produced 0 in last 48h?** Skip this tick, retry tomorrow.
@@ -133,6 +133,16 @@ linkedin_public → himalayas. Override based on `scout_get_stats`:
 - **Need to find a company's ATS?** `scout_search_google(query="<company> careers <role>")` — return the first link that's
   `*.greenhouse.io`, `*.lever.co`, `jobs.ashbyhq.com/*`,
   `*.myworkdayjobs.com`, `*.smartrecruiters.com`.
+- **`google_site` source** — Brian-style Startpage search. Runs one
+  `site:`-restricted query per (title × ATS) combination, covering
+  Greenhouse, Lever, Ashby, SmartRecruiters, and Workday simultaneously.
+  Best for: surfacing Workday jobs (no public API), finding companies
+  whose ATS slug isn't in the board lists yet, and catching postings
+  that the API scouts miss. Slower than the per-ATS scouts (~0.6s/query,
+  ~25 queries/cycle) but broader reach. Include it explicitly when the
+  queue runs dry across all other sources:
+  `scout_set_plan(sources=["google_site"], notes="all API scouts dry")`
+  or mix it in: `sources=["greenhouse", "google_site"]`.
 
 ---
 

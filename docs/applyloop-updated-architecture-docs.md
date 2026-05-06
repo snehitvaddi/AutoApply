@@ -105,7 +105,7 @@ This is the pipeline that must run inside PTY Claude's brain. Every step must be
 STEP 1 — SCOUT
   └─ Call: scout_list_sources
   └─ For each source: scout_run_source(name) → list of JobPost dicts
-  └─ Sources: linkedin_scroll, ashby, greenhouse, lever, himalayas, indeed, linkedin_public
+  └─ Sources: linkedin_scroll, ashby, greenhouse, lever, himalayas, linkedin_public, google_site (Brian-style Startpage site: search — covers Workday + unknown slugs)
   └─ Result: raw candidate jobs (unfiltered)
 
 STEP 2 — FILTER
