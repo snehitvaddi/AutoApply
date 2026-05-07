@@ -27,6 +27,14 @@ WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
 RESUME_DIR = os.environ.get("RESUME_DIR") or os.path.expanduser("~/.autoapply/workspace/resumes")
 LOCAL_DB_PATH = os.environ.get("APPLYLOOP_DB", os.path.expanduser("~/.autoapply/workspace/applications.db"))
 
+# Legacy DB that may exist on older installs before the workspace rename.
+# Merged into LOCAL_DB_PATH on first boot — see _merge_legacy_db().
+_LEGACY_DB_PATH = os.path.join(
+    os.environ.get("APPLYLOOP_HOME") or os.path.expanduser("~/.applyloop"),
+    "applyloop.db",
+)
+_LEGACY_MERGE_DONE = False  # module-level flag — merge runs once per process
+
 _http_client: httpx.Client | None = None
 
 
@@ -261,22 +269,38 @@ def update_queue_status(
 # ── Application logging ───────────────────────────────────────────────────
 
 def is_already_submitted(user_id: str, company: str, title: str) -> bool:
-    """Worker preflight: ask the cloud whether this (company, title)
-    has already been logged as a successful submission for this user.
+    """Worker preflight: check if this (company, title) was already submitted.
 
-    Conservative on failure — if the proxy call errors we return False
-    so the worker still attempts the apply (the scout-side dedup and
-    DB-level partial unique index from mig 008 stay as backstops).
-    Better an extra-careful retry than blocking submissions on a
-    transient network blip.
+    Local SQLite is checked first — it is the source of truth and is
+    fast/offline. Cloud is only consulted if the local check is negative,
+    as a safety net for installs where the local DB was wiped or the job
+    was submitted from a different machine.
+
+    Conservative on failure — any exception returns False so a transient
+    network/DB blip doesn't permanently block an apply attempt.
     """
     if not company or not title:
         return False
+    # Primary: local SQLite (always up-to-date, no network needed).
+    try:
+        with closing(_get_local_conn()) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM applications "
+                "WHERE LOWER(company) = LOWER(?) AND LOWER(role) = LOWER(?) "
+                "AND status = 'submitted' LIMIT 1",
+                (company, title),
+            ).fetchone()
+            if row:
+                logger.debug(f"Dedup (local): already submitted to {company} / {title}")
+                return True
+    except Exception as e:
+        logger.debug(f"Local dedup check failed (continuing to cloud): {e}")
+    # Secondary: cloud (catches cases where local DB was rebuilt from scratch).
     try:
         resp = _api_call("check_already_submitted", company=company, title=title)
         return bool((resp or {}).get("already_submitted"))
     except Exception as e:
-        logger.debug(f"dedup preflight failed (non-fatal, will attempt apply): {e}")
+        logger.debug(f"Cloud dedup preflight failed (non-fatal, will attempt apply): {e}")
         return False
 
 
@@ -328,6 +352,7 @@ def _get_local_conn() -> sqlite3.Connection:
     except sqlite3.Error:
         pass
     _ensure_local_schema(conn)
+    _merge_legacy_db(conn)
     return conn
 
 
@@ -420,9 +445,23 @@ def enqueue_to_local_db(jobs: list[dict]) -> int:
     stale_cutoff = datetime.now(timezone.utc) - _timedelta(hours=24)
     inserted = 0
     skipped_stale = 0
+    skipped_submitted = 0
     try:
         with closing(_get_local_conn()) as conn:
             now = datetime.now(timezone.utc).isoformat()
+            # Pre-load the set of already-submitted (company, role) pairs so we
+            # can skip re-queuing without a per-job round-trip. This is the
+            # queue-side dedup; is_already_submitted() is the apply-side dedup.
+            # Together they prevent the Airwallex-style "apply every day to the
+            # same role" loop that happens when submitted records live in the
+            # legacy DB and the active DB has no memory of them.
+            try:
+                _submitted_rows = conn.execute(
+                    "SELECT LOWER(company), LOWER(role) FROM applications WHERE status='submitted'"
+                ).fetchall()
+                _submitted_set: set[tuple[str, str]] = {(r[0], r[1]) for r in _submitted_rows}
+            except Exception:
+                _submitted_set = set()
             for job in jobs:
                 posted_at_raw = job.get("posted_at")
                 if posted_at_raw:
@@ -438,6 +477,15 @@ def enqueue_to_local_db(jobs: list[dict]) -> int:
                     except (ValueError, TypeError):
                         pass  # unparseable date = trust the caller, enqueue
                 company = job.get("company", "")
+                # Skip jobs already submitted — prevents re-queuing a role the
+                # worker already applied to (Airwallex-style daily re-application
+                # when the submitted record was in a legacy DB and has now been
+                # merged into the active one).
+                _co_key = company.lower()
+                _ti_key = (job.get("title", "")).lower().strip()
+                if (_co_key, _ti_key) in _submitted_set:
+                    skipped_submitted += 1
+                    continue
                 # Dedup by company + normalized title (not external_id) so that
                 # the same role posted per-location at the same company (Greenhouse
                 # pattern: one external_id per city) only enters the queue once.
@@ -463,6 +511,8 @@ def enqueue_to_local_db(jobs: list[dict]) -> int:
             conn.commit()
         if skipped_stale:
             logger.info(f"enqueue_to_local_db: dropped {skipped_stale} stale (>24h) row(s)")
+        if skipped_submitted:
+            logger.info(f"enqueue_to_local_db: skipped {skipped_submitted} already-submitted job(s)")
         return inserted
     except Exception as e:
         logger.warning(f"Local DB enqueue failed (non-fatal): {e}")
@@ -540,6 +590,58 @@ def cleanup_stale_queued_shadows() -> int:
         return deleted
     except Exception as e:
         logger.warning(f"Shadow-row cleanup failed (non-fatal): {e}")
+        return 0
+
+
+def _merge_legacy_db(conn: sqlite3.Connection) -> int:
+    """One-time import from the legacy applyloop.db into the active DB.
+
+    Uses ATTACH DATABASE so only columns common to both schemas are
+    copied — handles the case where the legacy file pre-dates the
+    `attempts`/`max_attempts` columns. INSERT OR IGNORE on the
+    dedup_token UNIQUE index means this is fully idempotent: safe to
+    call on every boot, rows already present are silently skipped.
+
+    This fixes the Airwallex-style re-application bug: if submitted
+    records lived only in the old file, the dedup check would miss them
+    and the worker would reapply to the same role every session.
+    """
+    global _LEGACY_MERGE_DONE
+    if _LEGACY_MERGE_DONE:
+        return 0
+    _LEGACY_MERGE_DONE = True
+
+    legacy = _LEGACY_DB_PATH
+    active = os.path.abspath(LOCAL_DB_PATH)
+    if not os.path.exists(legacy) or os.path.abspath(legacy) == active:
+        return 0
+
+    try:
+        conn.execute(f"ATTACH DATABASE ? AS _legacy", (legacy,))
+        src_cols = {r[1] for r in conn.execute("PRAGMA _legacy.table_info(applications)").fetchall()}
+        dst_cols = {r[1] for r in conn.execute("PRAGMA table_info(applications)").fetchall()}
+        # Exclude `id` — it's autoincrement and must not be copied.
+        common = [c for c in src_cols if c in dst_cols and c != "id"]
+        col_list = ", ".join(common)
+        result = conn.execute(
+            f"INSERT OR IGNORE INTO applications ({col_list}) "
+            f"SELECT {col_list} FROM _legacy.applications"
+        )
+        merged = result.rowcount
+        conn.commit()
+        conn.execute("DETACH DATABASE _legacy")
+        if merged > 0:
+            logger.info(
+                f"Legacy DB merge: imported {merged} row(s) from {legacy} → {active}. "
+                f"Dedup tokens from old sessions are now visible — re-applications blocked."
+            )
+        return merged
+    except Exception as e:
+        logger.warning(f"Legacy DB merge failed (non-fatal, applies continue): {e}")
+        try:
+            conn.execute("DETACH DATABASE _legacy")
+        except Exception:
+            pass
         return 0
 
 

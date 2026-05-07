@@ -123,3 +123,49 @@ is CRITICAL. Each layer has a specific role. DO NOT mix them up.
 - For applying: use openclaw browser commands (browser needed)
 - NEVER use web search for scouting — use direct API calls
 - NEVER run worker.py — Claude Code IS the worker
+
+═══ DATABASE — SOURCE OF TRUTH ═══
+
+There are two storage layers. They serve different purposes:
+
+┌──────────────────────────────────────────────────────────────┐
+│  LOCAL SQLite — SOURCE OF TRUTH FOR ALL JOB DATA            │
+│  Path: $APPLYLOOP_DB (default: ~/.autoapply/workspace/       │
+│         applications.db)                                     │
+│                                                              │
+│  Stores: every job scouted, queued, applied, submitted,      │
+│  failed, skipped. Dedup tokens. Screenshots. All status.     │
+│  The dashboard reads this directly. The worker writes here.  │
+│  This is THE authoritative record.                           │
+│                                                              │
+│  Dedup layers (innermost wins):                              │
+│    1. dedup_token UNIQUE index — prevents re-queuing same    │
+│       company+title combo (even across re-posts)             │
+│    2. submitted-set guard in enqueue_to_local_db() —         │
+│       skips queueing if status='submitted' exists for        │
+│       this company+title (fixes Airwallex-style daily loop)  │
+│    3. is_already_submitted() — local check at apply time,    │
+│       cloud check as fallback                                │
+│                                                              │
+│  Legacy merge: on first boot, _merge_legacy_db() imports     │
+│  ~/.applyloop/applyloop.db (older installs) into the active  │
+│  DB via INSERT OR IGNORE. Idempotent. Fixes cross-session    │
+│  dedup gaps.                                                 │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│  SUPABASE CLOUD — PROFILE + PREFERENCES ONLY                 │
+│                                                              │
+│  Stores: user profile, resumes, job preferences, answer key, │
+│  worker token, multi-profile bundles.                        │
+│  Does NOT store individual job records with full detail.     │
+│  Receives only aggregate status pings (submitted/failed      │
+│  counts) for billing/rate-limiting purposes.                 │
+│                                                              │
+│  Dashboard DOES NOT read from Supabase for job stats.        │
+│  It reads local SQLite. Supabase counts may lag or differ — │
+│  always trust the local file.                                │
+└──────────────────────────────────────────────────────────────┘
+
+KEY RULE: If the dashboard count disagrees with what you expect,
+query $APPLYLOOP_DB directly. Never query applyloop.db (legacy).

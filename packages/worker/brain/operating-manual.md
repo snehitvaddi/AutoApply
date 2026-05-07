@@ -39,12 +39,13 @@ You hold the keys to:
   and preference data (`tenant_load`), never for job counts or pipeline
   state. If the dashboard shows fewer jobs than you expect, query
   `APPLYLOOP_DB` directly — the local file is authoritative.
-- **Split-brain warning** — a legacy file `~/.applyloop/applyloop.db`
-  may exist on older installs. It is NOT the active database. The
-  desktop, the worker, and your MCP tools all read/write
-  `applications.db`. If you ever run a raw SQL query and the counts
-  look wrong, confirm you're querying `$APPLYLOOP_DB`, not the legacy
-  file.
+- **Legacy DB auto-merge** — on first boot, the worker automatically
+  merges `~/.applyloop/applyloop.db` (legacy path) into `applications.db`
+  using `INSERT OR IGNORE` on `dedup_token`. This is idempotent. After
+  the merge, all historical submitted records are visible to the dedup
+  check — the Airwallex-style "reapply every day" loop is fixed by this.
+  You do not need to trigger it manually. If you see "Legacy DB merge:
+  imported N rows" in the log, that's expected and healthy.
 - **30+ MCP tools** — listed below in your loop.
 - **Telegram** — every meaningful action emits an update so the user
   knows you're alive without watching the dashboard.
