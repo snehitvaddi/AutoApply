@@ -22,10 +22,31 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 def _resolve_db_path() -> Path:
-    """Pick the database path at call time so APPLYLOOP_DB / WORKSPACE changes stick."""
+    """Pick the database path at call time so APPLYLOOP_DB / WORKSPACE changes stick.
+
+    Probe order (first existing file with data wins):
+    1. APPLYLOOP_DB env — explicit override, highest priority.
+    2. APPLYLOOP_WORKSPACE / applications.db — desktop-server canonical.
+    3. APPLYLOOP_HOME / applyloop.db — legacy path used before the .autoapply rename.
+    4. ~/.autoapply/workspace/applications.db — hardcoded fallback.
+    """
     env = os.environ.get("APPLYLOOP_DB")
     if env:
         return Path(env).expanduser()
+    ws_env = os.environ.get("APPLYLOOP_WORKSPACE")
+    if ws_env:
+        candidate = Path(ws_env).expanduser() / "applications.db"
+        if candidate.exists():
+            return candidate
+    home_env = os.environ.get("APPLYLOOP_HOME")
+    if home_env:
+        legacy = Path(home_env).expanduser() / "applyloop.db"
+        if legacy.exists():
+            new_path = Path.home() / ".autoapply" / "workspace" / "applications.db"
+            # Prefer new path if it's larger (more data) — else keep legacy.
+            if new_path.exists() and new_path.stat().st_size >= legacy.stat().st_size:
+                return new_path
+            return legacy
     return Path.home() / ".autoapply" / "workspace" / "applications.db"
 
 
