@@ -59,6 +59,7 @@ class ScoutContractTest(unittest.TestCase):
         "__init__.py",
         "base.py",
         "ats_resolver.py",  # slug resolver for title→company board expansion (Fix 5)
+        "plan.py",          # scout-plan.json read/write helpers; not a ScoutSource
     }
 
     def _scout_source_files(self) -> list[Path]:

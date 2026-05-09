@@ -53,6 +53,7 @@ def _build(
         linkedin_seed_queries=tuple(target_titles),
         ashby_boards=("figma", "stripe"),  # arbitrary — not under test here
         greenhouse_boards=("brex", "datadog"),
+        lever_boards=("netflix", "figma"),
         keyword_filter=tuple((target_keywords or target_titles) or []),
         excluded_role_keywords=tuple(k.lower() for k in (excluded_role_keywords or [])),
         excluded_levels=tuple(k.lower() for k in (excluded_levels or [])),

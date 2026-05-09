@@ -148,8 +148,8 @@ def _strip_tags(s: str) -> str:
 
 
 def _split_h2_into_title_company(h2_text: str, fallback_company: str) -> tuple[str, str]:
-    """Startpage h2 looks like `"AI Engineer @ Distyl AI - Jobs"` or
-    `"Senior ML Engineer | Acme Corp - Jobs"`. Pull the role + company.
+    """Startpage h2 looks like `"Backend Engineer @ Distyl - Jobs"` or
+    `"Staff Software Engineer | Acme Corp - Jobs"`. Pull the role + company.
     Falls back to (h2_text, slug) when the separators aren't there.
     """
     text = h2_text.strip()
