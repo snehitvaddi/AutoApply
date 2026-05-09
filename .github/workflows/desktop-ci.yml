@@ -248,3 +248,43 @@ jobs:
             exit 1
           }
         shell: pwsh
+
+      # ── Distributable artifact build ────────────────────────────────────
+      # build.py --win produces dist/windows/ApplyLoop/ApplyLoop.exe (via
+      # PyInstaller --onedir) plus a dist/ApplyLoop-VERSION-windows.zip
+      # for one-click distribution. Upload the zip so the user can grab
+      # it directly from the workflow run page and install on their
+      # physical Windows machine without rebuilding locally.
+      - name: Install PyInstaller for .exe build
+        run: pip install pyinstaller>=6.0
+
+      - name: Build Windows .exe + zip
+        working-directory: packages/desktop
+        run: python build.py --win --skip-ui
+        shell: pwsh
+
+      - name: List build output
+        working-directory: packages/desktop/dist
+        run: |
+          Write-Host "── dist/ contents ──"
+          Get-ChildItem -Recurse -Depth 2 | Select-Object FullName, Length
+        shell: pwsh
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: applyloop-windows-${{ github.run_number }}
+          path: packages/desktop/dist/ApplyLoop-*-windows.zip
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Windows logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-failure-logs-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}\applyloop-stdout.txt
+            ${{ runner.temp }}\applyloop-stderr.txt
+          retention-days: 7
+          if-no-files-found: ignore

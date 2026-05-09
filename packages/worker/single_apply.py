@@ -365,7 +365,11 @@ def apply_one_job(
     # Run the recipe. Marker tells preflight "an apply is driving this
     # Chrome session — do NOT deep-probe / restart the gateway". Cleared
     # in finally so a crash, success, or non-success all release it.
+    # keep_awake.start() blocks Windows sleep during the apply (no-op on
+    # Mac/Linux where jiggler.sh handles wake-state externally).
+    import keep_awake as _keep_awake
     _write_apply_marker()
+    _keep_awake.start()
     try:
         result = applier.apply(apply_url)
     except Exception as e:
@@ -375,6 +379,7 @@ def apply_one_job(
         return _make_outcome("error", job=job, error=f"applier raised: {e}")
     finally:
         _clear_apply_marker()
+        _keep_awake.stop()
 
     if result.success:
         screenshot_url = None

@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import tempfile
 import time
 import logging
 import subprocess
@@ -38,8 +39,12 @@ class BrowserError(RuntimeError):
 # are silently rejected by the CLI (it returns success, never attaches
 # the file). We auto-copy resumes into the sandbox before invoking the
 # upload verb so the agent doesn't have to think about it.
+# Default uses tempfile.gettempdir() so it returns /tmp on POSIX and
+# %TEMP%\openclaw\uploads on Windows. Hardcoded "/tmp/openclaw/uploads"
+# was a Mac/Linux assumption that broke the upload sandbox on Windows.
 _OPENCLAW_UPLOAD_SANDBOX = os.environ.get(
-    "OPENCLAW_UPLOAD_SANDBOX", "/tmp/openclaw/uploads"
+    "OPENCLAW_UPLOAD_SANDBOX",
+    os.path.join(tempfile.gettempdir(), "openclaw", "uploads"),
 )
 
 

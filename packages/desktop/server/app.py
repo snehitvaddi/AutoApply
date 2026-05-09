@@ -127,7 +127,7 @@ async def lifespan(app: FastAPI):
     #     can re-spawn the gateway at every login if it's still loaded.
     #     We warn loudly if its file is on disk, even if currently
     #     unloaded — a reboot or `launchctl load` would bring it back.
-    import os as _os, subprocess as _sp, shutil as _sh, signal as _signal, atexit as _atexit
+    import os as _os, subprocess as _sp, shutil as _sh, signal as _signal, atexit as _atexit, sys as _sys
     _gateway_started_by_us = False  # kept for telemetry; no longer gates stop
 
     def _gateway_status_running() -> bool:
@@ -159,19 +159,41 @@ async def lifespan(app: FastAPI):
         # Belt-and-suspenders: if `openclaw gateway stop` left any
         # `openclaw gateway` processes alive (rare but seen with daemons
         # that ignore the standard stop signal), kill them by name.
+        # Platform-specific: pgrep on POSIX, tasklist on Windows.
         try:
-            r = _sp.run(
-                ["pgrep", "-f", "openclaw"],
-                capture_output=True, text=True, timeout=5,
-            )
-            for pid_str in (r.stdout or "").split():
-                try:
-                    pid = int(pid_str.strip())
-                    if pid <= 1 or pid == _os.getpid():
+            if _sys.platform == "win32":
+                r = _sp.run(
+                    ["tasklist", "/FI", "IMAGENAME eq openclaw*", "/FO", "CSV", "/NH"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                # CSV: "image","pid","session","sessno","mem"
+                for line in (r.stdout or "").splitlines():
+                    parts = [p.strip().strip('"') for p in line.split(",")]
+                    if len(parts) < 2:
                         continue
-                    _os.kill(pid, _signal.SIGTERM)
-                except (ValueError, ProcessLookupError, PermissionError):
-                    continue
+                    try:
+                        pid = int(parts[1])
+                        if pid <= 1 or pid == _os.getpid():
+                            continue
+                        _sp.run(
+                            ["taskkill", "/F", "/PID", str(pid)],
+                            capture_output=True, timeout=5,
+                        )
+                    except (ValueError, OSError):
+                        continue
+            else:
+                r = _sp.run(
+                    ["pgrep", "-f", "openclaw"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for pid_str in (r.stdout or "").split():
+                    try:
+                        pid = int(pid_str.strip())
+                        if pid <= 1 or pid == _os.getpid():
+                            continue
+                        _os.kill(pid, _signal.SIGTERM)
+                    except (ValueError, ProcessLookupError, PermissionError):
+                        continue
         except Exception as e:
             logger.debug(f"orphan sweep skipped: {e}")
 
@@ -201,17 +223,21 @@ async def lifespan(app: FastAPI):
     # plist file will re-spawn the gateway on reboot or `launchctl
     # load`. Tell the user so they can `rm` it if they want true
     # "close the app, kill the browser" semantics.
-    _launch_agent_path = _os.path.expanduser(
-        "~/Library/LaunchAgents/ai.openclaw.gateway.plist"
-    )
-    if _os.path.exists(_launch_agent_path):
-        logger.warning(
-            "Found legacy LaunchAgent at %s — this can re-spawn the "
-            "OpenClaw gateway at login or on `launchctl load`. Remove "
-            "it (`rm %s`) for true 'close ApplyLoop, close Chrome' "
-            "behavior.",
-            _launch_agent_path, _launch_agent_path,
+    # macOS-only — Windows has no LaunchAgent system (auto-start is via
+    # Task Scheduler or the Startup folder, neither of which has the
+    # same persistent-respawn footgun).
+    if _sys.platform == "darwin":
+        _launch_agent_path = _os.path.expanduser(
+            "~/Library/LaunchAgents/ai.openclaw.gateway.plist"
         )
+        if _os.path.exists(_launch_agent_path):
+            logger.warning(
+                "Found legacy LaunchAgent at %s — this can re-spawn the "
+                "OpenClaw gateway at login or on `launchctl load`. Remove "
+                "it (`rm %s`) for true 'close ApplyLoop, close Chrome' "
+                "behavior.",
+                _launch_agent_path, _launch_agent_path,
+            )
 
     if not _os.environ.get("APPLYLOOP_HEADLESS") and _sh.which("openclaw"):
         # Boot-time orphan sweep. If a prior desktop didn't shut down
