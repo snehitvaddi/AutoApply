@@ -124,25 +124,37 @@ Same brain, two keyboards.
 
 **Step 1** — Go to [applyloop.vercel.app](https://applyloop.vercel.app), sign in, fill your profile, and wait for approval. You'll receive an activation code that looks like `AL-XXXX-XXXX`.
 
-**Step 2** — Open **Terminal** on your Mac and run:
+**Step 2** — Open your terminal and run the one-liner for your OS.
+
+**On macOS** (Terminal):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh \
   | bash -s -- AL-XXXX-XXXX
 ```
 
-*(The [setup page](https://applyloop.vercel.app/setup-complete) generates this command with your code already filled in — just copy and paste.)*
+**On Windows 10/11** (PowerShell):
 
-**Step 3** — When the install finishes, double-click **ApplyLoop** in `/Applications` and press **Start ApplyLoop**.
+```powershell
+$env:APPLYLOOP_CODE = "AL-XXXX-XXXX"; irm https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.ps1 | iex
+```
+
+*(The [setup page](https://applyloop.vercel.app/setup-complete) generates the right command with your code already filled in — just copy and paste.)*
+
+**Step 3** — When the install finishes:
+- **macOS**: double-click **ApplyLoop** in `/Applications` and press **Start ApplyLoop**.
+- **Windows**: launch the built `ApplyLoop.exe` from the Start menu, or run `applyloop start` in a new PowerShell window.
 
 > The first scouting run starts within 30 seconds. You'll see jobs flowing into the Queued column almost immediately.
+
+For Windows-specific troubleshooting, file paths, and notes, see [docs/WINDOWS.md](docs/WINDOWS.md).
 
 ---
 
 ## Requirements
 
-- **macOS** (Intel or Apple Silicon) — Windows coming soon
-- **Claude Code CLI** — [get it here](https://claude.ai/claude-code), free to install
+- **macOS** (Intel or Apple Silicon) **OR Windows 10/11** (1809+ for ConPTY)
+- **Claude Code CLI** — [get it here](https://claude.ai/claude-code), free to install (the installer handles this on both platforms)
 - **Telegram account** — optional but strongly recommended for notifications
 
 ---
