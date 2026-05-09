@@ -260,6 +260,9 @@ def build_windows_exe():
     shutil.copy2(HERE / "requirements.txt", stage)
 
     # Create the main entry script
+    # encoding="utf-8" is required: Path.write_text on Windows defaults
+    # to cp1252, which can't encode the box-drawing chars (╔╗║╚) or the
+    # em-dash. Without the explicit encoding the build crashes here.
     (stage / "main.py").write_text(f"""\
 #!/usr/bin/env python3
 \"\"\"ApplyLoop Desktop — Windows entry point.\"\"\"
@@ -288,7 +291,7 @@ if __name__ == "__main__":
 
     import uvicorn
     uvicorn.run("server.app:app", host="127.0.0.1", port=18790, log_level="warning")
-""")
+""", encoding="utf-8")
 
     # Try PyInstaller for a proper .exe
     pyinstaller_ok = False
