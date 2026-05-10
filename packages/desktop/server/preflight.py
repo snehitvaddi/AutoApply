@@ -703,8 +703,16 @@ def _check_git() -> dict:
         "remediation": {
             "type": "install",
             "target": "git",
-            "command": "brew install git",
-            "fallback_url": "https://git-scm.com/download/mac",
+            "command": (
+                "winget install -e --id Git.Git"
+                if platform.system() == "Windows"
+                else "brew install git"
+            ),
+            "fallback_url": (
+                "https://git-scm.com/download/win"
+                if platform.system() == "Windows"
+                else "https://git-scm.com/download/mac"
+            ),
         },
         "optional": True,
     }
@@ -880,26 +888,56 @@ _INSTALL_COMMANDS = {
             'fi; '
             '"$NPM_BIN" install -g @anthropic-ai/claude-code',
         ],
+        "Windows": [
+            "powershell.exe", "-NoProfile", "-Command",
+            "npm install -g @anthropic-ai/claude-code",
+        ],
     },
     "openclaw": {
         "Darwin": ["npm", "install", "-g", "openclaw"],
+        "Windows": [
+            "powershell.exe", "-NoProfile", "-Command",
+            "npm install -g openclaw --no-fund --no-audit",
+        ],
     },
-    # Register + start the openclaw gateway launchd service. This is the
-    # "Install" action wired to the openclaw_gateway preflight row when
-    # the gateway daemon isn't running. NOT a license activation — just
-    # a local launchd plist registration.
+    # Register + start the openclaw gateway. On Mac this also registers
+    # a launchd plist; on Windows it's just `openclaw gateway start`
+    # (no service-installation step — openclaw daemon auto-respawns).
     "openclaw_gateway": {
         "Darwin": [
             "bash", "-c",
             "openclaw gateway install && openclaw gateway start",
         ],
+        "Windows": [
+            "powershell.exe", "-NoProfile", "-Command",
+            "openclaw gateway start",
+        ],
     },
     "git": {
         "Darwin": ["brew", "install", "git"],
+        "Windows": [
+            "powershell.exe", "-NoProfile", "-Command",
+            "winget install -e --id Git.Git --silent --accept-package-agreements --accept-source-agreements",
+        ],
+    },
+    "node": {
+        "Darwin": ["brew", "install", "node"],
+        "Windows": [
+            "powershell.exe", "-NoProfile", "-Command",
+            "winget install -e --id OpenJS.NodeJS --silent --accept-package-agreements --accept-source-agreements",
+        ],
+    },
+    "python": {
+        "Darwin": ["brew", "install", "python@3.11"],
+        "Windows": [
+            "powershell.exe", "-NoProfile", "-Command",
+            "winget install -e --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements",
+        ],
     },
     # brew bootstrap — only used if user clicks "Install Homebrew" on the
     # needs_brew fallback path. Full command quoted below because it uses
-    # shell indirection (bash -c $(curl …)).
+    # shell indirection (bash -c $(curl …)). No Windows analog: winget
+    # ships with Win10 1809+, no separate bootstrap needed.
     "brew": {
         "Darwin": [
             "bash", "-c",

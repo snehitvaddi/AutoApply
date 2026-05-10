@@ -305,6 +305,11 @@ if __name__ == "__main__":
 
     threading.Thread(target=open_browser, daemon=True).start()
 
+    # Force PyInstaller to bundle these — uvicorn loads them via string
+    # import "server.app:app" which the static analyzer can't follow.
+    # Importing them here at module top puts them in the dependency graph.
+    import fastapi  # noqa: F401
+    import server.app  # noqa: F401
     import uvicorn
     uvicorn.run("server.app:app", host="127.0.0.1", port=18790, log_level="warning")
 """, encoding="utf-8")
@@ -319,6 +324,15 @@ if __name__ == "__main__":
             "--distpath", str(win_dir),
             "--add-data", f"{stage / 'server'}{os.pathsep}server",
             "--add-data", f"{stage / 'ui'}{os.pathsep}ui",
+            # --collect-submodules grabs every submodule under the named
+            # package even if the static analyzer can't see the import.
+            # Without these, PyInstaller emits a stub that fails at runtime
+            # with ModuleNotFoundError for fastapi/starlette/etc.
+            "--collect-submodules", "server",
+            "--collect-submodules", "fastapi",
+            "--collect-submodules", "starlette",
+            "--collect-submodules", "uvicorn",
+            "--collect-submodules", "pydantic",
             "--hidden-import", "uvicorn.logging",
             "--hidden-import", "uvicorn.protocols.http.auto",
             "--hidden-import", "uvicorn.protocols.websockets.auto",

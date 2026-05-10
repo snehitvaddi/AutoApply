@@ -530,12 +530,23 @@ if (-not (Test-Path $ClientMd)) {
 # Add anything here that should take precedence over the global rules.
 #
 # Examples:
-#   - Companies to exclude beyond preferences
-#   - Title preferences / blacklist
-#   - Cover letter tone notes
-#   - One-off form-fill instructions
+#   - Companies to exclude (beyond what your online preferences block):
+#       Never apply to: Acme Corp, Example Inc
+#
+#   - Title preferences / blacklist:
+#       Skip any role with "Manager" in the title — I only want IC roles.
+#
+#   - Location notes:
+#       Remote-only. Reject anything requiring relocation to TX or FL.
+#
+#   - Cover letter tone / style notes:
+#       Keep the cover letter to 3 short paragraphs. No buzzwords.
+#
+#   - Any one-off instruction that doesn't belong in the shared profile:
+#       If a form asks for expected salary, enter 120000.
 #
 # Lines starting with # are comments and are ignored by Claude.
+# Delete the example lines and replace with your own instructions.
 "@
     Set-Content -Path $ClientMd -Value $clientContent -Encoding UTF8
     Write-Log "Created $ClientMd"
@@ -750,6 +761,27 @@ function Log(`$msg) {
     Write-Host `$line
     Add-Content -Path `$LogFile -Value `$line
 }
+# Concurrency lock — prevents the daily 3 AM Task Scheduler run from
+# colliding with a manual `applyloop update` invoked at the same moment.
+# Both would otherwise race on .git/index.lock and the venv. The lock
+# file holds the holder's PID; if a stale lock from a crashed prior
+# update is present (PID dead), we steal it.
+`$LockFile = Join-Path `$LogDir '.update.lock'
+if (Test-Path `$LockFile) {
+    `$stalePid = (Get-Content `$LockFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+    `$alive = `$false
+    if (`$stalePid) {
+        try { `$alive = [bool](Get-Process -Id `$stalePid -ErrorAction Stop) } catch { `$alive = `$false }
+    }
+    if (`$alive) {
+        Log "Another applyloop update is already running (pid `$stalePid). Aborting."
+        exit 1
+    }
+    Log "Stale lock from dead pid `$stalePid — clearing"
+    Remove-Item `$LockFile -Force -ErrorAction SilentlyContinue
+}
+`$PID | Out-File -Encoding ASCII `$LockFile
+
 try {
     `$prevCommit = git -C `$Home rev-parse HEAD
     Log "applyloop-update starting (was at `$prevCommit)"
@@ -767,6 +799,13 @@ try {
     } finally { Pop-Location }
     Log "Rebuilding Windows .exe..."
     & `$Py (Join-Path `$Home 'packages\desktop\build.py') --win --skip-ui 2>&1 | Tee-Object -FilePath `$LogFile -Append
+
+    # Stop the running app (parity with Mac's cmd_stop). Forces the
+    # user to relaunch and pick up the new .exe; otherwise a long-lived
+    # session keeps holding the stale binary in memory.
+    Log "Stopping running ApplyLoop.exe (if any) so the next launch uses the new build..."
+    Get-Process -Name "ApplyLoop" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
     # ONLY stamp the version after every step above has succeeded.
     # If any threw, we exit via the catch with the version untouched.
     git -C `$Home rev-parse HEAD | Out-File -Encoding UTF8 (Join-Path `$Home '.applyloop-version')
@@ -775,6 +814,8 @@ try {
     Log "FAILED at step: `$(`$_.Exception.Message)"
     Log "Install left at previous version `$prevCommit (.applyloop-version unchanged)"
     exit 1
+} finally {
+    Remove-Item `$LockFile -Force -ErrorAction SilentlyContinue
 }
 "@
 Set-Content -Path $UpdateScript -Value $UpdateScriptContent -Encoding UTF8

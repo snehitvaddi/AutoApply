@@ -759,10 +759,15 @@ async def focus_browser():
         return {"ok": False, "error": "no Chrome/Chromium window found"}
 
     if system == "Windows":
-        # PowerShell one-liner: find a top-level window whose title contains
-        # "Chrome" or "Chromium", call the Win32 SetForegroundWindow API
-        # on its handle. If none found, return cleanly so the UI shows
-        # the "not found" state instead of hanging or crashing.
+        # Two-stage match. The previous version focused ANY Chrome with
+        # "Chrome" in the window title — would grab the user's personal
+        # Chrome, not the openclaw-driven one. Tightened audit fix:
+        # 1. PRIMARY: find Chrome processes whose CommandLine includes
+        #    the openclaw CDP debugging port (18800 by default). That
+        #    uniquely identifies the Chrome instance openclaw spawned.
+        # 2. FALLBACK: title match (the old behavior) if no CDP-tagged
+        #    process is found — better than nothing for legacy openclaw
+        #    builds that don't pass --remote-debugging-port.
         ps_script = (
             "Add-Type @'\n"
             "using System;\n"
@@ -771,8 +776,23 @@ async def focus_browser():
             "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);\n"
             "}\n"
             "'@;\n"
-            "$p = Get-Process | Where-Object { $_.MainWindowTitle -match 'Chrome|Chromium' } | Select-Object -First 1;\n"
-            "if ($p) { [Win32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; Write-Output $p.ProcessName } else { exit 1 }"
+            # Primary: Chrome processes with --remote-debugging-port=18800
+            "$cdpPids = (Get-CimInstance Win32_Process -Filter \"Name LIKE 'chrome%'\" "
+            "  -ErrorAction SilentlyContinue | "
+            "  Where-Object { $_.CommandLine -match 'remote-debugging-port=18800' } | "
+            "  Select-Object -ExpandProperty ProcessId);\n"
+            "$p = $null;\n"
+            "if ($cdpPids) {\n"
+            "  $p = Get-Process -Id $cdpPids -ErrorAction SilentlyContinue | "
+            "    Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1;\n"
+            "}\n"
+            # Fallback: title match
+            "if (-not $p) {\n"
+            "  $p = Get-Process | Where-Object { $_.MainWindowTitle -match 'Chrome|Chromium' } | "
+            "    Select-Object -First 1;\n"
+            "}\n"
+            "if ($p) { [Win32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null; "
+            "  Write-Output $p.ProcessName } else { exit 1 }"
         )
         try:
             r = subprocess.run(

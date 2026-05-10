@@ -71,6 +71,27 @@ cmd_update() {
     echo "No git repo at $APPLYLOOP_HOME — run the curl installer first." >&2
     exit 1
   fi
+
+  # Concurrency lock — prevents the daily 3 AM launchd run from
+  # colliding with a manual `applyloop update` invoked at the same
+  # moment, which would race on .git/index.lock and the venv. The
+  # lock is a marker file with the holder's PID; if a stale lock from
+  # a crashed prior update is present (PID dead), we steal it.
+  local LOCKFILE="$HOME/.autoapply/.update.lock"
+  mkdir -p "$(dirname "$LOCKFILE")"
+  if [[ -f "$LOCKFILE" ]]; then
+    local stale_pid
+    stale_pid="$(cat "$LOCKFILE" 2>/dev/null || echo)"
+    if [[ -n "$stale_pid" ]] && kill -0 "$stale_pid" 2>/dev/null; then
+      echo "Another applyloop update is already running (pid $stale_pid). Aborting." >&2
+      exit 1
+    fi
+    log "Stale lock from dead pid $stale_pid — clearing"
+    rm -f "$LOCKFILE"
+  fi
+  echo $$ > "$LOCKFILE"
+  trap 'rm -f "$LOCKFILE"' EXIT
+
   log "git fetch origin $APPLYLOOP_BRANCH"
   git -C "$APPLYLOOP_HOME" fetch origin "$APPLYLOOP_BRANCH"
   git -C "$APPLYLOOP_HOME" reset --hard "origin/$APPLYLOOP_BRANCH"
