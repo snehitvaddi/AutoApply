@@ -6,12 +6,12 @@
 
 ### Powered by OpenClaw MCP. Applies to jobs while you sleep.
 
-**You build the profile once. ApplyLoop's AI agent scouts job boards, fills every form, and submits real applications on your Mac around the clock — so you wake up to a full application history, not an empty inbox.**
+**You build the profile once. ApplyLoop's AI agent scouts job boards, fills every form, and submits real applications on your Mac or Windows machine around the clock — so you wake up to a full application history, not an empty inbox.**
 
 <br/>
 
 [![Status](https://img.shields.io/badge/status-private%20beta-blueviolet?style=for-the-badge)](https://applyloop.vercel.app)
-[![Platform](https://img.shields.io/badge/platform-macOS-black?style=for-the-badge&logo=apple)](https://applyloop.vercel.app)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-black?style=for-the-badge)](https://applyloop.vercel.app)
 [![AI Powered](https://img.shields.io/badge/AI-Claude%20Code-orange?style=for-the-badge)](https://claude.ai/claude-code)
 [![License](https://img.shields.io/badge/license-private-red?style=for-the-badge)](#)
 
@@ -116,7 +116,7 @@ Same brain, two keyboards.
 | **Auto-dedup** | Never applies to the same job twice, even across sessions |
 | **ATS support** | Greenhouse · Ashby · Lever · SmartRecruiters · Workday |
 | **Auto-updates** | Pulls latest version every night at 3 AM — no manual updates |
-| **Your data stays local** | Applications stored on your Mac in SQLite, not in the cloud |
+| **Your data stays local** | Applications stored locally in SQLite, not in the cloud |
 
 ---
 
@@ -216,7 +216,7 @@ Just leave the app running in the background. It will:
 - [x] Brain-as-conductor (Claude Code drives all applies via MCP tools)
 - [x] Multi-profile bundles (apply as different personas per job)
 - [x] Auto-dedup across sessions (legacy DB merge on first boot)
-- [ ] Windows installer
+- [x] Windows installer (`install.ps1` — winget + PyInstaller + Task Scheduler)
 - [ ] Apple code signing (no right-click needed)
 - [ ] Stripe auto-activation on payment
 - [ ] Mobile-friendly web dashboard

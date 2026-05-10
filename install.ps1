@@ -228,11 +228,19 @@ Write-Log "Installing desktop + worker python deps"
 & $VenvPip install --quiet "pyinstaller>=6.0"
 
 # ─── Phase E: UI build ──────────────────────────────────────────────────────
+# NPM cache isolation — same reason install.sh isolates: the global cache
+# can collide with whatever node version + npm version the user has from
+# previous installs (e.g. nvm-windows path drift), and on the Vercel CI
+# runner an npm install with a polluted global cache produced sporadic
+# EACCES failures. Keep our cache local and predictable.
+$env:NPM_CONFIG_CACHE = Join-Path $ApplyloopHome ".npm-cache"
+New-Item -ItemType Directory -Force -Path $env:NPM_CONFIG_CACHE | Out-Null
+
 Write-Log "Building static Next.js UI"
 $uiDir = Join-Path $ApplyloopHome "packages\desktop\ui"
 Push-Location $uiDir
 try {
-    npm install --no-fund --no-audit
+    npm install --cache $env:NPM_CONFIG_CACHE --no-fund --no-audit
     npm run build
 } finally {
     Pop-Location
@@ -387,7 +395,46 @@ if ($WorkerToken) {
 
 # ─── Phase G: Write .env ────────────────────────────────────────────────────
 $EnvFile = Join-Path $ApplyloopHome ".env"
-$EncryptionKey = -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Min 0 -Max 256) })
+
+# Idempotency: if a previous install wrote .env, parse it and preserve
+# values the user (or a prior cloud sync) populated for fields the
+# cloud might NOT return this run. install.sh's reuse_or_prompt logic
+# does the same on Mac. Without this, a re-run wipes Telegram /
+# AgentMail / Finetune / Gmail values back to empty whenever those
+# integrations weren't saved on the cloud yet.
+$existingEnv = @{}
+if (Test-Path $EnvFile) {
+    Get-Content $EnvFile | ForEach-Object {
+        if ($_ -match '^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$') {
+            $existingEnv[$matches[1]] = $matches[2]
+        }
+    }
+    Write-Log "Found existing .env — preserving local overrides"
+}
+
+# For each field that can be populated locally but not always returned
+# by the cloud, prefer the existing value when the cloud one is empty.
+function _preserve($name, $newValue) {
+    if (-not $newValue -and $existingEnv.ContainsKey($name)) {
+        return $existingEnv[$name]
+    }
+    return $newValue
+}
+$TelegramBotToken = _preserve "TELEGRAM_BOT_TOKEN" $TelegramBotToken
+$ActTelegramChat  = _preserve "TELEGRAM_CHAT_ID"   $ActTelegramChat
+$AgentmailKey     = _preserve "AGENTMAIL_API_KEY"  $AgentmailKey
+$FinetuneKey      = _preserve "FINETUNE_RESUME_API_KEY" $FinetuneKey
+$GmailEmail       = _preserve "GMAIL_EMAIL"        $GmailEmail
+$GmailAppPw       = _preserve "GMAIL_APP_PASSWORD" $GmailAppPw
+
+# ENCRYPTION_KEY MUST be preserved across reinstalls — anything encrypted
+# under the old key becomes unreadable if we generate a fresh one. If
+# .env had one, reuse it; only generate a new key on a true first install.
+if ($existingEnv.ContainsKey("ENCRYPTION_KEY") -and $existingEnv["ENCRYPTION_KEY"]) {
+    $EncryptionKey = $existingEnv["ENCRYPTION_KEY"]
+} else {
+    $EncryptionKey = -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Min 0 -Max 256) })
+}
 $WorkerId = "worker-$($env:COMPUTERNAME.ToLower())-$(Get-Random)"
 
 Write-Log "Writing $EnvFile"
@@ -439,6 +486,39 @@ Set-Content -Path $EnvFile -Value $envContent -Encoding UTF8
 try {
     icacls $EnvFile /inheritance:r /grant:r "$($env:USERNAME):F" 2>&1 | Out-Null
 } catch {}
+
+# Himalaya IMAP config from Gmail creds (mirrors install.sh:1112-1135).
+# himalaya_reader.py also calls ensure_configured() at apply time so
+# users who update creds via Settings don't need to reinstall, but we
+# write it here so first-launch Gmail verification works without a
+# round-trip. Without this on Windows, the worker tries to fetch
+# verification codes and fails silently.
+if ($GmailEmail -and $GmailAppPw) {
+    # Himalaya looks for config under %APPDATA%\himalaya by default on
+    # Windows (via the dirs crate's Windows AppData mapping).
+    $himCfgDir = Join-Path $env:APPDATA "himalaya"
+    New-Item -ItemType Directory -Force -Path $himCfgDir | Out-Null
+    $himCfg = Join-Path $himCfgDir "config.toml"
+    $himContent = @"
+[accounts.gmail]
+email = "$GmailEmail"
+backend.type = "imap"
+backend.host = "imap.gmail.com"
+backend.port = 993
+backend.login = "$GmailEmail"
+backend.auth.type = "password"
+backend.auth.raw = "$GmailAppPw"
+folder.aliases.inbox = "INBOX"
+folder.aliases.sent = "[Gmail]/Sent Mail"
+folder.aliases.drafts = "[Gmail]/Drafts"
+folder.aliases.trash = "[Gmail]/Trash"
+"@
+    Set-Content -Path $himCfg -Value $himContent -Encoding UTF8
+    try {
+        icacls $himCfg /inheritance:r /grant:r "$($env:USERNAME):F" 2>&1 | Out-Null
+    } catch {}
+    Write-Log "Himalaya config written for $GmailEmail → $himCfg"
+}
 
 # CLIENT.md (preserved across updates — never overwrite)
 $ClientMd = Join-Path $ApplyloopHome "CLIENT.md"
@@ -586,11 +666,61 @@ $ShimPath = Join-Path $LocalBinDir "applyloop.cmd"
 $ExePath = Get-ChildItem -Path (Join-Path $ApplyloopHome "packages\desktop\dist\windows") `
     -Recurse -Filter "ApplyLoop.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 
+# Write the update script that `applyloop update` and Task Scheduler will
+# call. The .exe doesn't parse CLI args (it's a single-purpose desktop
+# launcher), so update can't go through it — it has to be a separate
+# PowerShell entry point that does the git/pip/npm work directly.
+$UpdateScript = Join-Path $ApplyloopHome "update.ps1"
+$UpdateScriptContent = @"
+# ApplyLoop update script — generated by install.ps1.
+# Re-runs git fetch + reset, reinstalls Python deps if requirements changed,
+# rebuilds the UI bundle, rebuilds the .exe. Idempotent. Safe to run while
+# the desktop app is open (the exe rebuild lands in dist/windows/ but the
+# running .exe holds open file handles to its own copy — next launch picks
+# up the new build).
+[CmdletBinding()] param()
+`$ErrorActionPreference = 'Continue'
+`$Home = '$ApplyloopHome'
+`$Venv = Join-Path `$Home 'venv\Scripts'
+`$Py   = Join-Path `$Venv 'python.exe'
+`$Pip  = Join-Path `$Venv 'pip.exe'
+Write-Host "[applyloop-update] Pulling latest from origin/main..."
+git -C `$Home fetch origin main
+git -C `$Home reset --hard origin/main
+Write-Host "[applyloop-update] Reinstalling Python deps (no-op if up to date)..."
+& `$Pip install --quiet -r (Join-Path `$Home 'packages\desktop\requirements.txt')
+& `$Pip install --quiet -r (Join-Path `$Home 'packages\worker\requirements.txt')
+Write-Host "[applyloop-update] Rebuilding UI..."
+Push-Location (Join-Path `$Home 'packages\desktop\ui')
+try { npm install --silent --no-fund --no-audit; npm run build } finally { Pop-Location }
+Write-Host "[applyloop-update] Rebuilding Windows .exe..."
+& `$Py (Join-Path `$Home 'packages\desktop\build.py') --win --skip-ui
+git -C `$Home rev-parse HEAD | Out-File -Encoding UTF8 (Join-Path `$Home '.applyloop-version')
+Write-Host "[applyloop-update] Done."
+"@
+Set-Content -Path $UpdateScript -Value $UpdateScriptContent -Encoding UTF8
+Write-Log "Update script → $UpdateScript"
+
+# Shim that dispatches on first arg:
+#   applyloop          → launch the .exe (default)
+#   applyloop start    → launch the .exe
+#   applyloop update   → run update.ps1
+#   applyloop version  → cat .applyloop-version
 if ($ExePath) {
     $exeFullPath = $ExePath.FullName
     $shimContent = @"
 @echo off
 REM ApplyLoop CLI shim — generated by install.ps1
+setlocal
+if "%1" == "update" (
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$UpdateScript"
+    exit /b %ERRORLEVEL%
+)
+if "%1" == "version" (
+    type "$ApplyloopHome\.applyloop-version"
+    exit /b 0
+)
+REM Default: launch the desktop app (start is the implicit verb)
 "$exeFullPath" %*
 "@
     Set-Content -Path $ShimPath -Value $shimContent -Encoding ASCII
@@ -615,14 +745,17 @@ if ($version) {
 }
 
 # ─── Phase K: Auto-update Task Scheduler ───────────────────────────────────
+# Point the daily task DIRECTLY at update.ps1, not at the shim. The shim
+# would also work but adds an extra cmd.exe → powershell.exe hop. Direct
+# is one less moving part.
 Write-Log "Registering daily auto-update task (3 AM)"
 try {
     schtasks /Delete /TN "ApplyLoopUpdate" /F 2>&1 | Out-Null
 } catch {}
-$updateCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"& '$ShimPath' update`""
+$updateCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$UpdateScript`""
 schtasks /Create /TN "ApplyLoopUpdate" /TR $updateCmd /SC DAILY /ST 03:00 /F 2>&1 | Out-Null
 if ($LASTEXITCODE -eq 0) {
-    Write-Log "  Daily 3 AM update task registered"
+    Write-Log "  Daily 3 AM update task registered → $UpdateScript"
 } else {
     Write-Warn "  Could not register Task Scheduler entry — run 'applyloop update' manually"
 }

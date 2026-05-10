@@ -11,7 +11,7 @@ produced by PyInstaller.
 Open **PowerShell** (Win+X → "Terminal" or "PowerShell"), then run:
 
 ```powershell
-irm https://applyloop.vercel.app/install.ps1 | iex
+irm https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.ps1 | iex
 ```
 
 You'll be prompted for your activation code (format `AL-XXXX-XXXX`),
@@ -123,10 +123,16 @@ Kill it: `taskkill /F /IM openclaw.exe`
 
 ### Chrome doesn't open during apply
 
-Make sure Chrome is installed and on PATH. ApplyLoop launches Chrome via
-openclaw, which uses the system Chrome. If you have Chrome but openclaw
-can't find it, check `%USERPROFILE%\.openclaw\openclaw.json` for an
-explicit `"browser.path"` override.
+Make sure Chrome is installed. Verify with:
+
+```powershell
+chrome --version
+```
+
+If that fails, install Chrome from google.com/chrome and rerun. OpenClaw
+auto-detects the system Chrome via the standard install registry keys —
+manual `browser.path` overrides are not currently wired into the
+generated `openclaw.json`.
 
 ### App fails to start with "ConPTY" or "pywinpty" error
 
