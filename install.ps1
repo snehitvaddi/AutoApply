@@ -577,45 +577,91 @@ $pyVenvPath   = $VenvPy
 $agentsContent = @"
 # ApplyLoop — Agent Context (Windows)
 
-You are the ApplyLoop job application agent running on Windows.
+You are the ApplyLoop job application agent. ApplyLoop is an automated
+job application engine that runs locally on this Windows machine.
 
 ## System info
 
-- Install directory: ``$ApplyloopHome``
-- Python venv: ``$pyVenvPath``
-- Profile: ``$ApplyloopHome\profile.json`` — read this FIRST
-- Playbook: ``$ApplyloopHome\packages\worker\SOUL.md``
-- Config env: ``$ApplyloopHome\.env``
-- Workspace: ``$WorkspaceDir``
-- User: ${ActName}
-- Email: ${ActEmail}
+- **Install directory**: ``$ApplyloopHome``
+- **Python venv**: ``$pyVenvPath``
+- **Profile**: ``$ApplyloopHome\profile.json`` — read this FIRST (the user you're applying for)
+- **Playbook**: ``$ApplyloopHome\packages\worker\SOUL.md`` — the full scout→apply rules
+- **Config env**: ``$ApplyloopHome\.env`` — sourced by launcher
+- **Desktop log**: ``$env:USERPROFILE\.autoapply\desktop.log``
+- **Workspace**: ``$WorkspaceDir``
+- **User**: ${ActName}
+- **User email**: ${ActEmail}
 
-## Configured integrations
-
-- Telegram: $hasTelegram
-- AgentMail: $hasAgentmail
-- Finetune: $hasFinetune
-- Gmail: $hasGmail
-
-## Your role
+## Your role — YOU are the single orchestrator
 
 You own the complete pipeline end-to-end via MCP tool calls:
-SCOUT → FILTER → ENQUEUE → APPLY → CONFIRM → SCREENSHOT → LOG → TELEGRAM
 
-1. Read profile.json first.
-2. Read SOUL.md for the full playbook.
-3. Greet the user, then start the pipeline. Do NOT wait for "start".
-4. On "status": show profile + last scout/apply stats + integrations.
-5. On "apply to <URL>": apply directly via browser MCP tools.
+  **SCOUT → FILTER → ENQUEUE → APPLY → CONFIRM → SCREENSHOT → LOG → TELEGRAM**
+
+1. **Read ``profile.json`` first.** Every field (experience, education, skills, answer_key_json, preferences) is the source of truth for form-filling.
+2. **Read ``SOUL.md``** for the full playbook: scanning strategy, filters, form-filling rules, rate limits, critical do-nots.
+3. **Greet the user by name** (``${ActName}``) in ONE line, then **IMMEDIATELY start the pipeline**. Do NOT wait for a "start" command.
+4. On "status": show profile summary + last scout/apply stats + configured services (below).
+5. On "apply to [URL]": apply directly to that URL using browser MCP tools.
 6. On "stop": stop the loop, send a session summary via Telegram.
 
-## Platform notes (Windows)
+## Watchdog nudges
 
-- Paths use ``\`` separators. Code uses pathlib so this is invisible.
+A background watchdog will inject status messages into this terminal every ~30 minutes when you are idle. Nudge format:
+
+  ``[applyloop-watchdog HH:MM] queue=N pending, applied_today=X/Y, scout_last=Zmin ago, idle=Wmin. <recommended action>.``
+
+**Act on nudges immediately.** The nudge tells you exactly what to do next — no need to re-derive state.
+
+## Pipeline steps (MCP tools)
+
+- **Scout**: ``scout_list_sources`` → ``scout_run_source(name)`` for each source
+- **Filter**: ``tenant_load`` → apply role/location/blocklist/dedup filters
+- **Enqueue**: ``queue_update_status`` for each filtered job → status=pending
+- **Apply**: ``queue_claim_next`` → ``knowledge_get_ats_playbook`` → browser_navigate/snapshot/fill/click
+- **Confirm**: snapshot again → look for "thank you" / "application received" (positive only)
+- **Screenshot**: ``browser_screenshot`` → local PNG saved to ``$WorkspaceDir\screenshots\``
+- **Log**: ``queue_log_application(job_id, status=submitted, screenshot_path=local_path)``
+- **Telegram**: ``notify_telegram(kind=application_result, screenshot_path=local_path)`` → sendPhoto binary
+
+## Daily limit
+
+Check ``queue_get_pipeline`` for ``applied_today`` vs ``daily_limit``. When limit is reached:
+- Stop applying
+- Send a session summary via ``notify_telegram``
+- Wait for the next session
+
+## Configured services
+
+- **Telegram notifications**: $hasTelegram
+- **AgentMail** (disposable inboxes): $hasAgentmail
+- **Finetune Resume** (per-job tailored PDFs): $hasFinetune
+- **Gmail + Himalaya** (email verification codes): $hasGmail
+
+## Critical rules
+
+- NEVER skip required form fields.
+- NEVER apply to a company more than 5 times per 15 days.
+- ALWAYS take a screenshot after submission and log it + Telegram notify.
+- ALWAYS use ``queue_claim_next`` (row-lock) — never pull from queue without claiming.
+- Call ``browser_dismiss_stray_tabs`` between every apply step.
+- If OpenClaw gateway crashes: run ``openclaw gateway restart`` and continue.
+- **NEVER spawn a separate Claude process or brain loop** — you are the only brain.
+- If you hit a rate limit or auth error: surface it to the user in chat + Telegram, wait for fix.
+
+## Platform notes (Windows-specific)
+
+- Paths use ``\`` separators. Code uses pathlib so most call sites are invisible.
 - Local SQLite at ``$dbPath`` is the source of truth.
 - Use ``tempfile.gettempdir()`` for temp paths (resolves to %TEMP%).
-- ``keep_awake.start()`` is no-op on non-Windows — on Windows it
-  blocks sleep via SetThreadExecutionState during applies.
+- ``keep_awake.start()`` is no-op on non-Windows — on Windows it blocks sleep via SetThreadExecutionState during applies.
+
+## Handy commands the user might ask for
+
+- ``applyloop start`` / ``applyloop stop`` / ``applyloop status`` / ``applyloop logs``
+- ``applyloop update`` — git pull + rebuild (logs to %USERPROFILE%\.autoapply\update.log)
+- ``applyloop uninstall`` — remove install + .exe + Task Scheduler entry; preserves workspace
+- ``applyloop version`` — show current commit
 "@
 Set-Content -Path $AgentsFile -Value $agentsContent -Encoding UTF8
 
@@ -670,41 +716,121 @@ $ExePath = Get-ChildItem -Path (Join-Path $ApplyloopHome "packages\desktop\dist\
 # call. The .exe doesn't parse CLI args (it's a single-purpose desktop
 # launcher), so update can't go through it — it has to be a separate
 # PowerShell entry point that does the git/pip/npm work directly.
+#
+# Mirrors the Mac update path's fail-fast model (Mac uses `set -euo pipefail`).
+# Earlier version used $ErrorActionPreference = 'Continue' which silently
+# swallowed git/pip/npm failures and still bumped .applyloop-version to
+# a broken commit — caught by the parity audit, fixed here:
+#   - $ErrorActionPreference = 'Stop'  (exit on any failure)
+#   - Wrap each phase in try/catch so we know which step failed
+#   - Capture the pre-update commit FIRST; only stamp .applyloop-version
+#     after every step succeeds (so a partial failure leaves the version
+#     pointing at the last-known-good commit, not a broken half-update)
+#   - Tee everything (stdout + stderr) to %USERPROFILE%\.autoapply\update.log
+#     so the daily 3 AM Task Scheduler run leaves a paper trail (was
+#     invisible — caught by the audit)
 $UpdateScript = Join-Path $ApplyloopHome "update.ps1"
 $UpdateScriptContent = @"
 # ApplyLoop update script — generated by install.ps1.
 # Re-runs git fetch + reset, reinstalls Python deps if requirements changed,
-# rebuilds the UI bundle, rebuilds the .exe. Idempotent. Safe to run while
-# the desktop app is open (the exe rebuild lands in dist/windows/ but the
-# running .exe holds open file handles to its own copy — next launch picks
-# up the new build).
+# rebuilds the UI bundle, rebuilds the .exe. Idempotent. Fail-fast: any
+# step erroring stops the script and leaves the install at the previous
+# known-good commit.
 [CmdletBinding()] param()
-`$ErrorActionPreference = 'Continue'
+`$ErrorActionPreference = 'Stop'
 `$Home = '$ApplyloopHome'
 `$Venv = Join-Path `$Home 'venv\Scripts'
 `$Py   = Join-Path `$Venv 'python.exe'
 `$Pip  = Join-Path `$Venv 'pip.exe'
-Write-Host "[applyloop-update] Pulling latest from origin/main..."
-git -C `$Home fetch origin main
-git -C `$Home reset --hard origin/main
-Write-Host "[applyloop-update] Reinstalling Python deps (no-op if up to date)..."
-& `$Pip install --quiet -r (Join-Path `$Home 'packages\desktop\requirements.txt')
-& `$Pip install --quiet -r (Join-Path `$Home 'packages\worker\requirements.txt')
-Write-Host "[applyloop-update] Rebuilding UI..."
-Push-Location (Join-Path `$Home 'packages\desktop\ui')
-try { npm install --silent --no-fund --no-audit; npm run build } finally { Pop-Location }
-Write-Host "[applyloop-update] Rebuilding Windows .exe..."
-& `$Py (Join-Path `$Home 'packages\desktop\build.py') --win --skip-ui
-git -C `$Home rev-parse HEAD | Out-File -Encoding UTF8 (Join-Path `$Home '.applyloop-version')
-Write-Host "[applyloop-update] Done."
+`$LogDir  = Join-Path `$env:USERPROFILE '.autoapply'
+`$LogFile = Join-Path `$LogDir 'update.log'
+New-Item -ItemType Directory -Force -Path `$LogDir | Out-Null
+function Log(`$msg) {
+    `$line = "[`$(Get-Date -Format 'u')] `$msg"
+    Write-Host `$line
+    Add-Content -Path `$LogFile -Value `$line
+}
+try {
+    `$prevCommit = git -C `$Home rev-parse HEAD
+    Log "applyloop-update starting (was at `$prevCommit)"
+    Log "Pulling latest from origin/main..."
+    git -C `$Home fetch origin main 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    git -C `$Home reset --hard origin/main 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    Log "Reinstalling Python deps (no-op if up to date)..."
+    & `$Pip install --quiet -r (Join-Path `$Home 'packages\desktop\requirements.txt') 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    & `$Pip install --quiet -r (Join-Path `$Home 'packages\worker\requirements.txt') 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    Log "Rebuilding UI..."
+    Push-Location (Join-Path `$Home 'packages\desktop\ui')
+    try {
+        npm install --silent --no-fund --no-audit 2>&1 | Tee-Object -FilePath `$LogFile -Append
+        npm run build 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    } finally { Pop-Location }
+    Log "Rebuilding Windows .exe..."
+    & `$Py (Join-Path `$Home 'packages\desktop\build.py') --win --skip-ui 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    # ONLY stamp the version after every step above has succeeded.
+    # If any threw, we exit via the catch with the version untouched.
+    git -C `$Home rev-parse HEAD | Out-File -Encoding UTF8 (Join-Path `$Home '.applyloop-version')
+    Log "Done. Update succeeded."
+} catch {
+    Log "FAILED at step: `$(`$_.Exception.Message)"
+    Log "Install left at previous version `$prevCommit (.applyloop-version unchanged)"
+    exit 1
+}
 "@
 Set-Content -Path $UpdateScript -Value $UpdateScriptContent -Encoding UTF8
-Write-Log "Update script → $UpdateScript"
+Write-Log "Update script → $UpdateScript (fail-fast, logged to ~/.autoapply/update.log)"
+
+# Uninstaller — mirrors Mac's cmd_uninstall in packages/desktop/scripts/applyloop.
+# Stops Task Scheduler entry, removes installed code/binaries/shim, removes API
+# token from workspace. PRESERVES the workspace (~/.autoapply) so user keeps
+# their applications.db, resumes, screenshots — re-installing later picks
+# right back up where they left off.
+$UninstallScript = Join-Path $ApplyloopHome "uninstall.ps1"
+$UninstallScriptContent = @"
+# ApplyLoop uninstaller — generated by install.ps1.
+# Removes: Task Scheduler entry, install dir, .exe + shim, API token.
+# Preserves: ~/.autoapply workspace (db, resumes, screenshots) so a
+# future reinstall keeps your job history. Run with `applyloop uninstall`.
+[CmdletBinding()] param([switch]`$Force)
+if (-not `$Force) {
+    Write-Host "ApplyLoop uninstall — this removes:"
+    Write-Host "  - Daily auto-update task (Task Scheduler)"
+    Write-Host "  - $ApplyloopHome (source, venv, .env, profile.json)"
+    Write-Host "  - $LocalBinDir (the .exe + applyloop.cmd shim)"
+    Write-Host "  - %USERPROFILE%\.autoapply\workspace\.api-token"
+    Write-Host ""
+    Write-Host "PRESERVES: ~/.autoapply (your job database, resumes, screenshots)."
+    Write-Host "Pass -Force to skip this prompt."
+    `$reply = Read-Host "Continue? (y/N)"
+    if (`$reply -notmatch '^[Yy]') { Write-Host "Cancelled."; exit 0 }
+}
+Write-Host "[uninstall] Removing Task Scheduler entry..."
+schtasks /Delete /TN ApplyLoopUpdate /F 2>&1 | Out-Null
+Write-Host "[uninstall] Removing installed code at $ApplyloopHome..."
+Remove-Item -Recurse -Force '$ApplyloopHome' -ErrorAction SilentlyContinue
+Write-Host "[uninstall] Removing .exe + shim at $LocalBinDir..."
+Remove-Item -Recurse -Force '$LocalBinDir' -ErrorAction SilentlyContinue
+`$tokenFile = Join-Path `$env:USERPROFILE '.autoapply\workspace\.api-token'
+if (Test-Path `$tokenFile) {
+    Write-Host "[uninstall] Removing API token..."
+    Remove-Item `$tokenFile -ErrorAction SilentlyContinue
+}
+Write-Host ""
+Write-Host "Uninstalled. Workspace preserved at %USERPROFILE%\.autoapply"
+Write-Host "(applications.db, resumes/, screenshots/ — delete manually if you want a clean slate)"
+Write-Host ""
+Write-Host "Optional: also uninstall global npm packages:"
+Write-Host "  npm uninstall -g openclaw"
+Write-Host "  npm uninstall -g @anthropic-ai/claude-code"
+"@
+Set-Content -Path $UninstallScript -Value $UninstallScriptContent -Encoding UTF8
+Write-Log "Uninstall script → $UninstallScript"
 
 # Shim that dispatches on first arg:
 #   applyloop          → launch the .exe (default)
 #   applyloop start    → launch the .exe
 #   applyloop update   → run update.ps1
+#   applyloop uninstall → run uninstall.ps1 (interactive prompt)
 #   applyloop version  → cat .applyloop-version
 if ($ExePath) {
     $exeFullPath = $ExePath.FullName
@@ -714,6 +840,10 @@ REM ApplyLoop CLI shim — generated by install.ps1
 setlocal
 if "%1" == "update" (
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$UpdateScript"
+    exit /b %ERRORLEVEL%
+)
+if "%1" == "uninstall" (
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$UninstallScript" %2 %3
     exit /b %ERRORLEVEL%
 )
 if "%1" == "version" (
