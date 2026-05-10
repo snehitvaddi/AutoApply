@@ -292,10 +292,12 @@ jobs:
           $proc = Start-Process -FilePath $exe.FullName -PassThru `
             -RedirectStandardOutput "$env:TEMP\exe-stdout.txt" `
             -RedirectStandardError  "$env:TEMP\exe-stderr.txt"
-          # PyInstaller cold-start is slower than a python launch; give it
-          # 15s before declaring failure.
+          # PyInstaller cold-start has to unpack _internal/ first launch
+          # which is slow on CI runners. Server typically logs "API token
+          # loaded" at ~7s; full FastAPI bind happens 10-30s later. Cap
+          # at 60s to comfortably cover that on a slow runner.
           $ok = $false
-          for ($i = 0; $i -lt 30; $i++) {
+          for ($i = 0; $i -lt 120; $i++) {
             Start-Sleep -Milliseconds 500
             try {
               $r = Invoke-RestMethod -Uri "http://localhost:18791/api/health" -ErrorAction Stop

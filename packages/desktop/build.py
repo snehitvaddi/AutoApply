@@ -287,10 +287,11 @@ for _stream in (sys.stdout, sys.stderr):
 # Ensure we can import the server package
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("APPLYLOOP_PORT", "18790")
+PORT = int(os.environ["APPLYLOOP_PORT"])
 
 def open_browser():
     time.sleep(2)
-    webbrowser.open("http://localhost:18790")
+    webbrowser.open(f"http://localhost:{PORT}")
 
 if __name__ == "__main__":
     print()
@@ -299,7 +300,7 @@ if __name__ == "__main__":
     print("  |  Automated Job Application Tracker   |")
     print("  +--------------------------------------+")
     print()
-    print("  Starting on http://localhost:18790")
+    print(f"  Starting on http://localhost:{PORT}")
     print("  Press Ctrl+C to stop.")
     print()
 
@@ -311,7 +312,7 @@ if __name__ == "__main__":
     import fastapi  # noqa: F401
     import server.app  # noqa: F401
     import uvicorn
-    uvicorn.run("server.app:app", host="127.0.0.1", port=18790, log_level="warning")
+    uvicorn.run("server.app:app", host="127.0.0.1", port=PORT, log_level="warning")
 """, encoding="utf-8")
 
     # Try PyInstaller for a proper .exe
