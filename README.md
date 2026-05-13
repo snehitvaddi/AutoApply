@@ -39,13 +39,13 @@
 
 ## What is ApplyLoop?
 
-> **Think of it like autopilot for your job search — powered by an AI agent that runs on your Mac.**
+> **Think of it like autopilot for your job search — powered by an AI agent that runs on your Mac or Windows PC.**
 
 You fill in your resume and preferences **once**. Under the hood, ApplyLoop uses **[OpenClaw MCP](https://github.com/snehitvaddi/ApplyLoop)** — a browser-control agent — to open real job application pages, fill every field, answer every question, and hit Submit, exactly the way a human would. No APIs, no shortcuts, no scraping. Real applications, real browsers.
 
 Every 30 minutes it scouts thousands of job boards, matches them to your profile, and queues the best ones. While you sleep, it works.
 
-You get a **Telegram photo** of every submitted application. You watch a live dashboard on your Mac. You type questions like *"what did you apply to today?"* and it answers.
+You get a **Telegram photo** of every submitted application. You watch a live dashboard on your machine. You type questions like *"what did you apply to today?"* and it answers.
 
 **No more copy-pasting resumes. No more filling the same form for the 40th time.**
 
@@ -71,7 +71,7 @@ flowchart LR
     style G fill:#ef4444,color:#fff,stroke:none
 ```
 
-That's it. From here your Mac applies to jobs in the background, every 30 minutes, 24/7.
+That's it. From here your machine applies to jobs in the background, every 30 minutes, 24/7.
 
 ---
 
@@ -90,7 +90,7 @@ Every number on that screen is real. ApplyLoop submitted those applications auto
 
 <div align="center">
 
-### Chat with it — from your Mac or your phone
+### Chat with it — from your laptop or your phone
 
 Type in the desktop window **or** send a Telegram message:
 
@@ -236,7 +236,7 @@ flowchart TD
     SUP("🗄️ Supabase\nPostgres · Auth · Storage\nProfiles · Tokens · Resumes")
     APP("🖥️ ApplyLoop.app\nFastAPI + pywebview\nDashboard · Pipeline · Chat")
     WRK("⚙️ Worker subprocess\nScanner × 8 sources\nApplier × 5 ATS platforms")
-    DB("💾 applications.db\nSQLite WAL — your Mac\nLocal source of truth")
+    DB("💾 applications.db\nSQLite WAL — local\nSource of truth")
 
     WEB -- "Google OAuth" --> SUP
     SUP -- "X-Worker-Token\n/api/worker/proxy" --> APP
@@ -257,14 +257,15 @@ flowchart TD
 AutoApply/
 ├── packages/
 │   ├── web/        Next.js 14 → Vercel (landing, onboarding, admin)
-│   ├── desktop/    FastAPI + Next static + pywebview (.app bundle)
+│   ├── desktop/    FastAPI + Next static + pywebview (.app on macOS, .exe on Windows)
 │   │   ├── server/ FastAPI routes, PTY manager, chat bridge, WebSockets
 │   │   └── ui/     Next.js dashboard (pipeline, jobs, chat, terminal)
 │   └── worker/     Python applier + scanner (runs as subprocess)
 ├── supabase/
 │   └── migrations/ 001–009 schema files
 ├── knowledge/      ATS patterns, Voyager guide, email-services notes
-└── install.sh      One-liner installer (validates code, installs deps, builds .app)
+├── install.sh      One-liner installer for macOS (validates code, installs deps, builds .app)
+└── install.ps1     One-liner installer for Windows (winget deps, builds .exe, Task Scheduler)
 ```
 
 ### Dev setup
