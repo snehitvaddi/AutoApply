@@ -393,6 +393,121 @@ class PTYSession:
             return False
 
     @staticmethod
+    def _sync_worker_config_to_env(cwd: str, env: dict) -> bool:
+        """Pull LLM provider/model/API-key settings from the cloud and write
+        them into ~/.applyloop/.env. Mirrors _sync_integrations_to_env's
+        idempotent line-replace strategy.
+
+        Why this exists: the user edits Anthropic/OpenAI keys + model
+        selection in /dashboard/settings (AI tab), which POSTs to
+        /api/settings/worker-config and persists to the `worker_config`
+        table. Before this method, /api/settings/cli-config didn't return
+        worker_config at all, so the desktop never learned about rotated
+        keys. The worker subprocess kept using whatever install.ps1 baked
+        into .env at activation time. Now: every PTY start + every 5-min
+        background sync rewrites the LLM keys in .env if they changed
+        upstream, and the next worker spawn picks them up automatically.
+
+        Mapping (worker_config column → .env var):
+          - llm_api_key → ANTHROPIC_API_KEY  (if llm_provider == 'anthropic')
+          - llm_api_key → OPENAI_API_KEY     (if llm_provider == 'openai')
+          - llm_model → APPLYLOOP_MODEL
+          - llm_backend_api_key → APPLYLOOP_BACKEND_API_KEY
+          - ollama_base_url → APPLYLOOP_OLLAMA_BASE_URL (if set)
+
+        Empty cloud values do NOT clear local .env — same as integrations.
+        """
+        import urllib.request
+        token = (env.get("WORKER_TOKEN") or "").strip().strip('"').strip("'")
+        if not token:
+            return False
+        app_url = os.environ.get("APPLYLOOP_APP_URL", "https://applyloop.vercel.app")
+        try:
+            req = urllib.request.Request(
+                f"{app_url}/api/settings/cli-config",
+                headers={"X-Worker-Token": token},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                payload = json.loads(resp.read()) or {}
+        except Exception as e:
+            logger.info(f"Worker-config sync skipped: {e}")
+            return False
+
+        data = payload.get("data") or {}
+        wc = data.get("worker_config") or {}
+        if not wc:
+            return False
+
+        # Map provider → which env var receives the primary key. Default to
+        # anthropic if the column is missing so existing users (who haven't
+        # touched the dropdown) keep their Anthropic key flowing.
+        provider = (wc.get("llm_provider") or "anthropic").lower()
+        primary_env = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+
+        updates: dict[str, str] = {}
+        if wc.get("llm_api_key"):
+            updates[primary_env] = str(wc["llm_api_key"])
+        if wc.get("llm_model"):
+            updates["APPLYLOOP_MODEL"] = str(wc["llm_model"])
+        if wc.get("llm_backend_api_key"):
+            updates["APPLYLOOP_BACKEND_API_KEY"] = str(wc["llm_backend_api_key"])
+        if wc.get("llm_backend_model"):
+            updates["APPLYLOOP_BACKEND_MODEL"] = str(wc["llm_backend_model"])
+        if wc.get("ollama_base_url"):
+            updates["APPLYLOOP_OLLAMA_BASE_URL"] = str(wc["ollama_base_url"])
+
+        if not updates:
+            return False
+
+        env_path = os.path.join(cwd, ".env")
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+        except Exception as e:
+            logger.warning(f"Could not read .env for worker-config sync: {e}")
+            return False
+
+        seen: set[str] = set()
+        new_lines: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                new_lines.append(line)
+                continue
+            if "=" in stripped:
+                key = stripped.split("=", 1)[0].strip()
+                if key in updates:
+                    new_lines.append(f"{key}={updates[key]}\n")
+                    seen.add(key)
+                    continue
+            new_lines.append(line)
+
+        for key, val in updates.items():
+            if key not in seen:
+                if new_lines and not new_lines[-1].endswith("\n"):
+                    new_lines.append("\n")
+                new_lines.append(f"{key}={val}\n")
+
+        try:
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+            # Don't log raw key values. The key names alone are enough to
+            # confirm the sync fired; preview characters could leak via log
+            # uploads or screenshots.
+            logger.info(
+                f"Synced {len(updates)} worker-config key(s) from cloud to .env: "
+                f"{', '.join(updates.keys())}"
+            )
+            for k, v in updates.items():
+                env[k] = v
+            return True
+        except Exception as e:
+            logger.warning(f"Could not write .env during worker-config sync: {e}")
+            return False
+
+    @staticmethod
     def _download_resume_locally(env: dict) -> str | None:
         """Fetch the user's default resume PDF from the cloud and stash it
         at ~/.autoapply/workspace/resumes/default.pdf so the Claude PTY
@@ -874,6 +989,11 @@ class PTYSession:
             # skips it — cloud edits never get clobbered by stale .env.
             PTYSession._push_integrations_from_env_to_cloud(cwd, out["env"])
             PTYSession._sync_integrations_to_env(cwd, out["env"])
+
+            # Step 2c: pull LLM provider/model/API keys from worker_config.
+            # Without this, the user's Anthropic key rotation on the web
+            # dashboard never reaches the worker subprocess.
+            PTYSession._sync_worker_config_to_env(cwd, out["env"])
 
             # Step 3: read the (now freshly-synced) local profile.
             profile_path = os.path.join(cwd, "profile.json")

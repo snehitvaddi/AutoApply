@@ -439,9 +439,18 @@ async def lifespan(app: FastAPI):
                             k, v = line.split("=", 1)
                             env_pairs[k.strip()] = v.strip().strip('"').strip("'")
                 # Offload the blocking urllib + file I/O onto a thread so
-                # we don't stall the event loop.
+                # we don't stall the event loop. Run all three sync paths
+                # so rotated API keys (worker_config), Telegram changes
+                # (integrations), and profile edits all propagate without
+                # a desktop restart.
                 await asyncio.to_thread(
                     _PTYSession._pull_profile_from_cloud, _APPLYLOOP_HOME, env_pairs
+                )
+                await asyncio.to_thread(
+                    _PTYSession._sync_integrations_to_env, _APPLYLOOP_HOME, env_pairs
+                )
+                await asyncio.to_thread(
+                    _PTYSession._sync_worker_config_to_env, _APPLYLOOP_HOME, env_pairs
                 )
             except Exception as e:
                 logger.warning(f"Background profile sync tick failed: {e}")
@@ -1518,6 +1527,10 @@ async def sync_now():
         await asyncio.to_thread(PTYSession._sync_integrations_to_env, home, env)
     except Exception as e:
         errors.append(f"sync_integrations_to_env: {e}")
+    try:
+        await asyncio.to_thread(PTYSession._sync_worker_config_to_env, home, env)
+    except Exception as e:
+        errors.append(f"sync_worker_config_to_env: {e}")
 
     return {
         "ok": len(errors) == 0,

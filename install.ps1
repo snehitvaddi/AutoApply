@@ -967,15 +967,35 @@ if ($version) {
 # would also work but adds an extra cmd.exe → powershell.exe hop. Direct
 # is one less moving part.
 Write-Log "Registering daily auto-update task (3 AM)"
+# Wrap the whole block in a local SilentlyContinue + try/catch so a schtasks
+# failure (e.g. non-elevated shell → "Access is denied" on the system-scope
+# task store) doesn't terminate the install. The install itself is complete
+# by this point — .exe built, shortcuts placed, CLI shim wired. The auto-
+# update task is a nice-to-have; the user can always rerun the install or
+# manually run `applyloop update` to grab new versions.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "SilentlyContinue"
+$taskRegistered = $false
 try {
-    schtasks /Delete /TN "ApplyLoopUpdate" /F 2>&1 | Out-Null
-} catch {}
-$updateCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$UpdateScript`""
-schtasks /Create /TN "ApplyLoopUpdate" /TR $updateCmd /SC DAILY /ST 03:00 /F 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
+    cmd /c "schtasks /Delete /TN ApplyLoopUpdate /F" 2>$null | Out-Null
+    $updateCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$UpdateScript`""
+    # cmd /c bypasses PowerShell's "stderr → terminating error" coupling
+    # under $ErrorActionPreference=Stop, so schtasks's normal stderr chatter
+    # never trips the install. We rely on the exit code for the truth.
+    cmd /c "schtasks /Create /TN ApplyLoopUpdate /TR `"$updateCmd`" /SC DAILY /ST 03:00 /F" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { $taskRegistered = $true }
+} catch {
+    # Intentionally swallow; we report via $taskRegistered below.
+}
+$ErrorActionPreference = $prevEAP
+if ($taskRegistered) {
     Write-Log "  Daily 3 AM update task registered → $UpdateScript"
 } else {
-    Write-Warn "  Could not register Task Scheduler entry — run 'applyloop update' manually"
+    Write-Warn "  Task Scheduler registration skipped (likely non-elevated shell)."
+    Write-Warn "  Auto-updates won't run nightly, but everything else works."
+    Write-Warn "  To enable: open PowerShell as Administrator, then run:"
+    Write-Warn "    schtasks /Create /TN ApplyLoopUpdate /TR `"powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$UpdateScript'`" /SC DAILY /ST 03:00 /F"
+    Write-Warn "  Or just run 'applyloop update' manually whenever you want the latest version."
 }
 
 # ─── Success ─────────────────────────────────────────────────────────────

@@ -16,8 +16,17 @@ export async function GET(request: NextRequest) {
   const auth = await authenticateRequest(request);
   if (isAuthError(auth)) return apiError("unauthorized");
 
-  // Fetch user, profile, preferences, and resumes in parallel
-  const [userResult, profileResult, preferencesResult, resumesResult] =
+  // Fetch user, profile, preferences, resumes, and worker_config in parallel.
+  //
+  // worker_config holds the LLM provider + API keys the user manages from
+  // /dashboard/settings (AI tab). Before adding it here, the desktop had no
+  // way to learn the user had rotated their Anthropic/OpenAI key on the web,
+  // so any change there stayed cloud-only. The desktop now reads this block
+  // on every PTY start + 5-min background poll and writes the keys back to
+  // ~/.applyloop/.env so the worker subprocess picks them up via its normal
+  // env passthrough. Worker-token gated, so a leaked endpoint can't dump
+  // arbitrary users' keys.
+  const [userResult, profileResult, preferencesResult, resumesResult, workerCfgResult] =
     await Promise.all([
       supabase
         .from("users")
@@ -43,6 +52,13 @@ export async function GET(request: NextRequest) {
         .select("id, file_name, is_default, target_keywords, created_at")
         .eq("user_id", auth.userId)
         .order("is_default", { ascending: false }),
+      supabase
+        .from("worker_config")
+        .select(
+          "llm_provider, llm_model, llm_api_key, llm_backend_provider, llm_backend_model, llm_backend_api_key, ollama_base_url, resume_tailoring, cover_letters, smart_answers, max_daily_apps"
+        )
+        .eq("user_id", auth.userId)
+        .single(),
     ]);
 
   if (userResult.error || !userResult.data) {
@@ -122,6 +138,7 @@ export async function GET(request: NextRequest) {
     preferences: preferencesResult.data || {},
     resumes: resumesResult.data || [],
     application_profiles: bundles || [],
+    worker_config: workerCfgResult.data || null,
     supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL,
     supabase_anon_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     telegram_chat_id: user.telegram_chat_id || null,
