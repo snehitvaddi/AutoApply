@@ -213,10 +213,40 @@ async def lifespan(app: FastAPI):
             return False
         if other_pid <= 1 or other_pid == _os.getpid():
             return False
+        # os.kill(pid, 0) is the POSIX "is this alive?" idiom but it
+        # does NOT work on Windows — Python maps signal 0 onto a
+        # GenerateConsoleCtrlEvent / OpenProcess path that raises
+        # "WinError 11: An attempt was made to load a program with an
+        # incorrect format" instead of just returning a status. So a
+        # stale desktop.pid from a prior session crashes the entire
+        # FastAPI startup before /api/health is even bound. Use
+        # OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) on Windows
+        # which is the proper liveness probe, and keep the POSIX
+        # signal-0 idiom on Mac/Linux.
+        if _sys.platform == "win32":
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            kernel32 = ctypes.windll.kernel32
+            h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, other_pid)
+            if not h:
+                return False
+            # Process exists; also check it's not a zombie (exit code != STILL_ACTIVE).
+            STILL_ACTIVE = 259
+            exit_code = ctypes.c_ulong(0)
+            try:
+                ok = kernel32.GetExitCodeProcess(h, ctypes.byref(exit_code))
+                return bool(ok and exit_code.value == STILL_ACTIVE)
+            finally:
+                kernel32.CloseHandle(h)
         try:
-            _os.kill(other_pid, 0)  # signal 0 = liveness probe
+            _os.kill(other_pid, 0)  # signal 0 = liveness probe (POSIX)
             return True
         except (ProcessLookupError, PermissionError):
+            return False
+        except OSError:
+            # Catch-all so a Windows-y OSError on a future platform
+            # quirk degrades to "treat as dead" instead of killing
+            # the whole lifespan startup.
             return False
 
     # LaunchAgent footgun warning. Even if currently unloaded, the
