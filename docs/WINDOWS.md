@@ -165,3 +165,31 @@ These are the only differences between the Windows and Mac builds:
 
 The 95% that matters — scout, applier, brain, MCP server, db, profile,
 dashboard — is identical on both platforms.
+
+## Remote-control gotchas (AnyDesk, RDP, Chrome Remote Desktop)
+
+If you're installing or operating ApplyLoop on a Windows machine via a
+remote-desktop tool from a Mac, and your **keystrokes seem to type the
+wrong characters** (e.g. `@` becomes `"`, paths shift symbols), open
+unintended Windows shortcuts, or the keyboard layout silently switches
+mid-session:
+
+This is almost always the remote-desktop tool's keyboard transmission
+mode, not ApplyLoop or PowerShell. Nothing in `install.ps1`, the
+desktop app, or the worker touches the system keyboard layout.
+
+- **AnyDesk** — toolbar at the top of the remote session → **Input →
+  Keyboard transmission → Direct**. The default is "Translate," which
+  sends your Mac's layout to Windows and gets confused by mismatched
+  symbol positions.
+- **Microsoft RDP** — usually fine; the client maps keys to the
+  Windows host layout by default. If symbols still misbehave, press
+  `Win+Space` once on the remote host to confirm Windows is on `ENG / US`.
+- **Chrome Remote Desktop** — no per-session setting; both ends' system
+  layouts must agree. Change the Windows host's input language via
+  Settings → Time & language → Language to match the Mac.
+
+Specific keystroke combos (`Win+Space`, `Alt+Shift`, `Ctrl+Shift`)
+cycle Windows' input languages. If you accidentally hit one mid-install
+and the keyboard "feels wrong," that's what happened — press the same
+combo again or use `Win+Space` to pick the layout explicitly.

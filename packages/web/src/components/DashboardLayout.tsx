@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 
@@ -23,7 +23,6 @@ const NAV_ITEMS = [
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
@@ -39,8 +38,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, []);
 
   async function handleSignOut() {
-    await supabase.auth.signOut();
-    router.push("/auth/login");
+    // POST to the server-side signout route so the httpOnly sb-* cookies
+    // actually get cleared (the browser client can't touch httpOnly
+    // entries). Then hard-navigate so the next page hydrates without any
+    // stale localStorage from the previous session — a router.push
+    // soft-nav was leaking enough state to silently re-pin the OAuth flow
+    // and bounce users back through the Google account chooser.
+    try {
+      await fetch("/auth/signout", { method: "POST", credentials: "include" });
+    } catch {
+      // Even if the server route 500s, fall through to the hard nav —
+      // the user wants to be logged out regardless.
+    }
+    window.location.assign("/auth/login");
   }
 
   function isActive(href: string, exact: boolean) {

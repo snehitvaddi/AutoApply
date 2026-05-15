@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
@@ -38,28 +39,37 @@ export async function GET(request: NextRequest) {
     return loginWithError(appBaseUrl, "missing_code");
   }
 
-  // CRITICAL: attach the Supabase server client directly to a response
-  // object so the SDK's set()/remove() calls write to the FINAL response
-  // headers. The previous pattern (buffering cookies into a local array
-  // then copying onto a redirect response at the end) was fragile for
-  // two reasons:
-  //   1. Chunked cookies (`sb-*-auth-token.0`, `.1`) may be written AND
-  //      removed in the same exchange — the manual array let the last
-  //      write-or-remove win, which could leave stale half-chunks on
-  //      the response.
-  //   2. exchangeCodeForSession needs to READ the PKCE verifier cookie
-  //      after some internal writes; with the buffered pattern those
-  //      writes weren't visible to subsequent reads.
-  //
-  // First-login-fails / second-login-succeeds was the exact symptom of
-  // the chunked-cookie race. Using a single mutable NextResponse fixes
-  // it by delegating cookie handling entirely to the SDK.
-  //
-  // We start with a no-op response, let the SDK attach cookies, then
-  // rewrite the Location header at the end once we know where to send
-  // the user. Cloning the cookies across to the final redirect preserves
-  // them.
-  let response = NextResponse.next({ request });
+  // Cookies are handled via next/headers cookies() — the mutable
+  // request-scoped cookie store. The previous approach (NextResponse.next
+  // as a cookie sink + manual copy to a NextResponse.redirect at the end)
+  // had two specific bugs that caused the first-login-fails-second-works
+  // symptom:
+  //   1. Custom get() read request.cookies, which is read-only and never
+  //      reflects writes made earlier in the same handler. Supabase's
+  //      PKCE verifier dance does write-then-read within exchangeCode-
+  //      ForSession, and a stale get() result aborted the exchange
+  //      silently — so the first redirect carried no session cookies
+  //      and middleware bounced the user back to /auth/login.
+  //   2. NextResponse.next() is a middleware idiom; copying its cookies
+  //      onto a separately-built redirect was fragile, especially for
+  //      chunked sb-*-auth-token.0/.1 entries.
+  // cookies() from next/headers solves both: get() sees writes, and any
+  // cookie we set is automatically attached to whatever Response we
+  // return. No manual shuttling.
+  const cookieStore = cookies();
+
+  // If NEXT_PUBLIC_APP_URL is set, warn loudly when the request hit a
+  // different host. Cookies are scoped to the responding host, so a
+  // redirect to a DIFFERENT host arrives with no session — which would
+  // reproduce the first-login-bounce even after the cookie() switch.
+  if (request.nextUrl.origin !== appBaseUrl) {
+    console.warn(
+      `[auth/callback] host mismatch: request origin ${request.nextUrl.origin} ` +
+        `but appBaseUrl is ${appBaseUrl}. Cookies set here will not transfer ` +
+        `to the redirect target. Set NEXT_PUBLIC_APP_URL to the canonical ` +
+        `origin users actually hit, or unset it to use the request origin.`
+    );
+  }
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -67,16 +77,23 @@ export async function GET(request: NextRequest) {
     {
       cookies: {
         get(name: string) {
-          return request.cookies.get(name)?.value;
+          return cookieStore.get(name)?.value;
         },
         set(name: string, value: string, options: CookieOptions) {
-          response.cookies.set({ name, value, ...options });
+          try {
+            cookieStore.set({ name, value, ...options });
+          } catch {
+            // cookies() in some Next versions throws if called outside
+            // the request lifecycle. Swallow defensively — auth still
+            // works via the response attachment that Next does for us.
+          }
         },
         remove(name: string, options: CookieOptions) {
-          // Explicit remove — set an empty value with Max-Age=0 so the
-          // browser drops the cookie. Needed to clean up the PKCE
-          // verifier + any stale chunks from a prior failed attempt.
-          response.cookies.set({ name, value: "", ...options, maxAge: 0 });
+          try {
+            cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+          } catch {
+            /* same as above */
+          }
         },
       },
     }
@@ -188,12 +205,8 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Build the final redirect, carrying every cookie the SDK wrote onto
-  // `response`. NextResponse's cookie jar is spec-compliant so this
-  // handles the chunked `sb-*-auth-token.N` case correctly.
-  const redirectResponse = NextResponse.redirect(new URL(redirectPath, appBaseUrl));
-  for (const cookie of response.cookies.getAll()) {
-    redirectResponse.cookies.set(cookie);
-  }
-  return redirectResponse;
+  // cookies() has been mutating the request-scoped store throughout this
+  // handler; Next.js auto-attaches those mutations to whatever Response
+  // we return. No manual cookie copy needed.
+  return NextResponse.redirect(new URL(redirectPath, appBaseUrl));
 }

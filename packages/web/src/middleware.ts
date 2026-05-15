@@ -5,6 +5,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 const PUBLIC_ROUTES = [
   "/auth/login",
   "/auth/callback",
+  "/auth/signout",
   "/auth/pending",
   "/auth/rejected",
   "/api/stripe/webhook",
