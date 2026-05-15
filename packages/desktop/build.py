@@ -317,12 +317,22 @@ if __name__ == "__main__":
 
     # Try PyInstaller for a proper .exe
     pyinstaller_ok = False
+    # Embed the blue "A" icon into the .exe so File Explorer, Alt-Tab, the
+    # taskbar, and the Start Menu shortcut all show the brand mark instead
+    # of PyInstaller's default Python placeholder. icon.ico is committed
+    # next to build.py and contains 16/32/48/64/128/256 sizes so each
+    # Windows surface picks the best fit without scaling artifacts.
+    icon_path = HERE / "icon.ico"
+    icon_args = ["--icon", str(icon_path)] if icon_path.exists() else []
+    if not icon_path.exists():
+        print(f"[Build] WARN: {icon_path.name} not found — .exe will use the default PyInstaller icon")
     try:
         subprocess.check_call([
             sys.executable, "-m", "PyInstaller",
             "--onedir",
             "--name", APP_NAME,
             "--distpath", str(win_dir),
+            *icon_args,
             "--add-data", f"{stage / 'server'}{os.pathsep}server",
             "--add-data", f"{stage / 'ui'}{os.pathsep}ui",
             # --collect-submodules grabs every submodule under the named
