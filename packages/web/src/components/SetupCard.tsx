@@ -110,10 +110,12 @@ export function SetupCard({ variant = "inline" }: { variant?: "standalone" | "in
     }
   }
 
-  // install.sh v1.0.9+ requires the activation code up front
+  // install.sh / install.ps1 v1.0.9+ require the activation code up front
   const userCode = activation?.code || "AL-XXXX-XXXX";
   const installCmd =
     `curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash -s -- ${userCode}`;
+  const installCmdWin =
+    `$env:APPLYLOOP_CODE = "${userCode}"; irm https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.ps1 | iex`;
 
   return (
     <div className="space-y-6">
@@ -272,42 +274,80 @@ export function SetupCard({ variant = "inline" }: { variant?: "standalone" | "in
           </div>
         </div>
 
-        {/* Windows — coming soon */}
+        {/* Windows */}
         <div
           className={`border rounded-lg p-5 ${
-            os === "windows"
-              ? "border-brand-500 bg-brand-50"
-              : "border-gray-200 opacity-70"
+            os === "windows" ? "border-brand-500 bg-brand-50" : "border-gray-200"
           }`}
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="text-3xl">&#9783;</div>
-              <div>
-                <p className="font-semibold">Windows</p>
-                <p className="text-sm text-gray-500">Installer build in progress</p>
-              </div>
-              {os === "windows" && (
-                <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded-full">
-                  Detected
-                </span>
-              )}
+          <div className="flex items-center gap-3 mb-4">
+            <div className="text-3xl">&#9783;</div>
+            <div className="flex-1">
+              <p className="font-semibold">Windows Install</p>
+              <p className="text-sm text-gray-500">Windows 10/11 (1809+)</p>
             </div>
-            <span className="px-4 py-2 bg-gray-200 text-gray-600 rounded-lg text-sm font-medium">
-              Coming soon
-            </span>
+            {os === "windows" && (
+              <span className="px-2 py-0.5 bg-brand-100 text-brand-700 text-xs rounded-full">
+                Detected
+              </span>
+            )}
           </div>
-          <p className="text-xs text-gray-500 mt-3">
-            Windows users: in the meantime, ping{" "}
-            <a
-              href="https://t.me/ApplyLoopBot"
-              target="_blank"
-              rel="noopener"
-              className="underline"
+
+          <p className="text-sm text-gray-700 mb-2">
+            Open <strong>PowerShell</strong> (press <code>Win</code>, type{" "}
+            <code>powershell</code>, Enter) and paste this — your activation code is
+            already baked in:
+          </p>
+          <div className="flex items-center gap-2 mb-2">
+            <code className="flex-1 bg-gray-900 text-green-400 border border-gray-800 rounded-lg px-4 py-2 text-xs font-mono overflow-x-auto whitespace-nowrap select-all">
+              {installCmdWin}
+            </code>
+            <button
+              onClick={() => copy("installWin", installCmdWin)}
+              className="px-3 py-2 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700"
             >
-              @ApplyLoopBot
-            </a>{" "}
-            and we&apos;ll set you up manually with a worker token.
+              {copied === "installWin" ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-4">
+            Do <strong>not</strong> use Command Prompt (cmd.exe) — it must be{" "}
+            <strong>PowerShell</strong>. If you see &ldquo;execution policy&rdquo;
+            error, run{" "}
+            <code className="text-xs">
+              Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+            </code>{" "}
+            first.
+          </p>
+
+          <p className="text-sm text-gray-700 mb-2">The installer will:</p>
+          <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside mb-4">
+            <li>
+              Verify your activation code (before touching anything on your machine)
+            </li>
+            <li>
+              Install Python, Node, Git, Claude Code + OpenClaw via{" "}
+              <code className="text-xs">winget</code> + <code className="text-xs">npm</code>
+            </li>
+            <li>
+              Clone ApplyLoop to <code className="text-xs">%USERPROFILE%\.applyloop</code>{" "}
+              and build the UI locally
+            </li>
+            <li>Configure OpenClaw gateway + sync your profile from this account</li>
+            <li>
+              Prompt for optional integrations (Telegram, Gmail, AgentMail — Enter to
+              skip any)
+            </li>
+            <li>
+              Build <code className="text-xs">ApplyLoop.exe</code> with PyInstaller and
+              schedule daily auto-updates via Task Scheduler
+            </li>
+          </ul>
+          <p className="text-sm text-gray-700">
+            Launch <strong>ApplyLoop.exe</strong> from the Start menu — the wizard is
+            already activated, profile is synced, you just click <strong>Start</strong>.
+            If Windows SmartScreen warns, click <strong>More info</strong> →{" "}
+            <strong>Run anyway</strong> (the .exe is built locally on your machine, not
+            downloaded as a signed binary).
           </p>
         </div>
       </div>
