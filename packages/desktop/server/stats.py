@@ -227,16 +227,37 @@ async def update_integrations(fields: dict) -> dict:
 
 
 async def get_settings_profile() -> dict:
-    """Get profile using worker proxy, with fallback to local PROFILE.md."""
+    """Get profile using worker proxy, with fallback to local PROFILE.md.
+
+    Surfaces the proxy error path so an empty UI isn't ambiguous between
+    "you haven't filled this in yet" and "your token can't reach the cloud."
+    Without this surfaced, users saw a blank Settings page even though
+    their cloud /dashboard/settings was populated, with no signal what
+    was wrong (the worker token had expired / didn't match / network).
+    """
     result = await _proxy("load_profile")
+
+    # Hard error path: proxy returned {"error": ...} or auth was revoked.
+    # Pass the error up so the UI + /api/profile response include it.
+    # Caller already wraps in {ok: True/False}; we add diagnostic fields.
+    if result.get("error"):
+        return {
+            "data": {"profile": {}},
+            "_sync_error": result.get("error"),
+            "_sync_auth": result.get("auth"),
+            "_sync_user_id_hint": _extract_user_id_from_token(),
+        }
+
     data = result.get("data", {})
     profile = data.get("profile")
     user = data.get("user", {})
 
-    # If Supabase profile is null/empty, build from user object + local PROFILE.md
+    # Cloud returned successfully but profile row is genuinely missing
+    # (new user who hasn't filled anything yet). Build a stub from
+    # user.full_name + local PROFILE.md so the UI has SOMETHING to show
+    # rather than a completely blank form.
     if not profile or not profile.get("first_name"):
         profile = profile or {}
-        # Extract first/last name from user.full_name
         full_name = user.get("full_name", "")
         if full_name and not profile.get("first_name"):
             parts = full_name.strip().split(None, 1)
@@ -245,15 +266,32 @@ async def get_settings_profile() -> dict:
         if user.get("email") and not profile.get("email"):
             profile["email"] = user["email"]
 
-        # Try reading local PROFILE.md for richer data
         local_profile = _read_local_profile()
         if local_profile:
-            # Only fill in fields that are still empty
             for key, value in local_profile.items():
                 if value and not profile.get(key):
                     profile[key] = value
 
-    return {"data": {"profile": profile}}
+    # Always include the user object so the UI knows WHICH user we
+    # synced as. Mismatch between "filled profile under account A on
+    # the dashboard" and "activation code was for account B" produces
+    # the empty-Settings symptom; exposing user_id + email here makes
+    # that diagnosable in one glance at devtools.
+    return {
+        "data": {"profile": profile, "user": user},
+    }
+
+
+def _extract_user_id_from_token() -> str | None:
+    """Best-effort: pull the user_id prefix from the worker token shape
+    'al_<8 hex>_<32 hex>'. Used purely for diagnostic exposure so the
+    UI/devtools can show 'token thinks I'm user X' next to 'cloud
+    profile is under user Y' when those disagree."""
+    token = load_token() or ""
+    parts = token.split("_")
+    if len(parts) >= 2 and parts[0] == "al":
+        return parts[1]
+    return None
 
 
 def _read_local_profile() -> dict:

@@ -244,6 +244,14 @@ export default function SettingsPage() {
   // which runs the same pull+push helpers the 5-min background loop runs.
   const [syncing, setSyncing] = useState(false)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
+  // When the local /api/profile call surfaces a sync_error (token revoked,
+  // proxy network failure, user_id mismatch), show it inline at the top of
+  // the page so the user doesn't stare at a blank form wondering why their
+  // cloud-dashboard edits never appeared locally. The diagnostic includes
+  // the auth state and the local-token user-id-hint so we can spot the
+  // "filled profile under account A but activated with code for account B"
+  // mismatch in one glance.
+  const [syncError, setSyncError] = useState<{ message: string; auth?: string; tokenUserId?: string } | null>(null)
 
   // AI Import state
   const [aiResponse, setAiResponse] = useState("")
@@ -266,6 +274,20 @@ export default function SettingsPage() {
         listResumes(),
       ])
       if (profileRes.status === "fulfilled") {
+        // Surface the proxy sync error (token revoked, mismatched user_id,
+        // network failure) before processing the payload — these fields
+        // are added by stats.get_settings_profile() when the cloud call
+        // fails. Clear stale errors when a successful load happens.
+        const root = profileRes.value as Record<string, unknown> ?? {}
+        if (root?.sync_error) {
+          setSyncError({
+            message: String(root.sync_error),
+            auth: root.sync_auth ? String(root.sync_auth) : undefined,
+            tokenUserId: root.sync_user_id_hint ? String(root.sync_user_id_hint) : undefined,
+          })
+        } else {
+          setSyncError(null)
+        }
         const raw = profileRes.value?.data as Record<string, unknown> ?? {}
         const nested = raw?.data as Record<string, unknown> ?? raw
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -656,6 +678,27 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <div className="space-y-6">
+        {syncError && (
+          <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-700/50 dark:bg-red-950/30 dark:text-red-100">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="font-medium">Cloud sync failed — Settings may be showing stale or empty data.</div>
+                <div className="mt-1 text-xs opacity-90">
+                  Reason: <span className="font-mono">{syncError.message}</span>
+                  {syncError.auth && <> · auth state: <span className="font-mono">{syncError.auth}</span></>}
+                  {syncError.tokenUserId && <> · local token user_id starts with: <span className="font-mono">{syncError.tokenUserId}</span></>}
+                </div>
+                <div className="mt-2 text-xs">
+                  Most common causes: (1) activation code was issued for a different account than the one
+                  you filled the profile under on the dashboard, (2) the worker token was revoked by an admin,
+                  or (3) the network call to applyloop.vercel.app timed out. Try the <strong>Refresh</strong> button.
+                  If it persists, re-activate via the setup page with a fresh code.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {setupComplete === false && (
           <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-100">
             <div className="flex items-center gap-2">

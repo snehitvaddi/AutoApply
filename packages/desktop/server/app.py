@@ -1380,7 +1380,17 @@ async def get_heartbeat():
 @app.get("/api/profile")
 async def get_profile():
     try:
-        return {"ok": True, "data": await stats.get_settings_profile()}
+        result = await stats.get_settings_profile()
+        # Surface the diagnostic fields stats.get_settings_profile()
+        # adds when the cloud proxy fails (token expired, user_id
+        # mismatch, network error). Without these the UI just
+        # shows a blank Settings page with no indication WHY.
+        payload = {"ok": True, "data": result.get("data", {})}
+        if result.get("_sync_error"):
+            payload["sync_error"] = result["_sync_error"]
+            payload["sync_auth"] = result.get("_sync_auth")
+            payload["sync_user_id_hint"] = result.get("_sync_user_id_hint")
+        return payload
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
