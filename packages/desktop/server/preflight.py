@@ -649,12 +649,37 @@ def _check_browser_ready() -> dict:
     # Snapshot empty — Chrome session is wedged. Auto-restart only as
     # a last resort, since this is the failure mode that breaks MCP
     # browser_snapshot for the brain.
+    # Backoff: if the previous restart attempt timed out (openclaw CLI
+    # itself hanging — seen on Windows when WebView2/Chrome is
+    # broken), back off 5 min before trying again. Otherwise the
+    # restart loop fires every preflight pass and (even with the
+    # to_thread fix) keeps a worker thread busy spinning on a hung
+    # subprocess.
+    last_restart_fail = _BROWSER_CACHE.get("last_restart_fail", 0.0)
+    if last_restart_fail and (now - last_restart_fail) < 300:
+        return _cache({
+            "id": "browser_ready",
+            "ok": False,
+            "optional": True,
+            "label": "Browser (OpenClaw)",
+            "detail": (
+                "Browser unresponsive; auto-restart backed off after "
+                "prior failure. Run `openclaw gateway restart` manually."
+            ),
+            "remediation": {
+                "type": "install",
+                "target": "openclaw_gateway",
+                "command": "openclaw gateway restart",
+            },
+        }, 60)
+
     logger.info("browser_ready: snapshot empty, restarting gateway")
     try:
         subprocess.run([openclaw, "gateway", "restart"], capture_output=True, timeout=5)
         _time.sleep(2)
     except Exception as e:
         logger.warning(f"browser_ready: gateway restart failed: {e}")
+        _BROWSER_CACHE["last_restart_fail"] = _time.time()
 
     if _snapshot_works():
         _BROWSER_CACHE["last_deep_ok"] = _time.time()
@@ -782,14 +807,24 @@ async def run_preflight() -> dict:
                 "remediation": {"type": "route", "target": f"/settings?tab={tab}"},
             })
 
-    # Local binary checks — synchronous, fast. Run unconditionally so
-    # the user can install tools in parallel with activation.
-    checks.append(_check_claude_cli())
-    checks.append(_check_openclaw_cli())
-    checks.append(_check_openclaw_config())
-    checks.append(_check_openclaw_gateway())
-    checks.append(_check_browser_ready())
-    checks.append(_check_git())
+    # Local binary checks — each one does subprocess.run with multi-
+    # second timeouts. Calling them inline blocks the asyncio event
+    # loop (so /api/health, /api/auth/state, /api/setup/activate all
+    # stall behind preflight). Offload to a thread.
+    # Why this matters: _check_browser_ready alone can block ~28s
+    # (gateway status 5s + snapshot 8s + restart 5s + sleep 2s +
+    # snapshot 8s) when openclaw is hanging on Windows, which is
+    # exactly Shreya's symptom: CLOSE_WAIT sockets piling up because
+    # the UI's /api/setup/status poll wedges every other handler.
+    local_checks = await asyncio.gather(
+        asyncio.to_thread(_check_claude_cli),
+        asyncio.to_thread(_check_openclaw_cli),
+        asyncio.to_thread(_check_openclaw_config),
+        asyncio.to_thread(_check_openclaw_gateway),
+        asyncio.to_thread(_check_browser_ready),
+        asyncio.to_thread(_check_git),
+    )
+    checks.extend(local_checks)
 
     ready = all(c["ok"] for c in checks if not c.get("optional"))
     return {"ready": ready, "checks": checks}
