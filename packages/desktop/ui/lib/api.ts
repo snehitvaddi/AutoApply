@@ -16,7 +16,16 @@ type ApiFetchInit = RequestInit & { timeoutMs?: number };
 // without reason" while the cloud request actually succeeded in the
 // background, which surfaced to the user as a phantom "Can't reach
 // the ApplyLoop server" error.
-const DEFAULT_TIMEOUT_MS = 5000;
+//
+// Bumped from 5s → 15s after a second related symptom: AppShell polls
+// /api/setup/status every 15s. On a cold-start lifespan that's still
+// running OpenClaw gateway probes (each 5s + retry), the local
+// /api/setup/status response legitimately takes 8-12s. The browser's
+// 5s timeout fired, AppShell hit the catch path twice in a row, set
+// setupState="needed", and the dashboard rendered with NO sidebar or
+// top bar even though setup_complete server-side was true. 15s
+// covers the worst-case cold preflight comfortably.
+const DEFAULT_TIMEOUT_MS = 15000;
 
 async function apiFetch<T = unknown>(path: string, opts?: ApiFetchInit): Promise<T> {
   const controller = new AbortController()
