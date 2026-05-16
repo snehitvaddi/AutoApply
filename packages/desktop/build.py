@@ -395,15 +395,21 @@ if __name__ == "__main__":
     _server_thread.start()
 
     # Wait for the actual bind so neither the webview nor the browser
-    # fallback opens before the server is ready.
-    if not _probe_localhost(PORT, timeout_s=0.1):
-        # quick first check; loop with the standard helper
-        pass
-    if not _wait_for_server(PORT, timeout_s=30):
+    # fallback opens before the server is ready. 120s — not 30s.
+    # The FastAPI lifespan startup probes OpenClaw gateway (each probe
+    # has a 5s timeout, and one of them retries), so on first boot
+    # with a stale gateway state lifespan startup legitimately takes
+    # 20-40 seconds. The old 30s probe was firing false-positives:
+    # printing "FATAL: uvicorn never bound", exiting the main thread,
+    # and stranding the non-daemon server thread serving requests with
+    # no native window driver. User sees console-only "broken" UX
+    # despite the server being healthy. 120s comfortably covers worst
+    # case + leaves margin for slow disks / cold network.
+    if not _wait_for_server(PORT, timeout_s=120):
         print("\\n[applyloop] FATAL: uvicorn never bound to localhost.")
         print("[applyloop] Scroll up for the actual error (look for 'Application")
         print("[applyloop]   startup failed' or a Python traceback).")
-        _write_crash("uvicorn never bound to localhost -- see console above")
+        _write_crash("uvicorn never bound to localhost after 120s -- see console above")
         _hold_console_on_error()
         sys.exit(1)
 

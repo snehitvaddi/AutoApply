@@ -296,8 +296,16 @@ async def lifespan(app: FastAPI):
         else:
             try:
                 logger.info("Starting OpenClaw gateway...")
+                # subprocess on Windows resolves bare "openclaw" against
+                # PATHEXT (.COM, .EXE, .BAT) — the npm-installed shim is
+                # `openclaw.CMD` which is NOT in the default PATHEXT for
+                # the way subprocess.run probes when shell=False. Result:
+                # "[WinError 2] The system cannot find the file specified."
+                # Resolve via shutil.which (which DOES honor PATHEXT) and
+                # pass the absolute path.
+                openclaw_bin = _sh.which("openclaw") or "openclaw"
                 _sp.run(
-                    ["openclaw", "gateway", "start"],
+                    [openclaw_bin, "gateway", "start"],
                     capture_output=True, timeout=15,
                 )
                 # Brief settle window — gateway needs ~1-2s to be
