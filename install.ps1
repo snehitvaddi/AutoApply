@@ -34,7 +34,20 @@ param(
     [switch]$ShimRefreshOnly
 )
 
-$ErrorActionPreference = "Stop"
+# Intentionally NOT setting $ErrorActionPreference = "Stop". With Stop,
+# PowerShell escalates ANY stderr line from a native command (npm
+# deprecation warnings, schtasks chatter, git progress, winget install
+# progress, openclaw startup info, pip warnings) into a terminating
+# exception that aborts the entire install — even when stderr is
+# redirected with 2>&1 | Out-Null. We hit this trap five different ways
+# over the past day (schtasks "Access is denied" warning, npm warn
+# deprecated node-domexception, openclaw "Config was last written..."
+# message, etc.) and patching individual call sites was whack-a-mole.
+# Leaving EAP at the default "Continue" makes native stderr non-fatal
+# globally. PowerShell cmdlet errors are still surfaced (they don't
+# depend on EAP). For commands whose exit code we actually care about,
+# we check $LASTEXITCODE explicitly.
+$ErrorActionPreference = "Continue"
 
 # ─── Logging helpers ────────────────────────────────────────────────────────
 function Write-Log    ($msg) { Write-Host "[applyloop] $msg" -ForegroundColor Cyan }
@@ -970,7 +983,11 @@ $UpdateScriptContent = @"
 # step erroring stops the script and leaves the install at the previous
 # known-good commit.
 [CmdletBinding()] param()
-`$ErrorActionPreference = 'Stop'
+# Same rationale as install.ps1: don't escalate native-command stderr
+# to fatal errors. We check `$LASTEXITCODE explicitly on the steps
+# that matter (git, pip, npm, build.py) and ONLY stamp the version
+# at the very end if everything succeeded.
+`$ErrorActionPreference = 'Continue'
 `$AppHome = '$ApplyloopHome'
 `$Venv = Join-Path `$AppHome 'venv\Scripts'
 `$Py   = Join-Path `$Venv 'python.exe'
@@ -1004,23 +1021,32 @@ if (Test-Path `$LockFile) {
 }
 `$PID | Out-File -Encoding ASCII `$LockFile
 
+# Local helper: run a native command, tee output to the update log,
+# and abort the whole update if its exit code is non-zero. With EAP=
+# Continue (set above), native stderr no longer auto-throws, so we
+# enforce fail-fast manually on the steps that matter.
+function Invoke-Step([string]`$Description, [scriptblock]`$Body) {
+    Log `$Description
+    & `$Body 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    if (`$LASTEXITCODE -ne 0) {
+        throw "Step failed (exit `$LASTEXITCODE): `$Description"
+    }
+}
+
 try {
     `$prevCommit = git -C `$AppHome rev-parse HEAD
     Log "applyloop-update starting (was at `$prevCommit)"
-    Log "Pulling latest from origin/main..."
-    git -C `$AppHome fetch origin main 2>&1 | Tee-Object -FilePath `$LogFile -Append
-    git -C `$AppHome reset --hard origin/main 2>&1 | Tee-Object -FilePath `$LogFile -Append
-    Log "Reinstalling Python deps (no-op if up to date)..."
-    & `$Pip install --quiet -r (Join-Path `$AppHome 'packages\desktop\requirements.txt') 2>&1 | Tee-Object -FilePath `$LogFile -Append
-    & `$Pip install --quiet -r (Join-Path `$AppHome 'packages\worker\requirements.txt') 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    Invoke-Step "Pulling latest from origin/main (fetch)..." { git -C `$AppHome fetch origin main }
+    Invoke-Step "Pulling latest from origin/main (reset)..." { git -C `$AppHome reset --hard origin/main }
+    Invoke-Step "Reinstalling desktop Python deps..." { & `$Pip install --quiet -r (Join-Path `$AppHome 'packages\desktop\requirements.txt') }
+    Invoke-Step "Reinstalling worker Python deps..." { & `$Pip install --quiet -r (Join-Path `$AppHome 'packages\worker\requirements.txt') }
     Log "Rebuilding UI..."
     Push-Location (Join-Path `$AppHome 'packages\desktop\ui')
     try {
-        npm install --silent --no-fund --no-audit 2>&1 | Tee-Object -FilePath `$LogFile -Append
-        npm run build 2>&1 | Tee-Object -FilePath `$LogFile -Append
+        Invoke-Step "  npm install" { npm install --silent --no-fund --no-audit }
+        Invoke-Step "  npm run build" { npm run build }
     } finally { Pop-Location }
-    Log "Rebuilding Windows .exe..."
-    & `$Py (Join-Path `$AppHome 'packages\desktop\build.py') --win --skip-ui 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    Invoke-Step "Rebuilding Windows .exe..." { & `$Py (Join-Path `$AppHome 'packages\desktop\build.py') --win --skip-ui }
 
     # Stop the running app (parity with Mac's cmd_stop). Forces the
     # user to relaunch and pick up the new .exe; otherwise a long-lived
