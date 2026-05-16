@@ -265,6 +265,11 @@ export interface AuthState {
   status: "ok" | "revoked" | "unknown" | "no_token";
   last_checked?: number;
   last_error?: string | null;
+  // Surfaced so app-shell can render the "no profile data for this
+  // account" banner on every page, not just /settings.
+  profile_status?: "ok" | "missing" | "sync_error" | "unknown";
+  synced_as_email?: string | null;
+  synced_as_user_id?: string | null;
 }
 
 export async function getAuthState() {

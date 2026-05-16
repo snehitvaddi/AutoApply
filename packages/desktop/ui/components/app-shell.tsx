@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react"
 import { usePathname, useRouter } from "next/navigation"
-import { Loader2, Key } from "lucide-react"
+import { Loader2, Key, AlertTriangle } from "lucide-react"
 import { Sidebar } from "./sidebar"
 import { SessionDropdown } from "./session-dropdown"
 import {
@@ -28,6 +28,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // home page; a user editing /settings or /jobs at that moment had no
   // indication their token was dead and no clear path to re-activate.
   const [authState, setAuthState] = useState<"ok" | "revoked" | "no_token" | null>(null)
+  // Parallel signal piggybacked on the same /api/auth/state poll. When
+  // profile_status === "missing", the cloud is reachable + the token is
+  // valid, but no user_profiles row exists for the activated user_id.
+  // Show an amber banner globally (every page) with the synced-as email
+  // so the user can spot wrong-account activation from /jobs or /dashboard
+  // without having to tab into /settings first.
+  const [profileMissing, setProfileMissing] = useState<{ email?: string | null } | null>(null)
   const pathname = usePathname()
   const router = useRouter()
   const isSetupRoute = pathname?.startsWith("/setup") ?? false
@@ -129,6 +136,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           if (res.status === "revoked") setAuthState("revoked")
           else if (res.status === "no_token") setAuthState("no_token")
           else setAuthState("ok")
+          // Only flag profile-missing when auth itself is fine — otherwise
+          // the auth banner takes precedence and the user shouldn't see
+          // two warnings stacked.
+          if (res.status === "ok" && res.profile_status === "missing") {
+            setProfileMissing({ email: res.synced_as_email ?? null })
+          } else {
+            setProfileMissing(null)
+          }
         })
         .catch(() => { /* transient — leave state */ })
     }
@@ -219,6 +234,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               className="rounded-md bg-red-200 px-3 py-1 text-xs font-medium text-red-900 hover:bg-red-300 dark:bg-red-800 dark:text-red-100 dark:hover:bg-red-700"
             >
               Re-activate
+            </button>
+          </div>
+        )}
+        {!authState ? null : authState === "ok" && profileMissing && (
+          <div className="flex items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-6 py-2.5 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+              <span>
+                Cloud reachable, but no profile data exists for this account
+                {profileMissing.email ? <> (synced as <span className="font-mono">{profileMissing.email}</span>)</> : null}.
+                If you filled your profile under a different account, ask the admin to reissue the activation code.
+              </span>
+            </div>
+            <button
+              onClick={() => router.push("/settings")}
+              className="rounded-md bg-amber-200 px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-300 dark:bg-amber-800 dark:text-amber-100 dark:hover:bg-amber-700"
+            >
+              Open Settings
             </button>
           </div>
         )}

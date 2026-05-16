@@ -774,6 +774,15 @@ class PTYSession:
                 )
             meta["last_bundles_updated_at"] = new_max
 
+        # Resume metadata. Cli-config returns a `resumes` array with id,
+        # file_name, is_default flag, target_keywords. Cloud is authoritative
+        # (the UI only writes via /api/resumes which proxies to Supabase).
+        # Without this block, profile.json stayed empty for resumes and any
+        # downstream consumer that inspected it would think the user had no
+        # resume on file even after they uploaded one on the cloud dashboard.
+        if "resumes" in data:
+            local["resumes"] = data.get("resumes") or []
+
         try:
             with open(profile_path, "w", encoding="utf-8") as f:
                 json.dump(local, f, indent=2)

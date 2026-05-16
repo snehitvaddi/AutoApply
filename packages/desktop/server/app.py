@@ -553,7 +553,24 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "worker": worker.status()}
+    # Inline the short SHA so a single curl tells us both "is it alive"
+    # AND "is it on the commit I expect." Previously /api/version was a
+    # second endpoint nobody remembered to hit; folding it into /health
+    # makes "what version are they running?" a 1-call answer when a
+    # client reports a bug.
+    import os as _os
+    short = "unknown"
+    try:
+        ver_file = _os.path.join(
+            _os.environ.get("APPLYLOOP_HOME") or _os.path.expanduser("~/.applyloop"),
+            ".applyloop-version",
+        )
+        if _os.path.isfile(ver_file):
+            with open(ver_file) as f:
+                short = (f.read().strip() or "unknown")[:7]
+    except Exception:
+        pass
+    return {"ok": True, "worker": worker.status(), "git_sha": short}
 
 
 @app.get("/api/version")
@@ -630,15 +647,42 @@ async def auth_state():
     Flipped to "revoked" by stats._proxy the first time the remote API
     returns 401/403 on a proxy call. The UI polls this and redirects to
     /setup when the state changes away from "ok".
+
+    Also surfaces `profile_status` so the app-shell can render the
+    "no profile data for this account" banner globally (not just on the
+    /settings tab). Cached for ~30s to avoid hammering the cloud proxy
+    once per 15-second poll across every page.
     """
     token = load_token()
     if not token:
-        return {"status": "no_token"}
+        return {"status": "no_token", "profile_status": "unknown"}
     state = stats.get_auth_state()
+    # Cheap profile freshness signal. Reads from the same proxy as
+    # /api/profile, so any error here is identical. We expose the user
+    # email + id so the UI banner can show "synced as X@gmail.com"
+    # without a second round-trip.
+    profile_status = "unknown"
+    synced_as_email: str | None = None
+    synced_as_user_id: str | None = None
+    try:
+        result = await stats.get_settings_profile()
+        if result.get("_sync_error"):
+            profile_status = "sync_error"
+        elif result.get("_profile_missing"):
+            profile_status = "missing"
+            synced_as_email = result.get("_synced_as_email")
+            synced_as_user_id = result.get("_synced_as_user_id")
+        else:
+            profile_status = "ok"
+    except Exception:
+        profile_status = "unknown"
     return {
         "status": state.get("status", "unknown"),
         "last_checked": state.get("last_checked"),
         "last_error": state.get("last_error"),
+        "profile_status": profile_status,
+        "synced_as_email": synced_as_email,
+        "synced_as_user_id": synced_as_user_id,
     }
 
 
