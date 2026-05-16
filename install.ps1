@@ -866,8 +866,8 @@ $UpdateScriptContent = @"
 # known-good commit.
 [CmdletBinding()] param()
 `$ErrorActionPreference = 'Stop'
-`$Home = '$ApplyloopHome'
-`$Venv = Join-Path `$Home 'venv\Scripts'
+`$AppHome = '$ApplyloopHome'
+`$Venv = Join-Path `$AppHome 'venv\Scripts'
 `$Py   = Join-Path `$Venv 'python.exe'
 `$Pip  = Join-Path `$Venv 'pip.exe'
 `$LogDir  = Join-Path `$env:USERPROFILE '.autoapply'
@@ -900,22 +900,22 @@ if (Test-Path `$LockFile) {
 `$PID | Out-File -Encoding ASCII `$LockFile
 
 try {
-    `$prevCommit = git -C `$Home rev-parse HEAD
+    `$prevCommit = git -C `$AppHome rev-parse HEAD
     Log "applyloop-update starting (was at `$prevCommit)"
     Log "Pulling latest from origin/main..."
-    git -C `$Home fetch origin main 2>&1 | Tee-Object -FilePath `$LogFile -Append
-    git -C `$Home reset --hard origin/main 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    git -C `$AppHome fetch origin main 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    git -C `$AppHome reset --hard origin/main 2>&1 | Tee-Object -FilePath `$LogFile -Append
     Log "Reinstalling Python deps (no-op if up to date)..."
-    & `$Pip install --quiet -r (Join-Path `$Home 'packages\desktop\requirements.txt') 2>&1 | Tee-Object -FilePath `$LogFile -Append
-    & `$Pip install --quiet -r (Join-Path `$Home 'packages\worker\requirements.txt') 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    & `$Pip install --quiet -r (Join-Path `$AppHome 'packages\desktop\requirements.txt') 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    & `$Pip install --quiet -r (Join-Path `$AppHome 'packages\worker\requirements.txt') 2>&1 | Tee-Object -FilePath `$LogFile -Append
     Log "Rebuilding UI..."
-    Push-Location (Join-Path `$Home 'packages\desktop\ui')
+    Push-Location (Join-Path `$AppHome 'packages\desktop\ui')
     try {
         npm install --silent --no-fund --no-audit 2>&1 | Tee-Object -FilePath `$LogFile -Append
         npm run build 2>&1 | Tee-Object -FilePath `$LogFile -Append
     } finally { Pop-Location }
     Log "Rebuilding Windows .exe..."
-    & `$Py (Join-Path `$Home 'packages\desktop\build.py') --win --skip-ui 2>&1 | Tee-Object -FilePath `$LogFile -Append
+    & `$Py (Join-Path `$AppHome 'packages\desktop\build.py') --win --skip-ui 2>&1 | Tee-Object -FilePath `$LogFile -Append
 
     # Stop the running app (parity with Mac's cmd_stop). Forces the
     # user to relaunch and pick up the new .exe; otherwise a long-lived
@@ -929,9 +929,9 @@ try {
     # keep showing the OLD icon until the .lnk is re-saved. Re-writing
     # the shortcuts forces a cache invalidation.
     try {
-        `$exeRel = Get-ChildItem -Path (Join-Path `$Home 'packages\desktop\dist\windows') -Recurse -Filter "ApplyLoop.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        `$exeRel = Get-ChildItem -Path (Join-Path `$AppHome 'packages\desktop\dist\windows') -Recurse -Filter "ApplyLoop.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
         if (`$exeRel) {
-            `$icon = Join-Path `$Home 'packages\desktop\icon.ico'
+            `$icon = Join-Path `$AppHome 'packages\desktop\icon.ico'
             if (-not (Test-Path `$icon)) { `$icon = `$exeRel.FullName }
             `$startLnk   = Join-Path `$env:APPDATA 'Microsoft\Windows\Start Menu\Programs\ApplyLoop.lnk'
             `$desktopLnk = Join-Path ([System.Environment]::GetFolderPath('Desktop')) 'ApplyLoop.lnk'
@@ -959,7 +959,7 @@ try {
     # mismatched capitalization or muscle-typed Title-case fell
     # through to the default and launched the app instead.
     try {
-        `$installPs1 = Join-Path `$Home 'install.ps1'
+        `$installPs1 = Join-Path `$AppHome 'install.ps1'
         if (Test-Path `$installPs1) {
             Log "Refreshing CLI shim from latest install.ps1..."
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File `$installPs1 -ShimRefreshOnly 2>&1 | Tee-Object -FilePath `$LogFile -Append
@@ -971,7 +971,7 @@ try {
 
     # ONLY stamp the version after every step above has succeeded.
     # If any threw, we exit via the catch with the version untouched.
-    git -C `$Home rev-parse HEAD | Out-File -Encoding UTF8 (Join-Path `$Home '.applyloop-version')
+    git -C `$AppHome rev-parse HEAD | Out-File -Encoding UTF8 (Join-Path `$AppHome '.applyloop-version')
     Log "Done. Update succeeded."
 } catch {
     Log "FAILED at step: `$(`$_.Exception.Message)"
