@@ -937,7 +937,13 @@ _INSTALL_COMMANDS = {
                 "  $gwToken = -join ((1..24) | ForEach-Object { '{0:x2}' -f (Get-Random -Min 0 -Max 256) });"
                 "}"
                 "$nowIso = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ');"
-                "$ocJson = '{\"meta\":{\"lastTouchedVersion\":\"2026.5.9\",\"lastTouchedAt\":\"' + $nowIso + '\"},\"wizard\":{\"lastRunAt\":\"' + $nowIso + '\",\"lastRunMode\":\"local\",\"lastRunCommand\":\"applyloop-repair\"},\"browser\":{\"defaultProfile\":\"openclaw\",\"profiles\":{\"openclaw\":{\"cdpPort\":18800,\"color\":\"#0066CC\"}}},\"gateway\":{\"port\":18789,\"mode\":\"local\",\"bind\":\"loopback\",\"auth\":{\"mode\":\"token\",\"token\":\"' + $gwToken + '\"}},\"commands\":{\"native\":\"auto\",\"nativeSkills\":\"auto\"}}';"
+                # Probe installed openclaw version — claiming a future
+                # version in the config bricks the gateway with "Config
+                # was last written by a newer OpenClaw".
+                "$ocVer = '0.0.0';"
+                "try { $verRaw = (& openclaw --version 2>$null | Select-Object -First 1).ToString().Trim();"
+                "  if ($verRaw -match '(\\d+\\.\\d+\\.\\d+)') { $ocVer = $matches[1] } } catch {}"
+                "$ocJson = '{\"meta\":{\"lastTouchedVersion\":\"' + $ocVer + '\",\"lastTouchedAt\":\"' + $nowIso + '\"},\"wizard\":{\"lastRunAt\":\"' + $nowIso + '\",\"lastRunMode\":\"local\",\"lastRunCommand\":\"applyloop-repair\"},\"browser\":{\"defaultProfile\":\"openclaw\",\"profiles\":{\"openclaw\":{\"cdpPort\":18800,\"color\":\"#0066CC\"}}},\"gateway\":{\"port\":18789,\"mode\":\"local\",\"bind\":\"loopback\",\"auth\":{\"mode\":\"token\",\"token\":\"' + $gwToken + '\"}},\"commands\":{\"native\":\"auto\",\"nativeSkills\":\"auto\"}}';"
                 "[System.IO.File]::WriteAllText($ocConfig, $ocJson, (New-Object System.Text.UTF8Encoding $false));"
                 "Write-Host '[repair] openclaw.json written with cdpPort=18800, gateway.port=18789';"
                 "openclaw gateway start;"

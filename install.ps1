@@ -295,13 +295,18 @@ if (Test-Cmd "claude") {
     npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
 }
 
-# OpenClaw (browser automation backbone, also via npm)
-$openclawInstalled = npm ls -g --depth=0 openclaw 2>$null | Select-String "openclaw@"
-if ($openclawInstalled) {
-    Write-Log "openclaw already installed (npm global)"
-} else {
-    Write-Log "Installing openclaw via npm"
-    npm install -g openclaw --no-fund --no-audit 2>&1 | Out-Null
+# OpenClaw (browser automation backbone, also via npm). Always run
+# `npm install -g openclaw@latest` — even if a version is already
+# present. Previously this short-circuited on any prior install, which
+# stranded users on stale openclaw versions whose config schema didn't
+# match what install.ps1 was writing. Repro on Shreya's machine:
+#   `Config was last written by a newer OpenClaw (2026.5.9); current
+#   version is 2026.3.31` — the local openclaw was 6 weeks behind
+#   what install.ps1 expected, and `gateway start` refused to boot.
+Write-Log "Ensuring openclaw is up to date (npm install -g openclaw@latest)"
+npm install -g openclaw@latest --no-fund --no-audit 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warn "openclaw npm install returned non-zero; continuing — local copy may be stale"
 }
 
 # Write/repair openclaw config. Previously this only wrote when the file
@@ -330,9 +335,22 @@ if (Test-Path $ocConfig) {
 }
 $gwToken = if ($existingGwToken) { $existingGwToken } else { -join ((1..24) | ForEach-Object { '{0:x2}' -f (Get-Random -Min 0 -Max 256) }) }
 $nowIso = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+# Probe the actually-installed openclaw version. We used to hardcode
+# "2026.5.9" — openclaw refuses to load a config that claims a newer
+# version than itself ("Config was last written by a newer OpenClaw"),
+# so any user whose npm openclaw lagged behind that string was bricked.
+# Now we ask openclaw what it is and write that. Fallback "0.0.0" if
+# the probe fails — openclaw treats that as legacy/unknown which is
+# safer than a future version.
+$ocVer = "0.0.0"
+try {
+    $verRaw = (& openclaw --version 2>$null | Select-Object -First 1).ToString().Trim()
+    if ($verRaw -match '(\d+\.\d+\.\d+)') { $ocVer = $matches[1] }
+} catch {}
+Write-Log "OpenClaw version probed as: $ocVer"
 $ocJson = @"
 {
-  "meta": { "lastTouchedVersion": "2026.5.9", "lastTouchedAt": "$nowIso" },
+  "meta": { "lastTouchedVersion": "$ocVer", "lastTouchedAt": "$nowIso" },
   "wizard": { "lastRunAt": "$nowIso", "lastRunMode": "local", "lastRunCommand": "applyloop-install" },
   "browser": {
     "defaultProfile": "openclaw",
