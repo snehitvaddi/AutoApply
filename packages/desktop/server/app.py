@@ -1381,15 +1381,18 @@ async def get_heartbeat():
 async def get_profile():
     try:
         result = await stats.get_settings_profile()
-        # Surface the diagnostic fields stats.get_settings_profile()
-        # adds when the cloud proxy fails (token expired, user_id
-        # mismatch, network error). Without these the UI just
-        # shows a blank Settings page with no indication WHY.
         payload = {"ok": True, "data": result.get("data", {})}
+        # Network/auth failure path.
         if result.get("_sync_error"):
             payload["sync_error"] = result["_sync_error"]
             payload["sync_auth"] = result.get("_sync_auth")
-            payload["sync_user_id_hint"] = result.get("_sync_user_id_hint")
+        # Cloud reachable but no profile row for this user's id.
+        # Surfaces the actual email + user_id we synced as so the
+        # user/admin can spot a wrong-account activation in one glance.
+        if result.get("_profile_missing"):
+            payload["profile_missing"] = True
+            payload["synced_as_email"] = result.get("_synced_as_email")
+            payload["synced_as_user_id"] = result.get("_synced_as_user_id")
         return payload
     except Exception as e:
         return {"ok": False, "error": str(e)}

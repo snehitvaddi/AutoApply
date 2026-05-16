@@ -238,26 +238,36 @@ async def get_settings_profile() -> dict:
     result = await _proxy("load_profile")
 
     # Hard error path: proxy returned {"error": ...} or auth was revoked.
-    # Pass the error up so the UI + /api/profile response include it.
-    # Caller already wraps in {ok: True/False}; we add diagnostic fields.
     if result.get("error"):
         return {
-            "data": {"profile": {}},
+            "data": {"profile": {}, "user": {}},
             "_sync_error": result.get("error"),
             "_sync_auth": result.get("auth"),
-            "_sync_user_id_hint": _extract_user_id_from_token(),
         }
 
     data = result.get("data", {})
     profile = data.get("profile")
     user = data.get("user", {})
 
-    # Cloud returned successfully but profile row is genuinely missing
-    # (new user who hasn't filled anything yet). Build a stub from
-    # user.full_name + local PROFILE.md so the UI has SOMETHING to show
-    # rather than a completely blank form.
-    if not profile or not profile.get("first_name"):
+    # Cloud returned successfully but profile row is missing for this user.
+    # IMPORTANT: distinguish the two ambiguous cases:
+    #   A) Genuinely new user — never filled anything in. UI should
+    #      show empty form with a "fill in profile" prompt.
+    #   B) Wrong account — the worker token's user_id is Shreya-Test
+    #      but she actually filled the profile under Shreya-Real on
+    #      the cloud dashboard. UI should show "synced as X@gmail.com,
+    #      no profile data on this account — wrong code?" banner.
+    # Both cases produce an empty user_profiles row; we can only tell
+    # them apart by exposing the user.email/id that the worker token
+    # resolved to, and letting the user/admin compare to the dashboard
+    # account they THINK they used.
+    profile_was_missing = not profile or not profile.get("first_name")
+
+    if profile_was_missing:
         profile = profile or {}
+        # Synthesize a tiny stub from user.full_name + local PROFILE.md
+        # so the UI form is at least pre-filled with the name/email we
+        # know about.
         full_name = user.get("full_name", "")
         if full_name and not profile.get("first_name"):
             parts = full_name.strip().split(None, 1)
@@ -272,26 +282,20 @@ async def get_settings_profile() -> dict:
                 if value and not profile.get(key):
                     profile[key] = value
 
-    # Always include the user object so the UI knows WHICH user we
-    # synced as. Mismatch between "filled profile under account A on
-    # the dashboard" and "activation code was for account B" produces
-    # the empty-Settings symptom; exposing user_id + email here makes
-    # that diagnosable in one glance at devtools.
-    return {
+    payload: dict = {
         "data": {"profile": profile, "user": user},
     }
 
+    # Flag missing-profile-but-cloud-reachable for the UI. Combined with
+    # user.email in the response, the user can immediately tell whether
+    # "this is empty because my activation is tied to the wrong account"
+    # or "this is empty because I genuinely never filled it in."
+    if profile_was_missing and user.get("email"):
+        payload["_profile_missing"] = True
+        payload["_synced_as_email"] = user.get("email")
+        payload["_synced_as_user_id"] = user.get("id")
 
-def _extract_user_id_from_token() -> str | None:
-    """Best-effort: pull the user_id prefix from the worker token shape
-    'al_<8 hex>_<32 hex>'. Used purely for diagnostic exposure so the
-    UI/devtools can show 'token thinks I'm user X' next to 'cloud
-    profile is under user Y' when those disagree."""
-    token = load_token() or ""
-    parts = token.split("_")
-    if len(parts) >= 2 and parts[0] == "al":
-        return parts[1]
-    return None
+    return payload
 
 
 def _read_local_profile() -> dict:

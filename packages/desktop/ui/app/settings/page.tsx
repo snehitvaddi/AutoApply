@@ -251,7 +251,15 @@ export default function SettingsPage() {
   // the auth state and the local-token user-id-hint so we can spot the
   // "filled profile under account A but activated with code for account B"
   // mismatch in one glance.
-  const [syncError, setSyncError] = useState<{ message: string; auth?: string; tokenUserId?: string } | null>(null)
+  const [syncError, setSyncError] = useState<{ message: string; auth?: string } | null>(null)
+  // Separate from syncError: cloud is reachable, token is valid, but the
+  // user_profiles row for the activated user_id is empty. Means either
+  // (a) the user genuinely hasn't filled the profile yet, or (b) they
+  // filled it on the cloud dashboard under a DIFFERENT Google account
+  // than the activation code was issued to. Showing the synced-as email
+  // lets them spot (b) immediately — "wait, that's not the email I used
+  // to fill in the dashboard."
+  const [profileMissingInfo, setProfileMissingInfo] = useState<{ email?: string; userId?: string } | null>(null)
 
   // AI Import state
   const [aiResponse, setAiResponse] = useState("")
@@ -274,19 +282,24 @@ export default function SettingsPage() {
         listResumes(),
       ])
       if (profileRes.status === "fulfilled") {
-        // Surface the proxy sync error (token revoked, mismatched user_id,
-        // network failure) before processing the payload — these fields
-        // are added by stats.get_settings_profile() when the cloud call
-        // fails. Clear stale errors when a successful load happens.
         const root = profileRes.value as Record<string, unknown> ?? {}
+        // Path A: proxy/auth/network failure
         if (root?.sync_error) {
           setSyncError({
             message: String(root.sync_error),
             auth: root.sync_auth ? String(root.sync_auth) : undefined,
-            tokenUserId: root.sync_user_id_hint ? String(root.sync_user_id_hint) : undefined,
           })
         } else {
           setSyncError(null)
+        }
+        // Path B: cloud reachable but profile row empty for this user.
+        if (root?.profile_missing) {
+          setProfileMissingInfo({
+            email: root.synced_as_email ? String(root.synced_as_email) : undefined,
+            userId: root.synced_as_user_id ? String(root.synced_as_user_id) : undefined,
+          })
+        } else {
+          setProfileMissingInfo(null)
         }
         const raw = profileRes.value?.data as Record<string, unknown> ?? {}
         const nested = raw?.data as Record<string, unknown> ?? raw
@@ -683,17 +696,39 @@ export default function SettingsPage() {
             <div className="flex items-start gap-2">
               <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
-                <div className="font-medium">Cloud sync failed — Settings may be showing stale or empty data.</div>
+                <div className="font-medium">Cloud sync failed — Settings may be stale or empty.</div>
                 <div className="mt-1 text-xs opacity-90">
                   Reason: <span className="font-mono">{syncError.message}</span>
                   {syncError.auth && <> · auth state: <span className="font-mono">{syncError.auth}</span></>}
-                  {syncError.tokenUserId && <> · local token user_id starts with: <span className="font-mono">{syncError.tokenUserId}</span></>}
                 </div>
                 <div className="mt-2 text-xs">
-                  Most common causes: (1) activation code was issued for a different account than the one
-                  you filled the profile under on the dashboard, (2) the worker token was revoked by an admin,
-                  or (3) the network call to applyloop.vercel.app timed out. Try the <strong>Refresh</strong> button.
-                  If it persists, re-activate via the setup page with a fresh code.
+                  Try <strong>Refresh</strong>. If it persists, the worker token was revoked or expired —
+                  re-activate via the setup page with a fresh code.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {!syncError && profileMissingInfo && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="font-medium">
+                  Cloud is reachable, but no profile data exists for this account.
+                </div>
+                <div className="mt-1 text-xs opacity-90">
+                  Synced as: <span className="font-mono">{profileMissingInfo.email ?? "(no email)"}</span>
+                  {profileMissingInfo.userId && (
+                    <> · user_id: <span className="font-mono">{profileMissingInfo.userId.slice(0, 8)}…</span></>
+                  )}
+                </div>
+                <div className="mt-2 text-xs">
+                  If you filled in your profile on the cloud dashboard but it&apos;s not showing here,
+                  check that the email above matches the account you used. A common cause: the
+                  activation code was issued for a <strong>different Google account</strong> than the
+                  one you filled the profile under. Ask the admin to verify which user_id the
+                  activation code belongs to.
                 </div>
               </div>
             </div>
