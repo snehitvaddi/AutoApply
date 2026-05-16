@@ -57,6 +57,24 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
 }
 
+# ─── Native-command runner immune to PowerShell's stderr-is-fatal trap ─────
+# With $ErrorActionPreference = "Stop", PowerShell escalates ANY stderr
+# output from a native command (npm warnings, schtasks chatter, deprecation
+# notices) into a terminating exception — even when stderr is redirected
+# with 2>&1 | Out-Null. cmd /c bypasses this because the called process's
+# stderr stays inside cmd's process boundary and never crosses back into
+# PowerShell's error stream. Use this wrapper for any external CLI whose
+# stderr is chatty but non-fatal (npm, schtasks, winget warnings, etc.).
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory=$true)] [string]$Command,
+        [string]$Description = ""
+    )
+    if ($Description) { Write-Log $Description }
+    cmd /c $Command 2>$null | Out-Null
+    return $LASTEXITCODE
+}
+
 # ─── Constants ──────────────────────────────────────────────────────────────
 $AppUrl         = if ($env:NEXT_PUBLIC_APP_URL) { $env:NEXT_PUBLIC_APP_URL } else { "https://applyloop.vercel.app" }
 $ApplyloopHome  = if ($env:APPLYLOOP_HOME) { $env:APPLYLOOP_HOME } else { Join-Path $env:USERPROFILE ".applyloop" }
@@ -259,8 +277,10 @@ function Ensure-WingetPackage($id, $friendly) {
         Write-Log "  $friendly already installed"
         return
     }
-    winget install -e --id $id --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    # winget can be chatty on stderr (progress bars, license prompts)
+    # — same Invoke-Native pattern for the same reason.
+    $rc = Invoke-Native "winget install -e --id $id --silent --accept-package-agreements --accept-source-agreements"
+    if ($rc -ne 0) {
         Write-Warn "$friendly install via winget reported non-zero exit; verifying..."
     }
 }
@@ -281,32 +301,33 @@ foreach ($tool in @("python", "node", "npm", "git")) {
 }
 
 # Claude Code (via npm — the "claude" Homebrew formula is unrelated and
-# wouldn't apply on Windows anyway)
+# wouldn't apply on Windows anyway). All npm calls routed through
+# Invoke-Native so deprecation warnings don't blow up the script.
 if (Test-Cmd "claude") {
     $claudeVer = & claude --version 2>&1 | Out-String
     if ($claudeVer -match 'anthropic|claude code') {
         Write-Log "claude already installed (Anthropic Claude Code)"
     } else {
-        Write-Log "Replacing non-Anthropic claude with Claude Code"
-        npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
+        Invoke-Native "npm install -g @anthropic-ai/claude-code" "Replacing non-Anthropic claude with Claude Code" | Out-Null
     }
 } else {
-    Write-Log "Installing Claude Code via npm"
-    npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
+    Invoke-Native "npm install -g @anthropic-ai/claude-code" "Installing Claude Code via npm" | Out-Null
 }
 
 # OpenClaw (browser automation backbone, also via npm). Always run
 # `npm install -g openclaw@latest` — even if a version is already
 # present. Previously this short-circuited on any prior install, which
 # stranded users on stale openclaw versions whose config schema didn't
-# match what install.ps1 was writing. Repro on Shreya's machine:
-#   `Config was last written by a newer OpenClaw (2026.5.9); current
-#   version is 2026.3.31` — the local openclaw was 6 weeks behind
-#   what install.ps1 expected, and `gateway start` refused to boot.
-Write-Log "Ensuring openclaw is up to date (npm install -g openclaw@latest)"
-npm install -g openclaw@latest --no-fund --no-audit 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Warn "openclaw npm install returned non-zero; continuing — local copy may be stale"
+# match what install.ps1 was writing.
+#
+# Routed through Invoke-Native (cmd /c subshell) so npm's deprecation
+# warnings (e.g. "npm warn deprecated node-domexception@1.0.0") don't
+# escalate to a terminating PowerShell error via the stderr-is-fatal
+# trap under $ErrorActionPreference=Stop. That escalation aborted the
+# whole install on Shreya's machine even though npm itself succeeded.
+$rc = Invoke-Native "npm install -g openclaw@latest --no-fund --no-audit" "Ensuring openclaw is up to date (npm install -g openclaw@latest)"
+if ($rc -ne 0) {
+    Write-Warn "openclaw npm install returned exit $rc; continuing — local copy may be stale"
 }
 
 # Write/repair openclaw config. Previously this only wrote when the file
@@ -366,11 +387,11 @@ $ocJson = @"
 Write-Log "Writing $ocConfig (force-rewrite to include required fields)"
 Write-Utf8NoBom -Path $ocConfig -Content $ocJson
 
-# Start the gateway and verify it actually bound. Without the verify step
-# we used to silently skip on errors and leave the user with a "gateway
-# status check timed out" warning row in the desktop preflight.
-Write-Log "Starting openclaw gateway..."
-& openclaw gateway start 2>&1 | Out-Null
+# Start the gateway and verify it actually bound. Routed through
+# Invoke-Native (cmd /c) so any startup chatter on stderr — npm/node
+# warnings, OpenClaw's own info messages — doesn't escalate to a
+# terminating PowerShell error under $ErrorActionPreference=Stop.
+Invoke-Native "openclaw gateway start" "Starting openclaw gateway..." | Out-Null
 Start-Sleep -Seconds 2
 # Probe — the gateway listens on the port we just wrote.
 $gwUp = $false
