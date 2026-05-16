@@ -273,7 +273,7 @@ def build_windows_exe():
     (stage / "main.py").write_text(f"""\
 #!/usr/bin/env python3
 \"\"\"ApplyLoop Desktop -- Windows entry point.\"\"\"
-import sys, os, webbrowser, threading, time, traceback, datetime
+import sys, os, webbrowser, threading, time, traceback, datetime, atexit, signal
 
 # Force UTF-8 on stdout/stderr if the runtime supports it (3.7+).
 # Without this, a frozen .exe with redirected stdout falls back to
@@ -351,6 +351,40 @@ def _hold_console_on_error() -> None:
         except Exception:
             time.sleep(30)
 
+def _kill_self_tree() -> None:
+    \"\"\"Walk the process tree rooted at this PID and SIGKILL everything.
+    Used by ALL shutdown paths (pywebview close, console-window close,
+    Ctrl+C, atexit, browser-fallback Ctrl+C) so closing the app always
+    means closing the worker + openclaw + claude PTY + jiggler too.
+
+    Without this, the browser-fallback path stranded uvicorn + every
+    child after the user closed their Chrome tab — the .exe console had
+    to be hunted down and X'd in Task Manager. Same for users who close
+    the console window instead of using a kill signal.\"\"\"
+    try:
+        import subprocess as _subp
+        _subp.run(
+            ["taskkill", "/F", "/T", "/PID", str(os.getpid())],
+            capture_output=True, timeout=3,
+        )
+    except Exception:
+        pass
+
+def _install_shutdown_hooks() -> None:
+    \"\"\"Register atexit + Ctrl-C/Ctrl-Break handlers so the .exe cleans
+    up its process tree no matter HOW it exits. taskkill is idempotent;
+    calling it multiple times is fine.\"\"\"
+    atexit.register(_kill_self_tree)
+    def _sig_cleanup(signum, frame):  # noqa: ARG001
+        _kill_self_tree()
+        os._exit(0)
+    for _sig_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        if hasattr(signal, _sig_name):
+            try:
+                signal.signal(getattr(signal, _sig_name), _sig_cleanup)
+            except Exception:
+                pass
+
 def _probe_localhost(port: int, timeout_s: float = 0.5) -> bool:
     import socket as _socket
     s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
@@ -372,6 +406,13 @@ if __name__ == "__main__":
     print(f"  Starting on http://127.0.0.1:{{PORT}}")
     print("  Press Ctrl+C to stop.")
     print()
+
+    # Install shutdown hooks BEFORE starting any threads. Closing the
+    # window (pywebview path), closing the browser tab (browser-fallback
+    # path), closing the console window (X button), Ctrl+C — all funnel
+    # through _kill_self_tree which taskkills the whole process tree.
+    # No more orphan uvicorn / openclaw after the user "closes" the app.
+    _install_shutdown_hooks()
 
     # Run uvicorn in a background thread so the main thread can drive a
     # native window (pywebview / Edge WebView2). Without this, uvicorn.run()
@@ -452,16 +493,11 @@ if __name__ == "__main__":
 
         def _on_closed():
             # Closing the native window means the user wants the app
-            # gone. taskkill /T /F walks the process tree so worker.py
-            # + Claude PTY + jiggler + caffeinate analogs all die.
-            try:
-                import subprocess as _subp
-                _subp.run(
-                    ["taskkill", "/F", "/T", "/PID", str(os.getpid())],
-                    capture_output=True, timeout=3,
-                )
-            except Exception:
-                pass
+            # gone. _kill_self_tree taskkills the whole tree so worker.py
+            # + Claude PTY + jiggler + openclaw all die together. Same
+            # helper used by atexit + signal handlers so all shutdown
+            # paths converge on identical cleanup.
+            _kill_self_tree()
             os._exit(0)
 
         _window.events.closed += _on_closed
@@ -478,6 +514,12 @@ if __name__ == "__main__":
         print(f"[applyloop] Native window unavailable: {{_gui_err}}")
         print(f"[applyloop] Full traceback:\\n{{_gui_tb}}")
         print(f"[applyloop] Opening browser fallback instead.")
+        print()
+        print(f"[applyloop] >>> To stop ApplyLoop in browser-fallback mode:")
+        print(f"[applyloop] >>>   Close THIS console window (X in the corner)")
+        print(f"[applyloop] >>>   OR press Ctrl+C here. Closing the Chrome tab")
+        print(f"[applyloop] >>>   alone does not stop the worker.")
+        print()
         _write_crash(f"pywebview unavailable, fell back to browser: {{_gui_err}}\\n{{_gui_tb}}")
         try:
             webbrowser.open(_url)
