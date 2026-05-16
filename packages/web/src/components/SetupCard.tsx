@@ -110,12 +110,21 @@ export function SetupCard({ variant = "inline" }: { variant?: "standalone" | "in
     }
   }
 
-  // install.sh / install.ps1 v1.0.9+ require the activation code up front
+  // install.sh / install.ps1 v1.0.9+ require the activation code up front.
+  //
+  // Cache-bust the GitHub raw URL. raw.githubusercontent.com sits behind
+  // a Fastly CDN with multi-minute TTLs; users running the install moments
+  // after a fix is pushed routinely get the previous version of the script
+  // back, which has caused multiple "I reinstalled and it's still broken"
+  // reports. Appending a per-render random query string defeats the cache
+  // without affecting the script contents (GitHub raw ignores unknown
+  // query params). Regenerated each time the SetupCard mounts.
   const userCode = activation?.code || "AL-XXXX-XXXX";
+  const cacheBust = Math.random().toString(36).slice(2, 10);
   const installCmd =
-    `curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash -s -- ${userCode}`;
+    `curl -fsSL "https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh?cb=${cacheBust}" | bash -s -- ${userCode}`;
   const installCmdWin =
-    `$env:APPLYLOOP_CODE = "${userCode}"; irm https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.ps1 | iex`;
+    `$env:APPLYLOOP_CODE = "${userCode}"; irm "https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.ps1?cb=${cacheBust}" | iex`;
 
   return (
     <div className="space-y-6">
