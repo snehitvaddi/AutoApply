@@ -352,6 +352,11 @@ def _get_local_conn() -> sqlite3.Connection:
     except sqlite3.Error:
         pass
     _ensure_local_schema(conn)
+    # Cleanup BEFORE merge: it collapses pre-existing duplicate rows and
+    # backfills synthesized tokens onto the survivors, so the merge that
+    # follows collides on those tokens (INSERT OR IGNORE) instead of
+    # re-inserting the legacy originals.
+    _cleanup_duplicate_rows(conn)
     _merge_legacy_db(conn)
     return conn
 
@@ -593,16 +598,142 @@ def cleanup_stale_queued_shadows() -> int:
         return 0
 
 
+# Marker for the one-time duplicate-row cleanup. Lives next to the DB
+# so it's per-database; bump the vN suffix if a future cleanup pass is
+# ever needed.
+_LEGACY_DEDUP_MARKER = os.path.join(
+    os.path.dirname(LOCAL_DB_PATH), ".legacy-dedup-v1.done"
+)
+
+
+def _synth_token_sql(available: set[str]) -> str:
+    """SQL expression that builds a deterministic dedup_token from a
+    row's content, for legacy rows that have none.
+
+    Why this exists: dedup_token is a UNIQUE column, and INSERT OR
+    IGNORE relies on it to skip already-imported rows. But SQLite
+    treats every NULL as distinct from every other NULL in a UNIQUE
+    column — so a legacy row with dedup_token IS NULL is NEVER seen as
+    a duplicate, and the legacy merge re-inserts it on every worker
+    restart. Synthesizing a content-derived token makes the same
+    legacy row hash identically every time (restoring idempotency)
+    while two genuinely distinct applications still differ.
+
+    Built from (company, role, status, applied_at, url) — enough that
+    two real applications to the same role at different times or URLs
+    stay distinct. `available` filters to columns the source table
+    actually has, so an old legacy schema missing `url`/`applied_at`
+    still produces a valid expression.
+    """
+    parts = [
+        c for c in ("company", "role", "status", "applied_at", "url")
+        if c in available
+    ]
+    pieces = " || '|' || ".join(f"LOWER(COALESCE({c},''))" for c in parts)
+    return f"'legacy|' || {pieces}"
+
+
+def _cleanup_duplicate_rows(conn: sqlite3.Connection) -> None:
+    """One-time repair of DBs already corrupted by the NULL-dedup_token
+    re-import bug (see _synth_token_sql / _merge_legacy_db).
+
+    Some clients accumulated ~50× copies of the same application
+    because every worker restart re-ran the legacy merge and NULL
+    tokens never collided. This collapses content-identical NULL/empty-
+    token rows down to one, then backfills the survivor with the same
+    synthesized token the merge now uses — so a future re-import
+    collides on the UNIQUE index and is skipped.
+
+    Safety: guarded by an on-disk marker so it runs exactly once; backs
+    up the DB file before any destructive change; only ever touches
+    rows whose dedup_token IS NULL/'' (rows with a real token can't
+    have duplicates — the UNIQUE constraint already enforced it).
+    """
+    if os.path.exists(_LEGACY_DEDUP_MARKER):
+        return
+
+    def _set_marker():
+        try:
+            with open(_LEGACY_DEDUP_MARKER, "w") as f:
+                f.write(datetime.now(timezone.utc).isoformat())
+        except OSError:
+            pass
+
+    try:
+        nulls = conn.execute(
+            "SELECT COUNT(*) FROM applications "
+            "WHERE dedup_token IS NULL OR dedup_token = ''"
+        ).fetchone()[0]
+        if nulls == 0:
+            # Healthy DB — nothing to clean. Mark done so we never
+            # re-scan on subsequent boots.
+            _set_marker()
+            return
+
+        # Back up the DB file before touching anything. Checkpoint the
+        # WAL first so the copied .db file is self-contained.
+        import shutil
+        try:
+            conn.execute("PRAGMA wal_checkpoint(FULL)")
+        except sqlite3.Error:
+            pass
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        backup = f"{LOCAL_DB_PATH}.bak.dedup-{ts}"
+        try:
+            shutil.copy2(LOCAL_DB_PATH, backup)
+        except Exception as e:
+            logger.warning(
+                f"DB dedup cleanup: backup failed ({e}) — skipping cleanup to be safe"
+            )
+            return
+
+        synth = _synth_token_sql({"company", "role", "status", "applied_at", "url"})
+        before = conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0]
+        # Collapse content-identical NULL/empty-token rows: keep the
+        # lowest id in each group, delete the rest.
+        conn.execute(f"""
+            DELETE FROM applications
+            WHERE (dedup_token IS NULL OR dedup_token = '')
+              AND id NOT IN (
+                  SELECT MIN(id) FROM applications
+                  WHERE (dedup_token IS NULL OR dedup_token = '')
+                  GROUP BY {synth}
+              )
+        """)
+        # Backfill survivors with the synthesized token. After the
+        # DELETE each group has exactly one row, so no UNIQUE clash;
+        # the 'legacy|' prefix keeps it clear of real apply-path tokens.
+        conn.execute(f"""
+            UPDATE applications SET dedup_token = {synth}
+            WHERE dedup_token IS NULL OR dedup_token = ''
+        """)
+        conn.commit()
+        after = conn.execute("SELECT COUNT(*) FROM applications").fetchone()[0]
+        logger.info(
+            f"DB dedup cleanup: {before} → {after} rows "
+            f"({before - after} duplicate legacy rows removed). Backup at {backup}"
+        )
+        _set_marker()
+    except Exception as e:
+        logger.warning(f"DB dedup cleanup failed (non-fatal, applies continue): {e}")
+
+
 def _merge_legacy_db(conn: sqlite3.Connection) -> int:
     """One-time import from the legacy applyloop.db into the active DB.
 
     Uses ATTACH DATABASE so only columns common to both schemas are
     copied — handles the case where the legacy file pre-dates the
-    `attempts`/`max_attempts` columns. INSERT OR IGNORE on the
-    dedup_token UNIQUE index means this is fully idempotent: safe to
-    call on every boot, rows already present are silently skipped.
+    `attempts`/`max_attempts` columns.
 
-    This fixes the Airwallex-style re-application bug: if submitted
+    Idempotency depends entirely on every imported row having a
+    non-NULL dedup_token: INSERT OR IGNORE skips a row only when its
+    token collides with an existing one, and SQLite never treats two
+    NULLs as colliding. So we COALESCE a synthesized content token onto
+    any row whose legacy dedup_token is NULL/'' (or whose legacy schema
+    lacks the column entirely). Before this, NULL-token legacy rows
+    were re-inserted on every worker restart — see _cleanup_duplicate_rows.
+
+    This also fixes the Airwallex-style re-application bug: if submitted
     records lived only in the old file, the dedup check would miss them
     and the worker would reapply to the same role every session.
     """
@@ -622,10 +753,24 @@ def _merge_legacy_db(conn: sqlite3.Connection) -> int:
         dst_cols = {r[1] for r in conn.execute("PRAGMA table_info(applications)").fetchall()}
         # Exclude `id` — it's autoincrement and must not be copied.
         common = [c for c in src_cols if c in dst_cols and c != "id"]
-        col_list = ", ".join(common)
+        synth = _synth_token_sql(src_cols)
+        if "dedup_token" in common:
+            insert_cols = common
+            select_exprs = [
+                (f"COALESCE(NULLIF(dedup_token,''), {synth})"
+                 if c == "dedup_token" else c)
+                for c in common
+            ]
+        else:
+            # Legacy file predates the dedup_token column — synthesize
+            # one for every imported row so the UNIQUE index can dedup.
+            insert_cols = common + ["dedup_token"]
+            select_exprs = list(common) + [synth]
+        col_list = ", ".join(insert_cols)
+        sel_list = ", ".join(select_exprs)
         result = conn.execute(
             f"INSERT OR IGNORE INTO applications ({col_list}) "
-            f"SELECT {col_list} FROM _legacy.applications"
+            f"SELECT {sel_list} FROM _legacy.applications"
         )
         merged = result.rowcount
         conn.commit()
