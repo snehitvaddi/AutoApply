@@ -189,6 +189,30 @@ cmd_update() {
   APPLYLOOP_HOME="$APPLYLOOP_HOME" APPLYLOOP_APP="$APPLYLOOP_APP" \
     bash "$APPLYLOOP_HOME/packages/desktop/scripts/build_local_app.sh"
 
+  # Refresh the CLI symlinks. The installer drops `applyloop` into
+  # ~/.local/bin AND (since the brew-bin fix) into the Homebrew bin so
+  # it's reliably on PATH. But a user who installed before that fix
+  # only has the ~/.local/bin link — and if ~/.local/bin isn't on
+  # their PATH, plain `applyloop` keeps failing forever because
+  # `update` itself never re-linked. Re-create both links here so one
+  # `~/.local/bin/applyloop update` is enough to make plain
+  # `applyloop` work afterward.
+  local shim_src="$APPLYLOOP_HOME/packages/desktop/scripts/applyloop"
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$shim_src" "$HOME/.local/bin/applyloop"
+  local brew_bin=""
+  if command -v brew >/dev/null 2>&1; then
+    brew_bin="$(brew --prefix 2>/dev/null)/bin"
+  elif [[ -x /opt/homebrew/bin/brew ]]; then
+    brew_bin="/opt/homebrew/bin"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    brew_bin="/usr/local/bin"
+  fi
+  if [[ -n "$brew_bin" && -d "$brew_bin" && -w "$brew_bin" ]]; then
+    ln -sf "$shim_src" "$brew_bin/applyloop"
+    log "Refreshed applyloop CLI symlink in $brew_bin"
+  fi
+
   cmd_stop || true
 
   git -C "$APPLYLOOP_HOME" rev-parse HEAD > "$APPLYLOOP_HOME/.applyloop-version"

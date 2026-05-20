@@ -1335,9 +1335,32 @@ bash "$APPLYLOOP_HOME/packages/desktop/scripts/build_local_app.sh"
 
 # ------------------------------------------------------------------ CLI shim symlink
 
+SHIM_SRC="$APPLYLOOP_HOME/packages/desktop/scripts/applyloop"
+chmod +x "$SHIM_SRC" 2>/dev/null || true
+
 mkdir -p "$HOME/.local/bin"
-ln -sf "$APPLYLOOP_HOME/packages/desktop/scripts/applyloop" "$HOME/.local/bin/applyloop"
-chmod +x "$APPLYLOOP_HOME/packages/desktop/scripts/applyloop" 2>/dev/null || true
+ln -sf "$SHIM_SRC" "$HOME/.local/bin/applyloop"
+
+# ~/.local/bin is NOT on macOS zsh's default PATH, so we also patch the
+# rc files below — but rc patching is fragile (older installs missed
+# it; users who never open a fresh terminal don't pick it up). The
+# durable fix: also drop the shim into Homebrew's bin, which IS always
+# on PATH for anyone who has brew. ApplyLoop requires brew anyway
+# (openclaw/node come through it), so this dir reliably exists and is
+# user-owned — no sudo needed. This is what makes `applyloop` resolve
+# even when the rc patch silently failed to apply.
+BREW_BIN=""
+if command -v brew >/dev/null 2>&1; then
+  BREW_BIN="$(brew --prefix 2>/dev/null)/bin"
+elif [[ -x /opt/homebrew/bin/brew ]]; then
+  BREW_BIN="/opt/homebrew/bin"
+elif [[ -x /usr/local/bin/brew ]]; then
+  BREW_BIN="/usr/local/bin"
+fi
+if [[ -n "$BREW_BIN" && -d "$BREW_BIN" && -w "$BREW_BIN" ]]; then
+  ln -sf "$SHIM_SRC" "$BREW_BIN/applyloop"
+  log "Linked applyloop CLI into $BREW_BIN (always on PATH)"
+fi
 
 # Ensure ~/.local/bin is on PATH for future shells. macOS zsh and many
 # Linux shells don't include it by default, so a fresh-install user
