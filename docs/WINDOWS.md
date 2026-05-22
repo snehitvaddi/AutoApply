@@ -65,6 +65,37 @@ This runs `git fetch` + `git reset --hard origin/main` in the install
 directory and re-runs `pip install -r requirements.txt` if anything
 changed. The Task Scheduler entry runs this daily at 3 AM.
 
+## Command-line mode (`applyloop run`)
+
+Prefer working in a terminal over the desktop window? Run:
+
+```powershell
+applyloop run
+```
+
+This boots the **same** ApplyLoop stack the app uses — the local
+server, the OpenClaw browser gateway, the worker, and the PTY Claude
+Code session — but instead of opening a WebView2 window it bridges the
+Claude Code session straight into your PowerShell window. You chat with
+Claude Code directly in the terminal; it scouts, filters, and applies
+exactly as it does in the app, driving OpenClaw and all the same MCP
+tooling internally.
+
+- The dashboard still runs — open `http://localhost:18790` in a browser
+  any time while `applyloop run` is active.
+- The 30-minute watchdog and 15-minute heartbeat run as usual, so the
+  loop keeps going overnight as long as the terminal stays open.
+- Press **Ctrl+]** to quit. If `applyloop run` started the server, that
+  shuts the whole stack down cleanly. If you instead attached to a
+  server that was already up (the desktop app, or an earlier
+  `applyloop run`), Ctrl+] just detaches and leaves it running — stop
+  it with `applyloop stop` or reattach with `applyloop run`.
+
+The desktop app (`applyloop start`) and the CLI (`applyloop run`) share
+one server, so it is safe to use either — or both — interchangeably.
+`applyloop run` requires Windows 10 build 1809 or later (same baseline
+as the ConPTY backend).
+
 ## Uninstall
 
 ```powershell
@@ -99,6 +130,32 @@ The installer adds `%LOCALAPPDATA%\Programs\ApplyLoop` to your user PATH
 via `[System.Environment]::SetEnvironmentVariable`. Existing windows
 don't pick this up — open a brand-new PowerShell or restart your
 terminal.
+
+### Double-clicking ApplyLoop opens nothing or only a console
+
+First check the desktop launcher log:
+
+```powershell
+applyloop logs
+```
+
+If the `applyloop` command is not on PATH yet, open the log directly:
+
+```powershell
+Get-Content "$env:USERPROFILE\.autoapply\desktop.log" -Tail 100 -Wait
+```
+
+Then rebuild the local `.exe` from the latest installer code:
+
+```powershell
+applyloop update
+applyloop start
+```
+
+The Windows `.exe` runs a local uvicorn server at
+`http://127.0.0.1:18790` and then opens a native WebView2 window. If the
+native window backend fails, the launcher writes the traceback to
+`%USERPROFILE%\.autoapply\desktop.log` and falls back to the browser.
 
 ### `winget` not found
 

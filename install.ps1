@@ -139,6 +139,14 @@ if /I "%~1" == "logs" (
     powershell.exe -NoProfile -Command "Get-Content '%USERPROFILE%\.autoapply\desktop.log' -Tail 100 -Wait"
     exit /b 0
 )
+if /I "%~1" == "run" (
+    REM Terminal CLI — chat with Claude Code right here, no app window.
+    REM Runs launch.py via the venv python so it's a real console process
+    REM attached to this PowerShell/cmd window (the .exe is windowed and
+    REM can't bridge a terminal).
+    "$ApplyloopHome\venv\Scripts\python.exe" "$ApplyloopHome\packages\desktop\launch.py" run
+    exit /b %ERRORLEVEL%
+)
 if /I "%~1" == "help"   goto :usage
 if /I "%~1" == "-h"     goto :usage
 if /I "%~1" == "--help" goto :usage
@@ -156,6 +164,7 @@ echo.
 echo Usage: applyloop ^<command^>
 echo.
 echo   start         Launch the desktop app (default if no command)
+echo   run           Chat with Claude Code in this terminal (no app window)
 echo   stop          Kill any running ApplyLoop.exe
 echo   status        Check /api/health
 echo   logs          Tail ~/.autoapply/desktop.log

@@ -59,6 +59,10 @@ jobs:
       - name: Install Python deps
         run: pip install -r packages/desktop/requirements.txt
 
+      - name: CLI bridge tests (`applyloop run` — full PTY E2E)
+        working-directory: packages/desktop
+        run: python3 -m unittest tests.test_cli_bridge -v
+
       - name: Build UI + .dmg
         working-directory: packages/desktop
         run: python3 build.py --mac
@@ -211,6 +215,10 @@ jobs:
       - name: PTY spawn-and-read smoke test (ConPTY)
         working-directory: packages/desktop
         run: python -m unittest tests.test_pty_windows -v
+
+      - name: CLI bridge tests (`applyloop run` helpers + no-server path)
+        working-directory: packages/desktop
+        run: python -m unittest tests.test_cli_bridge -v
 
       - name: Run worker tenant tests
         working-directory: packages/worker
