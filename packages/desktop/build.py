@@ -337,6 +337,25 @@ class _Tee:
         except Exception:
             pass
 
+    def isatty(self):
+        # uvicorn's DefaultFormatter.should_use_colors() calls
+        # sys.stderr.isatty() at logging-config time. If we don't
+        # implement this, dictConfig wraps the AttributeError as
+        # ValueError("Unable to configure formatter 'default'") and the
+        # whole .exe fails to start with no useful trace. Tee writes to
+        # a file too, so "not a tty" is the honest answer.
+        return False
+
+    def __getattr__(self, name):
+        # Forward any other file-like attribute uvicorn / logging might
+        # probe (fileno, closed, writable, mode, name, ...) to the
+        # underlying stream. Without this, frozen-build logging setup is
+        # fragile to changes in stdlib internals.
+        original = object.__getattribute__(self, "_original")
+        if original is None:
+            raise AttributeError(name)
+        return getattr(original, name)
+
 def _install_desktop_log_tee() -> None:
     try:
         sys.stdout = _Tee(sys.stdout, _DESKTOP_LOG)
