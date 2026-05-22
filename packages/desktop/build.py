@@ -294,6 +294,7 @@ _CRASH_LOG = os.path.join(
     ".autoapply", "applyloop-crash.log",
 )
 os.makedirs(os.path.dirname(_CRASH_LOG), exist_ok=True)
+_DESKTOP_LOG = os.path.join(os.path.dirname(_CRASH_LOG), "desktop.log")
 
 def _write_crash(msg: str) -> None:
     try:
@@ -303,7 +304,110 @@ def _write_crash(msg: str) -> None:
     except Exception:
         pass
 
+def _append_desktop_log(msg: str) -> None:
+    try:
+        with open(_DESKTOP_LOG, "a", encoding="utf-8", errors="replace") as f:
+            ts = datetime.datetime.now().isoformat(timespec="seconds")
+            f.write(f"[{{ts}}] {{msg}}\\n")
+    except Exception:
+        pass
+
+class _Tee:
+    def __init__(self, original, path):
+        self._original = original
+        self._path = path
+        self.encoding = getattr(original, "encoding", "utf-8")
+        self.errors = getattr(original, "errors", "replace")
+
+    def write(self, data):
+        try:
+            self._original.write(data)
+        except Exception:
+            pass
+        try:
+            with open(self._path, "a", encoding="utf-8", errors="replace") as f:
+                f.write(data)
+        except Exception:
+            pass
+        return len(data)
+
+    def flush(self):
+        try:
+            self._original.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        # uvicorn's DefaultFormatter.should_use_colors() calls
+        # sys.stderr.isatty() at logging-config time. If we don't
+        # implement this, dictConfig wraps the AttributeError as
+        # ValueError("Unable to configure formatter 'default'") and the
+        # whole .exe fails to start with no useful trace. Tee writes to
+        # a file too, so "not a tty" is the honest answer.
+        return False
+
+    def __getattr__(self, name):
+        # Forward any other file-like attribute uvicorn / logging might
+        # probe (fileno, closed, writable, mode, name, ...) to the
+        # underlying stream. Without this, frozen-build logging setup is
+        # fragile to changes in stdlib internals.
+        original = object.__getattribute__(self, "_original")
+        if original is None:
+            raise AttributeError(name)
+        return getattr(original, name)
+
+def _install_desktop_log_tee() -> None:
+    try:
+        sys.stdout = _Tee(sys.stdout, _DESKTOP_LOG)
+        sys.stderr = _Tee(sys.stderr, _DESKTOP_LOG)
+        _append_desktop_log("launcher starting")
+    except Exception:
+        pass
+
+def _default_applyloop_home() -> str:
+    return os.path.join(
+        os.environ.get("USERPROFILE") or os.path.expanduser("~"),
+        ".applyloop",
+    )
+
+def _load_env_file(path: str) -> None:
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if not key:
+                    continue
+                value = value.strip().strip('"').strip("'")
+                os.environ.setdefault(key, value)
+    except FileNotFoundError:
+        _append_desktop_log(f"env file missing: {{path}}")
+    except Exception as exc:
+        _append_desktop_log(f"env file load failed: {{path}}: {{exc}}")
+
+def _bootstrap_runtime_env() -> None:
+    # Double-clicked PyInstaller processes do not inherit the install-time
+    # PowerShell variables. Load the generated .env before importing server.app.
+    os.environ.setdefault("APPLYLOOP_HOME", _default_applyloop_home())
+    _load_env_file(os.path.join(os.environ["APPLYLOOP_HOME"], ".env"))
+    os.environ.setdefault(
+        "APPLYLOOP_WORKSPACE",
+        os.path.join(
+            os.environ.get("USERPROFILE") or os.path.expanduser("~"),
+            ".autoapply", "workspace",
+        ),
+    )
+    os.environ.setdefault(
+        "APPLYLOOP_DB",
+        os.path.join(os.environ["APPLYLOOP_WORKSPACE"], "applications.db"),
+    )
+
 # Ensure we can import the server package
+_install_desktop_log_tee()
+_bootstrap_runtime_env()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("APPLYLOOP_PORT", "18790")
 PORT = int(os.environ["APPLYLOOP_PORT"])

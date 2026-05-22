@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ApplyLoop Desktop — Native window launcher using pywebview.
+ApplyLoop Desktop — launcher for the native window AND the terminal CLI.
 
 Architecture:
   - FastAPI serves the static UI + API + WebSocket on localhost:18790
@@ -8,11 +8,18 @@ Architecture:
   - Window shows in Dock, closing it stops everything
   - Falls back to browser if pywebview isn't available
 
+CLI mode (`python launch.py run`, exposed as `applyloop run`):
+  - Same FastAPI server, same browser gateway + worker + PTY Claude.
+  - Instead of a pywebview window, the PTY is bridged straight to this
+    terminal via cli_terminal.py — chat with Claude Code in the shell,
+    no app window. The dashboard is still reachable at localhost:18790.
+
 Environment variables (all optional):
   APPLYLOOP_HOST       FastAPI bind host (default 127.0.0.1)
   APPLYLOOP_PORT       FastAPI port (default 18790)
   APPLYLOOP_WORKSPACE  Per-user isolated workspace dir (default ~/.autoapply/workspace)
   APPLYLOOP_HEADLESS   "1"/"true"/"yes" to skip pywebview (for CI + multi-tenant tests)
+  APPLYLOOP_CLI        "1"/"true"/"yes" to run the terminal CLI (same as `run` arg)
 """
 from __future__ import annotations
 
@@ -33,6 +40,14 @@ PORT = int(os.environ.get("APPLYLOOP_PORT", "18790"))
 # and let the user hit the FastAPI server directly. Setting APPLYLOOP_HEADLESS=1
 # (or running without a GUI) avoids a pywebview crash spiral on dev machines.
 HEADLESS = os.environ.get("APPLYLOOP_HEADLESS", "").lower() in ("1", "true", "yes")
+
+# CLI mode — `applyloop run`. Boots the same full server (gateway + worker
+# + PTY Claude + dashboard) but bridges the PTY to this terminal instead
+# of opening a pywebview window. Triggered by the `run` argv or the env var.
+CLI_MODE = (
+    (len(sys.argv) > 1 and sys.argv[1] in ("run", "cli"))
+    or os.environ.get("APPLYLOOP_CLI", "").lower() in ("1", "true", "yes")
+)
 
 
 def _resolve_workspace() -> Path:
@@ -140,6 +155,38 @@ def _kill_child_pidfiles() -> None:
             pass
 
 
+def _kill_all_children() -> None:
+    """Kill every child process (worker.py, claude, jiggler, caffeinate, the
+    browser gateway) so quitting never leaves orphans applying to jobs in a
+    browser the user can't see. Used by the signal handler, the pywebview
+    on-close hook, and the CLI bridge's shutdown path."""
+    try:
+        import subprocess
+        my_pid = os.getpid()
+        if sys.platform == "win32":
+            # taskkill /T walks the full process tree rooted at our PID.
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(my_pid)],
+                capture_output=True, timeout=3,
+            )
+        else:
+            subprocess.run(
+                ["pkill", "-TERM", "-P", str(my_pid)],
+                capture_output=True, timeout=3,
+            )
+            for pattern in (
+                "worker.py", "jiggler.sh", "caffeinate -dis",
+                "nonstop-24h", "forever.sh", "openclaw/agents/job-bot",
+            ):
+                subprocess.run(
+                    ["pkill", "-TERM", "-f", pattern],
+                    capture_output=True, timeout=2,
+                )
+        _kill_child_pidfiles()
+    except Exception:
+        pass
+
+
 def _install_shutdown_handlers() -> None:
     """Write $WORKSPACE/shutdown.ok on SIGTERM/SIGINT so CI can wait on the
     marker to confirm a clean stop. Without this the daemon server thread
@@ -157,42 +204,20 @@ def _install_shutdown_handlers() -> None:
         print(f"[ApplyLoop] received signal {signum}, killing children + shutting down")
         # Kill all children before exit so we don't leave worker.py /
         # claude / jiggler orphans running in the background.
-        try:
-            import subprocess
-            if sys.platform == "win32":
-                # taskkill /T kills the whole process tree rooted at our
-                # PID — covers everything spawned via subprocess. Windows
-                # has no easy cmdline-pattern kill, so we rely on the tree
-                # walk plus a final jiggler.ps1 taskkill by image name.
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(os.getpid())],
-                    capture_output=True, timeout=3,
-                )
-            else:
-                subprocess.run(
-                    ["pkill", "-TERM", "-P", str(os.getpid())],
-                    capture_output=True, timeout=3,
-                )
-                for pattern in (
-                    "worker.py", "jiggler.sh", "caffeinate -dis",
-                    # Legacy pre-v1.0 scripts (OpenClaw-era forever loops).
-                    # These keep hitting LinkedIn in the background if not
-                    # killed — kill any that survived a reinstall.
-                    "nonstop-24h", "forever.sh", "openclaw/agents/job-bot",
-                ):
-                    subprocess.run(
-                        ["pkill", "-TERM", "-f", pattern],
-                        capture_output=True, timeout=2,
-                    )
-            _kill_child_pidfiles()
-        except Exception:
-            pass
+        _kill_all_children()
         os._exit(0)
 
     # SIGTERM is what CI sends to stop the process. SIGINT is Ctrl+C.
-    # Windows only supports SIGINT + SIGBREAK reliably — signal.signal is a
-    # no-op for other signals there, so a try/except keeps it portable.
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    # SIGHUP fires when the controlling terminal closes — important for
+    # `applyloop run`, so closing the terminal window reaps worker.py /
+    # claude / jiggler instead of orphaning them. Windows only supports
+    # SIGINT + SIGBREAK reliably (no SIGHUP) — getattr + try/except keeps
+    # this portable; signal.signal is a no-op for unknown signals there.
+    _signals = [signal.SIGTERM, signal.SIGINT]
+    _sighup = getattr(signal, "SIGHUP", None)
+    if _sighup is not None:
+        _signals.append(_sighup)
+    for sig in _signals:
         try:
             signal.signal(sig, _handler)
         except (ValueError, OSError, AttributeError):
@@ -204,6 +229,46 @@ def _install_shutdown_handlers() -> None:
     # bypasses atexit, so there's no double-fire.
     import atexit as _atexit
     _atexit.register(_kill_child_pidfiles)
+
+
+def _bootstrap_runtime_env() -> None:
+    """Load the install's .env into os.environ before server.app imports.
+
+    The .exe entry (built from build.py) already does this — without it, a
+    PyInstaller-frozen process double-clicked from Explorer never sees the
+    install-time PowerShell variables. `applyloop run` has the same
+    problem: a fresh PowerShell or Terminal session does not source the
+    install's .env either, so the worker spawned during lifespan startup
+    boots without ANTHROPIC_API_KEY / TELEGRAM_BOT_TOKEN / etc. and dies
+    immediately. Mirror the .exe bootstrap so both entry points behave
+    identically.
+
+    setdefault — never overrides an env var the user explicitly set in
+    their shell, so APPLYLOOP_HOME=/some/other/path keeps working.
+    """
+    home = os.environ.setdefault(
+        "APPLYLOOP_HOME", os.path.expanduser("~/.applyloop")
+    )
+    env_path = os.path.join(home, ".env")
+    try:
+        with open(env_path, encoding="utf-8-sig") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if not key:
+                    continue
+                os.environ.setdefault(
+                    key, value.strip().strip('"').strip("'")
+                )
+    except FileNotFoundError:
+        pass
+    except Exception:
+        # An unreadable .env is non-fatal — server.app + pty_terminal both
+        # do their own .env overlay later for the PTY child / worker.
+        pass
 
 
 def check_deps():
@@ -261,7 +326,74 @@ def wait_for_server(timeout: int = 15) -> bool:
     return False
 
 
+def _server_up(timeout: float = 1.0) -> bool:
+    """Quick probe — is an ApplyLoop server already answering on PORT?"""
+    import urllib.request
+    try:
+        urllib.request.urlopen(
+            f"http://127.0.0.1:{PORT}/api/health", timeout=timeout
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _run_cli() -> None:
+    """`applyloop run` — chat with Claude Code in this terminal.
+
+    Reuses the exact same FastAPI server the GUI app runs (browser
+    gateway + worker + PTY Claude + the localhost dashboard). The only
+    difference from the app is the frontend: cli_terminal.py bridges the
+    PTY to this terminal instead of a pywebview window.
+
+    If an ApplyLoop server (the GUI app, or an earlier `applyloop run`)
+    is already up, we attach to it rather than starting a second one —
+    and on exit we leave it running. If we started the server ourselves,
+    quitting the terminal shuts the whole stack down cleanly.
+    """
+    from cli_terminal import run_cli_bridge
+
+    started_server = False
+    if _server_up():
+        print(f"[ApplyLoop] An ApplyLoop server is already running on "
+              f":{PORT} — attaching to it.")
+    else:
+        print("[ApplyLoop] Starting ApplyLoop (server + browser gateway "
+              "+ worker)...")
+        server_thread = threading.Thread(target=start_server, daemon=True)
+        server_thread.start()
+        if not wait_for_server(timeout=60):
+            print("[ApplyLoop] Server failed to start — check "
+                  "~/.autoapply/desktop.log")
+            sys.exit(1)
+        started_server = True
+
+    url = f"http://localhost:{PORT}"
+    print(f"[ApplyLoop] Dashboard available at {url}")
+
+    try:
+        run_cli_bridge(url)
+    finally:
+        if started_server:
+            print("\n[ApplyLoop] Shutting down ApplyLoop...")
+            _kill_all_children()
+            os._exit(0)
+        else:
+            print("\n[ApplyLoop] Detached. The ApplyLoop server is still "
+                  "running in the background.")
+            print("[ApplyLoop] Reattach with 'applyloop run' — stop it with "
+                  "'applyloop stop'.")
+            # os._exit bypasses the atexit hook that kills processes named in
+            # worker.pid — that worker belongs to the server we attached to,
+            # not to us, so we must NOT reap it on the way out.
+            os._exit(0)
+
+
 def main():
+    # Bootstrap env BEFORE check_deps imports / before anything reads
+    # os.environ for credentials. Cheap, idempotent, never overwrites
+    # caller-set vars (setdefault).
+    _bootstrap_runtime_env()
     check_deps()
 
     os.chdir(str(HERE))
@@ -269,6 +401,12 @@ def main():
 
     _install_shutdown_handlers()
     log_path = _install_headless_logging()
+
+    # CLI mode (`applyloop run`) — bridge the PTY to this terminal instead
+    # of opening a window. _run_cli() owns the server lifecycle from here.
+    if CLI_MODE:
+        _run_cli()
+        return
 
     # Start FastAPI server in background thread
     server_thread = threading.Thread(target=start_server, daemon=True)

@@ -2,6 +2,7 @@
 # ApplyLoop CLI shim — installed via symlink at ~/.local/bin/applyloop.
 #
 #   applyloop start      — open the .app (which execs the venv launcher)
+#   applyloop run        — chat with Claude Code in this terminal (no .app)
 #   applyloop stop       — kill the running launch.py process
 #   applyloop status     — GET /api/health and pretty-print
 #   applyloop logs       — tail ~/.autoapply/desktop.log
@@ -106,6 +107,24 @@ cmd_start() {
     echo "  (no log file at $LOG — launcher may not have run)" >&2
   fi
   exit 1
+}
+
+cmd_run() {
+  # Terminal CLI — chat with Claude Code right in this terminal, no .app
+  # window. Same server (browser gateway + worker + PTY Claude +
+  # dashboard) as the app; launch.py just bridges the PTY to the terminal
+  # instead of opening pywebview. exec so signals go straight to python.
+  local py="$APPLYLOOP_HOME/venv/bin/python3"
+  local launcher="$APPLYLOOP_HOME/packages/desktop/launch.py"
+  if [[ ! -x "$py" ]]; then
+    echo "venv python not found at $py — run the curl installer first." >&2
+    exit 1
+  fi
+  if [[ ! -f "$launcher" ]]; then
+    echo "launch.py not found at $launcher — run 'applyloop update'." >&2
+    exit 1
+  fi
+  exec "$py" "$launcher" run
 }
 
 cmd_stop() {
@@ -252,6 +271,7 @@ Usage: applyloop <command>
 
 Commands:
   start       Open /Applications/ApplyLoop.app (launches the wizard)
+  run         Chat with Claude Code in this terminal (no .app window)
   stop        Kill the running launch.py server
   status      GET /api/health and pretty-print JSON
   logs        Tail ~/.autoapply/desktop.log
@@ -267,6 +287,7 @@ USAGE
 
 case "${1:-}" in
   start)     cmd_start ;;
+  run)       cmd_run ;;
   stop)      cmd_stop ;;
   status)    cmd_status ;;
   logs)      cmd_logs ;;
