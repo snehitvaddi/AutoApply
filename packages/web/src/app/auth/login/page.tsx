@@ -36,8 +36,30 @@ function LoginPageInner() {
     setLoading(true);
     setError("");
 
-    const appBaseUrl =
-      (process.env.NEXT_PUBLIC_APP_URL || window.location.origin).replace(/\/+$/, "");
+    const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
+    const currentOrigin = window.location.origin.replace(/\/+$/, "");
+
+    // Host-pinning guard — the root cause of "PKCE code verifier not found".
+    // signInWithOAuth() stores the one-time PKCE verifier in a cookie scoped
+    // to the CURRENT host (window.location.origin). If the user opened the
+    // login page on a non-canonical host — a Vercel preview/deployment URL
+    // (applyloop-xxxx.vercel.app), a www. variant, or an http vs https
+    // mismatch — but redirectTo points at the canonical host, then Google
+    // sends them to the canonical /auth/callback where that host-scoped
+    // verifier cookie simply isn't sent. Exchange fails 100% of the time
+    // for those users, not transiently.
+    //
+    // Fix: if we're not already on the canonical host, bounce the browser
+    // there FIRST and let it re-initiate. Then the verifier cookie and the
+    // callback live on the same host. Only do this when NEXT_PUBLIC_APP_URL
+    // is actually configured — without it we can't know the canonical host,
+    // so fall through to same-origin behavior.
+    if (configuredAppUrl && currentOrigin !== configuredAppUrl) {
+      window.location.assign(`${configuredAppUrl}/auth/login`);
+      return; // navigation in flight — keep the spinner up
+    }
+
+    const appBaseUrl = configuredAppUrl || currentOrigin;
 
     const supabase = createSupabaseBrowserClient();
     const { error } = await supabase.auth.signInWithOAuth({
