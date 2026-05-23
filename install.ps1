@@ -656,20 +656,100 @@ if (Test-Path $EnvFile) {
     Write-Log "Found existing .env — preserving local overrides"
 }
 
-# For each field that can be populated locally but not always returned
-# by the cloud, prefer the existing value when the cloud one is empty.
-function _preserve($name, $newValue) {
-    if (-not $newValue -and $existingEnv.ContainsKey($name)) {
-        return $existingEnv[$name]
+# Three-way reuse prompt — mirrors install.sh's reuse_or_prompt():
+#   - cloud has a value         → silently use it (cloud is source of truth)
+#   - cloud empty + local set   → INTERACTIVE: show masked, [Enter to keep
+#                                  / 's' to clear / type new]
+#   - cloud empty + local empty → return empty (caller leaves field unset)
+#
+# Without the interactive branch the user has zero visibility into what's
+# preserved on a re-install — they get the right behavior but no chance
+# to change it without hand-editing .env afterward. This closes the
+# parity gap with the Mac installer.
+#
+# Skipped entirely when APPLYLOOP_NONINTERACTIVE=1 (CI / unattended re-
+# installs). In that mode the old silent-preserve behavior wins.
+$NonInteractive = [bool]$env:APPLYLOOP_NONINTERACTIVE
+function Reuse-Or-Prompt {
+    param(
+        [Parameter(Mandatory=$true)] [string]$Name,
+        [Parameter(Mandatory=$true)] [string]$Label,
+        [string]$NewValue = "",
+        [string]$Regex = "",
+        [string]$ErrMsg = "invalid"
+    )
+    # Cloud authoritative — quiet path.
+    if (-not [string]::IsNullOrWhiteSpace($NewValue)) { return $NewValue }
+
+    $existing = if ($existingEnv.ContainsKey($Name)) { $existingEnv[$Name] } else { "" }
+    if ([string]::IsNullOrWhiteSpace($existing)) { return "" }
+
+    # Non-interactive: silently preserve, same as the old _preserve.
+    if ($NonInteractive) { return $existing }
+
+    # Mask secrets — last 4 chars only — for any *_KEY / *_TOKEN /
+    # *_PASSWORD field. Non-secrets show in full so the user can verify
+    # the address / chat id at a glance.
+    $display = $existing
+    if ($Name -match '_KEY$|_TOKEN$|_PASSWORD$') {
+        if ($existing.Length -gt 4) {
+            $display = "****" + $existing.Substring($existing.Length - 4)
+        } else {
+            $display = "****"
+        }
     }
-    return $newValue
+
+    Write-Host ("  {0}: " -f $Label) -NoNewline
+    Write-Host $display -ForegroundColor Cyan -NoNewline
+    Write-Host "  [Enter to keep / 's' to clear / type new]: " -NoNewline
+    $val = Read-Host
+
+    if ([string]::IsNullOrEmpty($val)) { return $existing }
+    if ($val -eq 's' -or $val -eq 'S') {
+        Write-Host "  Cleared." -ForegroundColor Yellow
+        return ""
+    }
+    if ($Regex -and $val -notmatch $Regex) {
+        Write-Host ("  Invalid: {0} — keeping old value." -f $ErrMsg) -ForegroundColor Yellow
+        return $existing
+    }
+    return $val
 }
-$TelegramBotToken = _preserve "TELEGRAM_BOT_TOKEN" $TelegramBotToken
-$ActTelegramChat  = _preserve "TELEGRAM_CHAT_ID"   $ActTelegramChat
-$AgentmailKey     = _preserve "AGENTMAIL_API_KEY"  $AgentmailKey
-$FinetuneKey      = _preserve "FINETUNE_RESUME_API_KEY" $FinetuneKey
-$GmailEmail       = _preserve "GMAIL_EMAIL"        $GmailEmail
-$GmailAppPw       = _preserve "GMAIL_APP_PASSWORD" $GmailAppPw
+
+# One-time header — only if at least one field will prompt. Keeps fresh
+# installs silent (no "Reviewing preserved values" banner when there are
+# none to review). Skips the scan entirely in non-interactive mode.
+if (-not $NonInteractive) {
+    $_prompt_pairs = @(
+        @("TELEGRAM_BOT_TOKEN",      $TelegramBotToken),
+        @("TELEGRAM_CHAT_ID",        $ActTelegramChat),
+        @("AGENTMAIL_API_KEY",       $AgentmailKey),
+        @("FINETUNE_RESUME_API_KEY", $FinetuneKey),
+        @("GMAIL_EMAIL",             $GmailEmail),
+        @("GMAIL_APP_PASSWORD",      $GmailAppPw)
+    )
+    foreach ($p in $_prompt_pairs) {
+        if ([string]::IsNullOrWhiteSpace($p[1]) `
+            -and $existingEnv.ContainsKey($p[0]) `
+            -and -not [string]::IsNullOrWhiteSpace($existingEnv[$p[0]])) {
+            Write-Log "Reviewing values preserved from prior install — press Enter to keep each one"
+            break
+        }
+    }
+}
+
+$TelegramBotToken = Reuse-Or-Prompt -Name "TELEGRAM_BOT_TOKEN"      -Label "Telegram Bot Token"      -NewValue $TelegramBotToken `
+                                    -Regex '^[0-9]{6,}:[A-Za-z0-9_-]{25,}$' -ErrMsg "format <id>:<token>"
+$ActTelegramChat  = Reuse-Or-Prompt -Name "TELEGRAM_CHAT_ID"        -Label "Telegram Chat ID"        -NewValue $ActTelegramChat `
+                                    -Regex '^-?[0-9]+$' -ErrMsg "digits only (may start with - for groups)"
+$AgentmailKey     = Reuse-Or-Prompt -Name "AGENTMAIL_API_KEY"       -Label "AgentMail API Key"       -NewValue $AgentmailKey `
+                                    -Regex '^.{8,}$' -ErrMsg "at least 8 characters"
+$FinetuneKey      = Reuse-Or-Prompt -Name "FINETUNE_RESUME_API_KEY" -Label "Finetune Resume API Key" -NewValue $FinetuneKey `
+                                    -Regex '^.{8,}$' -ErrMsg "at least 8 characters"
+$GmailEmail       = Reuse-Or-Prompt -Name "GMAIL_EMAIL"             -Label "Gmail Address"           -NewValue $GmailEmail `
+                                    -Regex '^[^@\s]+@[^@\s]+\.[^@\s]+$' -ErrMsg "must be email@domain.tld"
+$GmailAppPw       = Reuse-Or-Prompt -Name "GMAIL_APP_PASSWORD"      -Label "Gmail App Password"      -NewValue $GmailAppPw `
+                                    -Regex '^[A-Za-z0-9\s]{16,}$' -ErrMsg "16+ chars (paste Google's app password with or without spaces)"
 
 # ENCRYPTION_KEY MUST be preserved across reinstalls — anything encrypted
 # under the old key becomes unreadable if we generate a fresh one. If
