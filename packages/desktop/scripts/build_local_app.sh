@@ -114,9 +114,27 @@ if [[ ! -x "$APPLYLOOP_HOME/venv/bin/python3" ]]; then
   exit 1
 fi
 
-# Arch sanity check — refuse to exec a wrong-arch venv. If the venv python
-# is x86_64 on an Apple Silicon Mac, macOS would otherwise pop a generic
-# "install Rosetta" dialog with no context. Tell the user what to do instead.
+# Arch sanity check — two distinct failure modes:
+#
+# (1) .app launched under Rosetta translation. macOS sometimes flips the
+#     "Open using Rosetta" flag on a .app (e.g. user toggled it via Get
+#     Info to dismiss an earlier Rosetta prompt). Detected via
+#     `sysctl sysctl.proc_translated == 1`. Fix is to uncheck the flag,
+#     NOT to rebuild the venv.
+#
+# (2) Wrong-arch venv on the host (uname matches host since we're not
+#     translated, but venv python reports a different arch). Fix is to
+#     re-run the installer.
+#
+# Using uname -m alone conflates the two: under Rosetta `uname -m` lies
+# and returns x86_64 on Apple Silicon, which makes a perfectly good
+# arm64 venv look "wrong".
+PROC_TRANSLATED="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
+if [[ "$PROC_TRANSLATED" == "1" ]]; then
+  echo "[launcher] .app is running under Rosetta translation — aborting" >> "$LOG"
+  osascript -e "display alert \"ApplyLoop is running under Rosetta\" message \"This Mac is Apple Silicon but the ApplyLoop app is set to open with Rosetta translation, which prevents the native installation from running.\n\nFix it:\n1. Open Finder, go to /Applications\n2. Right-click ApplyLoop and choose Get Info\n3. UNCHECK 'Open using Rosetta'\n4. Re-open ApplyLoop\"" >/dev/null 2>&1 || true
+  exit 1
+fi
 HOST_ARCH="$(uname -m)"
 VENV_ARCH="$("$APPLYLOOP_HOME/venv/bin/python3" -c 'import platform; print(platform.machine())' 2>/dev/null || echo unknown)"
 if [[ "$VENV_ARCH" != "$HOST_ARCH" ]]; then

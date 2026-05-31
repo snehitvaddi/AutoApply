@@ -124,9 +124,20 @@ cmd_run() {
     echo "launch.py not found at $launcher — run 'applyloop update'." >&2
     exit 1
   fi
-  # Arch guard — refuse to exec a wrong-arch venv. Otherwise macOS would
-  # pop the cold "install Rosetta" dialog with no context.
-  local host_arch venv_arch
+  # Arch guard — distinguish two failure modes (see build_local_app.sh
+  # for the long-form explanation):
+  #   (1) running under Rosetta translation: detected via
+  #       `sysctl.proc_translated == 1`. Tell user to relaunch Terminal
+  #       natively (uncheck "Open using Rosetta" in Terminal's Get Info).
+  #   (2) wrong-arch venv: uname matches host but venv reports something
+  #       else — tell user to reinstall.
+  local proc_translated host_arch venv_arch
+  proc_translated="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
+  if [[ "$proc_translated" == "1" ]]; then
+    echo "Your terminal is running under Rosetta translation." >&2
+    echo "Quit and re-open Terminal (right-click in /Applications/Utilities → Get Info → uncheck 'Open using Rosetta'), then retry." >&2
+    exit 1
+  fi
   host_arch="$(uname -m)"
   venv_arch="$("$py" -c 'import platform; print(platform.machine())' 2>/dev/null || echo unknown)"
   if [[ "$venv_arch" != "$host_arch" ]]; then
@@ -208,7 +219,17 @@ cmd_update() {
   # rebuild from a native-arch brew Python before reinstalling deps. Same
   # check install.sh does, replicated here so `applyloop update` alone is
   # enough to recover without re-running the curl installer.
-  local host_arch venv_arch
+  #
+  # Bail out if the current shell is Rosetta-translated — `uname -m`
+  # would lie (return x86_64 on Apple Silicon) and we'd wrongly nuke a
+  # perfectly good arm64 venv.
+  local proc_translated host_arch venv_arch
+  proc_translated="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
+  if [[ "$proc_translated" == "1" ]]; then
+    echo "This terminal is running under Rosetta translation — refusing to update so the arch check stays accurate." >&2
+    echo "Quit Terminal, re-open it natively (uncheck 'Open using Rosetta' in Get Info), then retry." >&2
+    exit 1
+  fi
   host_arch="$(uname -m)"
   if [[ -x "$APPLYLOOP_HOME/venv/bin/python3" ]]; then
     venv_arch="$("$APPLYLOOP_HOME/venv/bin/python3" -c 'import platform; print(platform.machine())' 2>/dev/null || echo unknown)"
