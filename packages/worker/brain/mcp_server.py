@@ -471,7 +471,17 @@ def scout_list_sources() -> str:
 
 @mcp.tool()
 def scout_run_source(name: str) -> str:
-    """Run one scout source against the current tenant. Returns list of JobPost dicts."""
+    """Run one scout source against the current tenant. Returns list of JobPost dicts.
+
+    Response shape:
+      {"count": N, "jobs": [...], "attempts": A, "failures": F, "last_error": "..."}
+
+    `count` is jobs that survived the per-tenant filter; `attempts`/`failures`
+    are fetch-level counts the source recorded (e.g. boards polled vs boards
+    that errored). When all attempts fail with a connect_error/timeout the
+    likely cause is local network — tell the user instead of treating the
+    empty result as "nothing posted today".
+    """
     from scout import REGISTERED_SOURCES
     from tenant import TenantConfig
     user_id = os.environ.get("APPLYLOOP_USER_ID", "")
@@ -481,7 +491,14 @@ def scout_run_source(name: str) -> str:
         available = [s.name for s in REGISTERED_SOURCES]
         return json.dumps({"error": f"unknown source: {name}", "available": available})
     jobs = source.scout(tenant) or []
-    return json.dumps({"count": len(jobs), "jobs": jobs[:50]}, default=str)
+    payload = {
+        "count": len(jobs),
+        "jobs": jobs[:50],
+        "attempts": getattr(source, "last_attempts", 0),
+        "failures": getattr(source, "last_failures", 0),
+        "last_error": getattr(source, "last_error", None),
+    }
+    return json.dumps(payload, default=str)
 
 
 # ── tenant ────────────────────────────────────────────────────────────────

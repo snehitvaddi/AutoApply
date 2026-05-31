@@ -1299,7 +1299,7 @@ A background watchdog will inject status messages into this terminal every ~30 m
 
 ## Pipeline steps (MCP tools)
 
-- **Scout**: \`scout_list_sources\` → \`scout_run_source(name)\` for each source
+- **Scout**: \`scout_list_sources\` → \`scout_run_source(name)\` for each source. Response includes \`attempts\`, \`failures\`, \`last_error\`. If \`failures == attempts\` AND \`last_error\` starts with \`connect_error\` or \`timeout\`, the user's local network is down — DO NOT silently re-loop. Tell the user "scout couldn't reach any boards — network/DNS appears to be down. Last error: \`<last_error>\`. Will retry in 60s." Then wait one minute before retrying, do not keep hammering.
 - **Filter**: \`tenant_load\` → apply role/location/blocklist/dedup filters
 - **Enqueue**: \`queue_update_status\` for each filtered job → status=pending
 - **Apply**: \`queue_claim_next\` → \`knowledge_get_ats_playbook\` → browser_navigate/snapshot/fill/click

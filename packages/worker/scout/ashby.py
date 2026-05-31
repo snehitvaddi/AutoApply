@@ -18,13 +18,14 @@ if TYPE_CHECKING:
     from tenant import TenantConfig
 
 
-def _fetch_ashby_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
+def _fetch_ashby_board(slug: str, tenant: "TenantConfig") -> tuple[list[JobPost], str | None]:
+    """See greenhouse._fetch_greenhouse_board for the return contract."""
     jobs: list[JobPost] = []
     try:
         with httpx.Client(timeout=10, follow_redirects=True) as client:
             resp = client.get(f"https://api.ashbyhq.com/posting-api/job-board/{slug}")
             if resp.status_code != 200:
-                return jobs
+                return jobs, f"http_{resp.status_code}"
             for job in resp.json().get("jobs", []):
                 # NOTE: we deliberately DO NOT drop by publishedAt here.
                 # Ashby's public board API only returns jobs that are
@@ -63,9 +64,13 @@ def _fetch_ashby_board(slug: str, tenant: "TenantConfig") -> list[JobPost]:
                     "ats": "ashby",
                     "posted_at": posted_at,
                 })
-    except Exception:
-        pass
-    return jobs
+    except httpx.ConnectError as e:
+        return jobs, f"connect_error: {e}"
+    except httpx.TimeoutException:
+        return jobs, "timeout"
+    except Exception as e:
+        return jobs, f"parse_error: {type(e).__name__}"
+    return jobs, None
 
 
 class AshbyScout(ScoutSource):
@@ -76,13 +81,24 @@ class AshbyScout(ScoutSource):
     def scout(self, tenant: "TenantConfig") -> list[JobPost]:
         jobs: list[JobPost] = []
         boards = list(tenant.ashby_boards)
+        self.last_attempts = len(boards)
+        self.last_failures = 0
+        self.last_error = None
         if not boards:
             return jobs
         with ThreadPoolExecutor(max_workers=8) as pool:
             for fut in as_completed(pool.submit(_fetch_ashby_board, s, tenant) for s in boards):
                 try:
-                    jobs.extend(fut.result())
+                    board_jobs, err = fut.result()
+                    jobs.extend(board_jobs)
+                    if err is not None:
+                        self.last_failures += 1
+                        if self.last_error is None:
+                            self.last_error = err
                 except Exception as e:
+                    self.last_failures += 1
+                    if self.last_error is None:
+                        self.last_error = f"worker_exception: {type(e).__name__}"
                     self.logger.debug(f"ashby board fetch failed: {e}")
         return jobs
 

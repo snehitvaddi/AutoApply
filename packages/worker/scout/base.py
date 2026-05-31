@@ -56,6 +56,15 @@ class ScoutSource(ABC):
 
     def __init__(self) -> None:
         self.logger = logging.getLogger(f"scout.{self.name}")
+        # Per-run diagnostics — populated by .scout() so the MCP tool can
+        # distinguish "0 jobs because nothing new" from "0 jobs because every
+        # board fetch raised ConnectError". Reset at the start of each
+        # .scout() call. Sources that don't track fetches leave these at
+        # defaults (no failures recorded ≠ "everything was fine", just "this
+        # source doesn't expose fetch-level diagnostics").
+        self.last_attempts: int = 0
+        self.last_failures: int = 0
+        self.last_error: str | None = None
 
     @abstractmethod
     def scout(self, tenant: "TenantConfig") -> list[JobPost]:
