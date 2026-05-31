@@ -66,6 +66,20 @@ APPLYLOOP_HOME="${APPLYLOOP_HOME:-$HOME/.applyloop}"
 LOG="$HOME/.autoapply/desktop.log"
 mkdir -p "$HOME/.autoapply" "$HOME/.autoapply/workspace"
 
+# Force native execution on Apple Silicon. bash is a universal binary, so
+# Launch Services may run this script under Rosetta if (a) the user
+# toggled "Open using Rosetta" in Finder Get Info, or (b) macOS remembers
+# a stale per-bundle preference. LSRequiresNativeExecution in Info.plist
+# does NOT override a user-set preference. Re-exec under `arch -arm64`
+# to escape — guaranteed native, regardless of how Launch Services
+# launched us. On Intel Macs this branch is skipped (hw.optional.arm64=0).
+if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" == "1" ]]; then
+  if [[ "$(/usr/bin/arch 2>/dev/null)" != "arm64" ]]; then
+    echo "[launcher] re-exec under arch -arm64 (was translated by Rosetta)" >> "$LOG"
+    exec /usr/bin/arch -arm64 "$0" "$@"
+  fi
+fi
+
 # CRITICAL: when an .app is launched from Finder/Dock, macOS gives the
 # process a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin) — NOT the PATH
 # from the user's interactive shell. That means /opt/homebrew/bin and
