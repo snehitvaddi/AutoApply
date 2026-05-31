@@ -50,6 +50,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
     <true/>
     <key>LSUIElement</key>
     <false/>
+    <key>LSRequiresNativeExecution</key>
+    <true/>
 </dict>
 </plist>
 EOF
