@@ -114,6 +114,17 @@ if [[ ! -x "$APPLYLOOP_HOME/venv/bin/python3" ]]; then
   exit 1
 fi
 
+# Arch sanity check — refuse to exec a wrong-arch venv. If the venv python
+# is x86_64 on an Apple Silicon Mac, macOS would otherwise pop a generic
+# "install Rosetta" dialog with no context. Tell the user what to do instead.
+HOST_ARCH="$(uname -m)"
+VENV_ARCH="$("$APPLYLOOP_HOME/venv/bin/python3" -c 'import platform; print(platform.machine())' 2>/dev/null || echo unknown)"
+if [[ "$VENV_ARCH" != "$HOST_ARCH" ]]; then
+  echo "[launcher] arch mismatch: host=$HOST_ARCH venv=$VENV_ARCH — aborting" >> "$LOG"
+  osascript -e "display alert \"ApplyLoop needs to be reinstalled\" message \"The installed Python is $VENV_ARCH but this Mac is $HOST_ARCH. Re-run the installer to rebuild it natively:\n\ncurl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash\"" >/dev/null 2>&1 || true
+  exit 1
+fi
+
 exec "$APPLYLOOP_HOME/venv/bin/python3" "$APPLYLOOP_HOME/packages/desktop/launch.py" >> "$LOG" 2>&1
 EOF
 chmod +x "$APP_DIR/Contents/MacOS/launcher"

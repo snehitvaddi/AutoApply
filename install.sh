@@ -220,6 +220,12 @@ else
   BREW_PREFIX_DEFAULT="/usr/local"
 fi
 
+# Expected arch label as reported by Python's `platform.machine()` — used to
+# validate every binary we hand off to (brew prefix → python@3.11 → venv).
+# An x86_64 Python on an arm64 Mac is the #1 cause of the surprise Rosetta
+# prompt at .app launch time; we fail fast (or self-heal) instead.
+EXPECTED_PY_ARCH="$ARCH"
+
 APP_URL="${APPLYLOOP_APP_URL:-https://applyloop.vercel.app}"
 
 # ------------------------------------------------------------------ Phase A: activation gate
@@ -365,14 +371,26 @@ fi
 # ------------------------------------------------------------------ brew bootstrap
 
 ensure_brew() {
-  if command -v brew >/dev/null 2>&1; then
+  # On Apple Silicon we MUST use the native /opt/homebrew prefix. If the
+  # only brew on the machine is a Rosetta-era /usr/local/bin/brew, every
+  # bottle it installs (python, node) is x86_64 — which makes the .app
+  # launcher trigger macOS's "install Rosetta" dialog at first run.
+  # Detect that case and install native brew alongside the legacy one.
+  if [[ "$ARCH" == "arm64" && ! -x "$BREW_PREFIX_DEFAULT/bin/brew" && -x "/usr/local/bin/brew" ]]; then
+    warn "Found x86_64 Homebrew at /usr/local on an Apple Silicon Mac."
+    warn "Installing native arm64 Homebrew at /opt/homebrew so python/node are native."
+    warn "Your existing /usr/local Homebrew is left untouched."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  elif [[ -x "$BREW_PREFIX_DEFAULT/bin/brew" ]]; then
+    log "brew already installed at $BREW_PREFIX_DEFAULT"
+  elif command -v brew >/dev/null 2>&1; then
     log "brew already installed ($(brew --prefix))"
   else
     log "Installing Homebrew (Apple's official installer — may prompt for sudo)"
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   fi
-  # Source brew's shellenv so subsequent `brew` calls in this script work
-  # even when brew was JUST installed and isn't on PATH yet.
+  # Prefer the native-arch brew at $BREW_PREFIX_DEFAULT over any other brew
+  # that might shadow it on PATH (Rosetta /usr/local on arm64, etc).
   if [[ -x "$BREW_PREFIX_DEFAULT/bin/brew" ]]; then
     eval "$("$BREW_PREFIX_DEFAULT/bin/brew" shellenv)"
   elif command -v brew >/dev/null 2>&1; then
@@ -566,11 +584,36 @@ if [[ ! -x "$PY" ]]; then
   die "python3.11 not found at $PY — brew install python@3.11 may have failed."
 fi
 
+# Validate that brew handed us a native-arch Python. On an Apple Silicon Mac
+# the bottle from /opt/homebrew should be arm64; from /usr/local it would be
+# x86_64. If we ever get a mismatch here we'd silently bake Rosetta into the
+# venv — fail fast with a fixable error instead.
+PY_ARCH="$("$PY" -c 'import platform; print(platform.machine())' 2>/dev/null || echo unknown)"
+if [[ "$PY_ARCH" != "$EXPECTED_PY_ARCH" ]]; then
+  die "Python at $PY reports arch '$PY_ARCH' but this Mac is '$EXPECTED_PY_ARCH'.
+    This usually means brew is installed under Rosetta. Fix:
+      1. Quit Terminal, re-open WITHOUT Rosetta (right-click Terminal → Get Info → uncheck 'Open using Rosetta')
+      2. If brew lives at /usr/local on Apple Silicon, install native brew:
+         /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"
+      3. Re-run this installer."
+fi
+
+# Reuse the venv only if its Python matches the host arch. A leftover x86_64
+# venv (from a migrated Mac, or a previous Rosetta install) would otherwise
+# silently survive a reinstall and re-trigger the Rosetta prompt at launch.
+if [[ -x "$APPLYLOOP_HOME/venv/bin/python3" ]]; then
+  VENV_ARCH="$("$APPLYLOOP_HOME/venv/bin/python3" -c 'import platform; print(platform.machine())' 2>/dev/null || echo unknown)"
+  if [[ "$VENV_ARCH" != "$EXPECTED_PY_ARCH" ]]; then
+    warn "Existing venv reports arch '$VENV_ARCH', this Mac is '$EXPECTED_PY_ARCH' — recreating from native python."
+    rm -rf "$APPLYLOOP_HOME/venv"
+  fi
+fi
+
 if [[ ! -x "$APPLYLOOP_HOME/venv/bin/python3" ]]; then
-  log "Creating venv at $APPLYLOOP_HOME/venv with $PY"
+  log "Creating venv at $APPLYLOOP_HOME/venv with $PY ($PY_ARCH)"
   "$PY" -m venv "$APPLYLOOP_HOME/venv"
 else
-  log "Reusing existing venv at $APPLYLOOP_HOME/venv"
+  log "Reusing existing venv at $APPLYLOOP_HOME/venv ($EXPECTED_PY_ARCH)"
 fi
 
 log "Upgrading pip"

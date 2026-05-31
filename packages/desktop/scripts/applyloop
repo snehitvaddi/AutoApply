@@ -124,6 +124,17 @@ cmd_run() {
     echo "launch.py not found at $launcher — run 'applyloop update'." >&2
     exit 1
   fi
+  # Arch guard — refuse to exec a wrong-arch venv. Otherwise macOS would
+  # pop the cold "install Rosetta" dialog with no context.
+  local host_arch venv_arch
+  host_arch="$(uname -m)"
+  venv_arch="$("$py" -c 'import platform; print(platform.machine())' 2>/dev/null || echo unknown)"
+  if [[ "$venv_arch" != "$host_arch" ]]; then
+    echo "venv python at $py reports arch '$venv_arch' but this Mac is '$host_arch'." >&2
+    echo "Re-run the installer to rebuild it natively:" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash" >&2
+    exit 1
+  fi
   exec "$py" "$launcher" run
 }
 
@@ -191,6 +202,39 @@ cmd_update() {
   log "git fetch origin $APPLYLOOP_BRANCH"
   git -C "$APPLYLOOP_HOME" fetch origin "$APPLYLOOP_BRANCH"
   git -C "$APPLYLOOP_HOME" reset --hard "origin/$APPLYLOOP_BRANCH"
+
+  # Arch self-heal — if the existing venv was built for a different arch
+  # (user migrated Macs, or originally installed under Rosetta), wipe and
+  # rebuild from a native-arch brew Python before reinstalling deps. Same
+  # check install.sh does, replicated here so `applyloop update` alone is
+  # enough to recover without re-running the curl installer.
+  local host_arch venv_arch
+  host_arch="$(uname -m)"
+  if [[ -x "$APPLYLOOP_HOME/venv/bin/python3" ]]; then
+    venv_arch="$("$APPLYLOOP_HOME/venv/bin/python3" -c 'import platform; print(platform.machine())' 2>/dev/null || echo unknown)"
+    if [[ "$venv_arch" != "$host_arch" ]]; then
+      log "venv arch '$venv_arch' != host '$host_arch' — rebuilding from native brew python"
+      local brew_py=""
+      if command -v brew >/dev/null 2>&1; then
+        brew_py="$(brew --prefix python@3.11 2>/dev/null)/bin/python3.11"
+      fi
+      if [[ -z "$brew_py" || ! -x "$brew_py" ]]; then
+        echo "Cannot rebuild venv: native python@3.11 not found via brew." >&2
+        echo "Re-run the curl installer to fix:" >&2
+        echo "  curl -fsSL https://raw.githubusercontent.com/snehitvaddi/ApplyLoop/main/install.sh | bash" >&2
+        exit 1
+      fi
+      local brew_py_arch
+      brew_py_arch="$("$brew_py" -c 'import platform; print(platform.machine())' 2>/dev/null || echo unknown)"
+      if [[ "$brew_py_arch" != "$host_arch" ]]; then
+        echo "brew python at $brew_py is '$brew_py_arch' (expected '$host_arch')." >&2
+        echo "brew is installed under Rosetta. Re-run the curl installer to fix." >&2
+        exit 1
+      fi
+      rm -rf "$APPLYLOOP_HOME/venv"
+      "$brew_py" -m venv "$APPLYLOOP_HOME/venv"
+    fi
+  fi
 
   log "Reinstalling python deps (single-pass)"
   "$APPLYLOOP_HOME/venv/bin/pip" install --quiet \
